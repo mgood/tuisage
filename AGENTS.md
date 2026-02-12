@@ -15,10 +15,11 @@ Refer to these documents for increasing levels of detail:
 
 ## Development Process
 
-- Work in a git branch. Use local commits to checkpoint progress and provide history if you get stuck.
+- **Commit frequently to git** — Make commits after completing logical units of work (e.g., after fixing a bug, adding a feature, updating documentation). This provides a history trail to track the evolution of the project.
 - Before starting a new feature or fix, review the current state of the codebase and relevant documentation.
 - After completing work, update the living documentation (REQUIREMENTS.md, SPECIFICATION.md, IMPLEMENTATION.md, README.md) to reflect changes.
 - Start by producing or updating a plan before diving into implementation. Think through the approach, edge cases, and testing strategy.
+- Work in git branches for experimental features, but commit directly to main for incremental improvements and fixes.
 
 ## Testing Philosophy
 
@@ -99,9 +100,15 @@ Only add dependencies when they provide clear value. Current key dependencies:
 
 ## Commit Conventions
 
+- **Commit after each logical change** — Don't accumulate too many changes before committing. Frequent commits help track evolution and make it easier to understand the development history.
 - Make focused commits that address one concern at a time.
 - Include test changes alongside the code changes they verify.
+- When updating documentation, commit the documentation updates separately from code changes when practical.
 - Write descriptive commit messages that explain what changed and why.
+- Example good commit messages:
+  - "Add count flag decrement with Backspace key"
+  - "Fix edit input bleeding between arguments"
+  - "Update REQUIREMENTS.md to reflect long-running design"
 
 ## Feature Development Workflow
 
@@ -111,5 +118,6 @@ Only add dependencies when they provide clear value. Current key dependencies:
 4. Implement the feature or fix
 5. Verify all tests pass (`cargo test`)
 6. Verify no clippy warnings (`cargo clippy`)
-7. Update documentation to reflect the change
-8. Commit with a descriptive message
+7. **Commit the code and test changes** with a descriptive message
+8. Update documentation to reflect the change (REQUIREMENTS.md, SPECIFICATION.md, IMPLEMENTATION.md, README.md as appropriate)
+9. **Commit the documentation updates** separately with a message like "Update docs for [feature]"

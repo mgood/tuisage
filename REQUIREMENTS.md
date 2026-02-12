@@ -17,7 +17,7 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 1. **Parse usage specs** — Read `.usage.kdl` files (or stdin) and understand the full command tree: subcommands, flags, arguments, choices, defaults, and aliases.
 2. **Interactive exploration** — Present the command hierarchy in a navigable TUI so users can browse subcommands, see available flags, and understand argument requirements.
 3. **Command assembly** — As the user makes selections, continuously build and display the resulting command string in real time.
-4. **Command output** — When the user confirms, print the assembled command to stdout so it can be piped, copied, or executed.
+4. **Long-running interface** — Remain open after building a command, allowing users to modify it and build again, or execute commands directly within the TUI.
 
 ## Functional Requirements
 
@@ -25,7 +25,7 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 
 - Accept a `.usage.kdl` file path as a CLI argument.
 - Accept a usage spec piped via stdin (explicit `-` argument or automatic detection).
-- Support script files with embedded `USAGE` heredoc blocks (via usage-lib).
+- Support script files with embedded `USAGE` heredoc blocks.
 
 ### Command Navigation
 
@@ -62,11 +62,12 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Show a live preview of the assembled command, updated on every interaction.
 - Allow the user to accept and output the command.
 
-### Output
+### Command Execution & Output
 
-- Print the final command string to stdout on acceptance.
-- Exit cleanly with no output on cancellation.
-- Composable with shell tools (`pbcopy`, `eval`, pipes).
+- Execute the built command directly from within the TUI.
+- Remain open after execution to allow building and running additional commands.
+- Provide an optional print-only mode (or keybinding) to output the command to stdout for piping or integration with external tools.
+- Exit cleanly with no output when the user quits the application.
 
 ## Non-Functional Requirements
 
@@ -94,10 +95,9 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 
 ## Future Considerations
 
+- Print/export keybinding to output the current command to stdout for piping or copying to clipboard.
 - Copy command to clipboard directly from the TUI.
-- Execute the built command directly from the TUI (optional mode).
-- TreeView display for the command hierarchy (using ratatui-interact `TreeView`).
-- Fuzzy matching with scoring/ranking (fzf-style, using `nucleo-matcher`).
+- TreeView display for the command hierarchy with expandable/collapsible nodes.
+- Fuzzy matching with scoring and ranking (fzf-style behavior).
 - Show aliases inline in the command list with dimmed styling.
-- Split large modules (`app.rs`, `ui.rs`) into focused sub-modules.
-- CI pipeline (GitHub Actions: test, clippy, snapshot checks).
+- Continuous integration pipeline for automated testing and quality checks.

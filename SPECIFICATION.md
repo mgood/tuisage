@@ -2,6 +2,21 @@
 
 This document defines the detailed behavior of TuiSage — how features work, how the UI is structured, and how user interactions are handled. It bridges the high-level goals in REQUIREMENTS.md and the implementation details in IMPLEMENTATION.md.
 
+## Library Preferences
+
+These are the preferred libraries for implementing TuiSage features, as specified during initial development:
+
+| Feature | Preferred Library | Notes |
+|---|---|---|
+| TUI framework | `ratatui` | Terminal UI rendering and layout |
+| Terminal backend | `crossterm` | Cross-platform terminal control and events |
+| UI components | `ratatui-interact` | Breadcrumb, Input, FocusManager, ListPickerState, TreeView |
+| Color theming | `ratatui-themes` | Consistent theme palettes |
+| Usage spec parsing | `usage-lib` | Parse `.usage.kdl` files (no default features) |
+| Fuzzy matching (future) | `nucleo-matcher` | fzf-style scoring and ranking |
+| Error reporting | `color-eyre` | Pretty error messages with context |
+| Snapshot testing | `insta` | Terminal output comparison (dev dependency) |
+
 ## Input Handling
 
 ### CLI Arguments
@@ -182,7 +197,7 @@ When the user navigates to a new command, the state is synchronized:
 | `Enter` | Flags panel (value) | Start editing the flag value |
 | `Enter` | Flags panel (choices) | Cycle to the next choice |
 | `Enter` | Args panel | Start editing the argument / cycle choice |
-| `Enter` | Preview panel | Accept command: print to stdout and exit |
+| `Enter` | Preview panel | Execute the built command |
 | `Space` | Flags panel (boolean) | Toggle the flag |
 | `Space` | Flags panel (count) | Increment the count |
 | `Backspace` | Flags panel (count) | Decrement the count (floor at 0) |
@@ -307,10 +322,10 @@ Themes can be cycled at runtime with `]` and `[` keys. The current theme name is
 
 ## Terminal Lifecycle
 
-1. **Startup**: Parse CLI args → load spec → enable mouse capture → initialize ratatui terminal → create `App` state.
-2. **Event loop**: Draw frame → wait for event → handle key/mouse/resize → repeat.
-3. **Accept**: User presses Enter on preview → restore terminal → disable mouse capture → print command to stdout → exit 0.
+1. **Startup**: Parse CLI args → load spec → enable mouse capture → initialize terminal → create `App` state → enter event loop.
+2. **Event loop**: Draw frame → wait for event → handle key/mouse/resize → repeat. The application remains running indefinitely until the user quits.
+3. **Execute**: User presses Enter on preview → execute the built command → show output/status → return to the TUI for building the next command.
 4. **Quit**: User presses `q`/`Ctrl-C`/`Esc` at root → restore terminal → disable mouse capture → exit 0 (no output).
-5. **Error**: Parsing or terminal errors → `color-eyre` reports the error → exit non-zero.
+5. **Error**: Parsing or terminal errors → report error via `color-eyre` → exit non-zero.
 
-Output goes to **stdout** for composability. All TUI rendering uses **stderr** so it doesn't interfere with piped output.
+The TUI is **long-running** by design, allowing repeated command building and execution within a single session. An optional print-only mode may be added to output commands to stdout for integration with shell tools.
