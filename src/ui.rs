@@ -6,6 +6,9 @@ use ratatui::{
     Frame,
 };
 
+#[cfg(test)]
+extern crate insta;
+
 use crate::app::{App, FlagValue, Focus};
 
 /// Color palette for the TUI.
@@ -600,6 +603,8 @@ fn flag_display_string(flag: &usage::SpecFlag) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::FlagValue;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{backend::TestBackend, Terminal};
 
     fn sample_spec() -> usage::Spec {
@@ -607,6 +612,11 @@ mod tests {
         input
             .parse::<usage::Spec>()
             .expect("Failed to parse sample spec")
+    }
+
+    /// Parse a custom usage spec string into a Spec for targeted tests.
+    fn parse_spec(input: &str) -> usage::Spec {
+        input.parse::<usage::Spec>().expect("Failed to parse spec")
     }
 
     fn render_to_string(app: &App, width: u16, height: u16) -> String {
@@ -620,23 +630,266 @@ mod tests {
                 let cell = &buffer[(x, y)];
                 output.push_str(cell.symbol());
             }
+            // Trim trailing whitespace per line for cleaner snapshots
+            let trimmed = output.trim_end();
+            output = trimmed.to_string();
             output.push('\n');
         }
         output
     }
 
+    // ── Snapshot tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn snapshot_root_view() {
+        let app = App::new(sample_spec());
+        let output = render_to_string(&app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_config_subcommands() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "config")
+            .unwrap();
+        app.command_index = idx;
+        app.navigate_into_selected();
+        let output = render_to_string(&app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_deploy_leaf() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "deploy")
+            .unwrap();
+        app.command_index = idx;
+        app.navigate_into_selected();
+        let output = render_to_string(&app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_run_command() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
+        app.command_index = idx;
+        app.navigate_into_selected();
+        let output = render_to_string(&app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_flags_toggled() {
+        let mut app = App::new(sample_spec());
+        // Navigate to deploy
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "deploy")
+            .unwrap();
+        app.command_index = idx;
+        app.navigate_into_selected();
+
+        // Toggle --rollback (find its index)
+        app.focus = Focus::Flags;
+        let flag_values = app.current_flag_values();
+        let rollback_idx = flag_values
+            .iter()
+            .position(|(n, _)| n == "rollback")
+            .unwrap();
+        app.flag_index = rollback_idx;
+        // Toggle it
+        let fidx = app.flag_index;
+        let vals = app.current_flag_values_mut();
+        if let Some((_, FlagValue::Bool(ref mut b))) = vals.get_mut(fidx) {
+            *b = true;
+        }
+
+        // Set --tag value
+        let tag_idx = app
+            .current_flag_values()
+            .iter()
+            .position(|(n, _)| n == "tag")
+            .unwrap();
+        app.flag_index = tag_idx;
+        let fidx = app.flag_index;
+        let vals = app.current_flag_values_mut();
+        if let Some((_, FlagValue::String(ref mut s))) = vals.get_mut(fidx) {
+            *s = "v1.2.3".to_string();
+        }
+
+        // Set arg <environment> = prod
+        app.arg_values[0].value = "prod".to_string();
+
+        let output = render_to_string(&app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_editing_arg() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs.iter().position(|(n, _)| n.as_str() == "init").unwrap();
+        app.command_index = idx;
+        app.navigate_into_selected();
+
+        // Focus on args and start editing
+        app.focus = Focus::Args;
+        app.arg_index = 0;
+        app.editing = true;
+        app.arg_values[0].value = "my-project".to_string();
+
+        let output = render_to_string(&app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_filter_active() {
+        let mut app = App::new(sample_spec());
+        app.filtering = true;
+        app.filter = "pl".to_string();
+        let output = render_to_string(&app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_preview_focused() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
+        app.command_index = idx;
+        app.navigate_into_selected();
+
+        app.arg_values[0].value = "lint".to_string();
+        app.focus = Focus::Preview;
+
+        let output = render_to_string(&app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_deep_navigation() {
+        let mut app = App::new(sample_spec());
+
+        // Navigate to plugin > install
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "plugin")
+            .unwrap();
+        app.command_index = idx;
+        app.navigate_into_selected();
+
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "install")
+            .unwrap();
+        app.command_index = idx;
+        app.navigate_into_selected();
+
+        let output = render_to_string(&app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    // ── Minimal spec tests ──────────────────────────────────────────────
+
+    #[test]
+    fn snapshot_simple_flags_only() {
+        let spec = parse_spec(
+            r#"
+bin "mytool"
+flag "-v --verbose" help="Verbose output"
+flag "-f --force" help="Force operation"
+flag "--dry-run" help="Show what would happen"
+arg "<input>" help="Input file"
+arg "[output]" help="Output file"
+        "#,
+        );
+        let app = App::new(spec);
+        let output = render_to_string(&app, 80, 20);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_choices_flag() {
+        let spec = parse_spec(
+            r#"
+bin "mycli"
+cmd "format" help="Format code" {
+    flag "--style <style>" help="Code style" {
+        arg "<style>" {
+            choices "compact" "expanded" "default"
+        }
+    }
+    arg "<file>" help="File to format"
+}
+        "#,
+        );
+        let mut app = App::new(spec);
+        app.command_index = 0;
+        app.navigate_into_selected();
+        let output = render_to_string(&app, 80, 20);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_no_subcommands() {
+        let spec = parse_spec(
+            r#"
+bin "simple"
+about "A simple tool"
+arg "<file>" help="File to process"
+flag "-o --output <path>" help="Output path"
+        "#,
+        );
+        let app = App::new(spec);
+        let output = render_to_string(&app, 80, 20);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_count_flag_incremented() {
+        let spec = parse_spec(
+            r#"
+bin "mycli"
+flag "-v --verbose" help="Increase verbosity" count=#true
+flag "-q --quiet" help="Quiet mode"
+        "#,
+        );
+        let mut app = App::new(spec);
+        // Increment verbose 3 times
+        let key = app.command_path.join(" ");
+        if let Some(flags) = app.flag_values.get_mut(&key) {
+            for (name, value) in flags.iter_mut() {
+                if name == "verbose" {
+                    *value = FlagValue::Count(3);
+                }
+            }
+        }
+        let output = render_to_string(&app, 80, 20);
+        insta::assert_snapshot!(output);
+    }
+
+    // ── Assertion-based rendering tests ─────────────────────────────────
+
     #[test]
     fn test_render_root() {
         let app = App::new(sample_spec());
         let output = render_to_string(&app, 100, 30);
-        // Should show breadcrumb
         assert!(output.contains("mycli"));
-        // Should show subcommands
         assert!(output.contains("init"));
         assert!(output.contains("config"));
         assert!(output.contains("run"));
         assert!(output.contains("deploy"));
-        // Should show command preview
         assert!(output.contains("Command"));
     }
 
@@ -652,9 +905,7 @@ mod tests {
         app.navigate_into_selected();
 
         let output = render_to_string(&app, 100, 30);
-        // Should show breadcrumb with config
         assert!(output.contains("config"));
-        // Should show config's subcommands
         assert!(output.contains("set"));
         assert!(output.contains("get"));
         assert!(output.contains("list"));
@@ -664,7 +915,6 @@ mod tests {
     #[test]
     fn test_render_leaf_command() {
         let mut app = App::new(sample_spec());
-        // Navigate to deploy
         let subs = app.visible_subcommands();
         let deploy_idx = subs
             .iter()
@@ -674,9 +924,7 @@ mod tests {
         app.navigate_into_selected();
 
         let output = render_to_string(&app, 100, 30);
-        // Should show flags
         assert!(output.contains("Flags"));
-        // Should show arguments
         assert!(output.contains("Arguments"));
         assert!(output.contains("environment"));
     }
@@ -706,5 +954,117 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(flag_display_string(&flag3), "--json");
+    }
+
+    #[test]
+    fn test_render_command_preview_shows_built_command() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs.iter().position(|(n, _)| n.as_str() == "init").unwrap();
+        app.command_index = idx;
+        app.navigate_into_selected();
+
+        app.arg_values[0].value = "hello".to_string();
+
+        let output = render_to_string(&app, 100, 24);
+        assert!(output.contains("mycli init hello"));
+    }
+
+    #[test]
+    fn test_render_aliases_shown() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "config")
+            .unwrap();
+        app.command_index = idx;
+        app.navigate_into_selected();
+
+        let output = render_to_string(&app, 100, 30);
+        // "set" has alias "add", "list" has alias "ls", "remove" has alias "rm"
+        assert!(output.contains("add"));
+        assert!(output.contains("ls"));
+        assert!(output.contains("rm"));
+    }
+
+    #[test]
+    fn test_render_global_flag_indicator() {
+        let app = App::new(sample_spec());
+        let output = render_to_string(&app, 100, 30);
+        // Global flags should show [G] indicator
+        assert!(output.contains("[G]"));
+    }
+
+    #[test]
+    fn test_render_required_arg_indicator() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "deploy")
+            .unwrap();
+        app.command_index = idx;
+        app.navigate_into_selected();
+
+        let output = render_to_string(&app, 100, 24);
+        // Required args should be shown with <> brackets
+        assert!(output.contains("<environment>"));
+    }
+
+    #[test]
+    fn test_render_choices_display() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "deploy")
+            .unwrap();
+        app.command_index = idx;
+        app.navigate_into_selected();
+
+        let output = render_to_string(&app, 100, 24);
+        // Choices should be displayed
+        assert!(output.contains("dev"));
+        assert!(output.contains("staging"));
+        assert!(output.contains("prod"));
+    }
+
+    // ── Keyboard interaction rendering tests ────────────────────────────
+
+    #[test]
+    fn test_render_after_flag_toggle() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "deploy")
+            .unwrap();
+        app.command_index = idx;
+        app.navigate_into_selected();
+
+        // Focus flags and toggle yes flag
+        app.focus = Focus::Flags;
+        let flag_values = app.current_flag_values();
+        let yes_idx = flag_values.iter().position(|(n, _)| n == "yes").unwrap();
+        app.flag_index = yes_idx;
+
+        // Toggle via space key
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+
+        let output = render_to_string(&app, 100, 24);
+        // After toggling, should show checkmark
+        assert!(output.contains("[✓]"));
+        // Preview should include --yes
+        assert!(output.contains("--yes"));
+    }
+
+    #[test]
+    fn test_render_narrow_terminal() {
+        let app = App::new(sample_spec());
+        let output = render_to_string(&app, 60, 16);
+        // Should still render without panicking
+        assert!(output.contains("mycli"));
+        assert!(output.contains("Commands"));
     }
 }

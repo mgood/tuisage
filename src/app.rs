@@ -227,7 +227,7 @@ impl App {
     }
 
     /// Get a mutable reference to the flag values for the current command.
-    fn current_flag_values_mut(&mut self) -> &mut Vec<(String, FlagValue)> {
+    pub fn current_flag_values_mut(&mut self) -> &mut Vec<(String, FlagValue)> {
         let key = self.command_path_key();
         self.flag_values.entry(key).or_default()
     }
