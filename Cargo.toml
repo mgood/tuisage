@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 color-eyre = "0.6"
 crossterm = { version = "0.29", features = ["event-stream"] }
+nucleo-matcher = "0.3"
 ratatui = "0.30"
 ratatui-interact = "0.4"
 ratatui-themes = "0.1"

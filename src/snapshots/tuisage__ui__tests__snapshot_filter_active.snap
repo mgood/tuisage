@@ -2,14 +2,14 @@
 source: src/ui.rs
 expression: output
 ---
-┌ Commands (/pl) [1/7] ────────────────┐┌ Flags (3) ───────────────────────────────────────────────┐
-│▶ init — Initialize a new project     ││   [0] -v, --verbose [G] — Enable verbose logging         │
-│  ▶ config — Manage configuration     ││   ○ -q, --quiet [G] — Enable quiet mode                  │
-│  run — Run a task                    ││   [·] -u, --user = <user> — User to run as               │
+┌ Commands (/pl) [1/4] ────────────────┐┌ Flags (3) ───────────────────────────────────────────────┐
+│▶ ▶ plugin — Manage plugins           ││   [0] -v, --verbose [G] — Enable verbose logging         │
+│  help — Print help information       ││   ○ -q, --quiet [G] — Enable quiet mode                  │
+│  version — Print the CLI version     ││   [·] -u, --user = <user> — User to run as               │
 │  deploy — Deploy the application     ││                                                          │
-│  ▶ plugin — Manage plugins           ││                                                          │
-│  version — Print the CLI version     ││                                                          │
-│  help — Print help information       ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │

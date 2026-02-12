@@ -236,7 +236,15 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
         cursor_normal: "  ",
     };
 
-    let tree = TreeView::new(&app.command_tree_nodes, &app.command_tree_state)
+    // Use filtered tree when filtering is active on commands
+    let tree_nodes = if app.filtering && !app.filter().is_empty() && app.focus() == Focus::Commands
+    {
+        &app.filtered_command_tree()
+    } else {
+        &app.command_tree_nodes
+    };
+
+    let tree = TreeView::new(tree_nodes, &app.command_tree_state)
         .style(tree_style)
         .render_item(|node, _is_selected| {
             let mut text = node.data.name.clone();

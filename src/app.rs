@@ -1,3 +1,5 @@
+use nucleo_matcher::pattern::{Atom, AtomKind, CaseMatching};
+use nucleo_matcher::{Config, Matcher};
 use ratatui::layout::Rect;
 use ratatui_interact::components::{InputState, ListPickerState, TreeNode, TreeViewState};
 use ratatui_interact::state::FocusManager;
@@ -292,24 +294,59 @@ impl App {
 
         // Apply fuzzy filter when focus is on flags
         if self.filtering && !self.filter().is_empty() && self.focus() == Focus::Flags {
-            let filter_lower = self.filter().to_lowercase();
-            flags
+            let pattern = self.filter();
+
+            // Score each flag and filter out non-matches
+            let mut scored_flags: Vec<(u32, &SpecFlag)> = flags
                 .into_iter()
-                .filter(|f| {
-                    fuzzy_match(&f.name.to_lowercase(), &filter_lower)
-                        || f.long
-                            .iter()
-                            .any(|l| fuzzy_match(&l.to_lowercase(), &filter_lower))
-                        || f.short.iter().any(|s| {
-                            let s_lower: String = s.to_lowercase().collect();
-                            fuzzy_match(&s_lower, &filter_lower)
+                .filter_map(|f| {
+                    let mut temp_matcher = Matcher::new(Config::DEFAULT);
+
+                    // Try matching against name
+                    let name_score = fuzzy_match_score(&f.name, pattern, &mut temp_matcher);
+
+                    // Try matching against long flags
+                    let long_score = f
+                        .long
+                        .iter()
+                        .map(|l| fuzzy_match_score(l, pattern, &mut temp_matcher))
+                        .max()
+                        .unwrap_or(0);
+
+                    // Try matching against short flags
+                    let short_score = f
+                        .short
+                        .iter()
+                        .map(|s| {
+                            let s_str = s.to_string();
+                            fuzzy_match_score(&s_str, pattern, &mut temp_matcher)
                         })
-                        || f.help
-                            .as_ref()
-                            .map(|h| fuzzy_match(&h.to_lowercase(), &filter_lower))
-                            .unwrap_or(false)
+                        .max()
+                        .unwrap_or(0);
+
+                    // Try matching against help text
+                    let help_score = f
+                        .help
+                        .as_ref()
+                        .map(|h| fuzzy_match_score(h, pattern, &mut temp_matcher))
+                        .unwrap_or(0);
+
+                    // Take the best score from all fields
+                    let best_score = name_score.max(long_score).max(short_score).max(help_score);
+
+                    if best_score > 0 {
+                        Some((best_score, f))
+                    } else {
+                        None
+                    }
                 })
-                .collect()
+                .collect();
+
+            // Sort by score (descending)
+            scored_flags.sort_by(|a, b| b.0.cmp(&a.0));
+
+            // Extract just the flags
+            scored_flags.into_iter().map(|(_, f)| f).collect()
         } else {
             flags
         }
@@ -399,7 +436,21 @@ impl App {
 
     /// Get the total number of visible nodes in the command tree.
     pub fn total_visible_commands(&self) -> usize {
-        count_visible(&self.command_tree_nodes, &self.command_tree_state)
+        if self.filtering && !self.filter().is_empty() && self.focus() == Focus::Commands {
+            count_visible(&self.filtered_command_tree(), &self.command_tree_state)
+        } else {
+            count_visible(&self.command_tree_nodes, &self.command_tree_state)
+        }
+    }
+
+    /// Get filtered command tree nodes when filtering is active.
+    /// Returns nodes that match the filter pattern, preserving ancestors.
+    pub fn filtered_command_tree(&self) -> Vec<TreeNode<CmdData>> {
+        let pattern = self.filter();
+        if pattern.is_empty() {
+            return self.command_tree_nodes.clone();
+        }
+        filter_tree_nodes(&self.command_tree_nodes, pattern)
     }
 
     /// Get the ID of the currently selected tree node.
@@ -1288,6 +1339,71 @@ fn collapse_descendants(nodes: &[TreeNode<CmdData>], state: &mut TreeViewState) 
     }
 }
 
+/// Filter tree nodes recursively, keeping nodes that match and their ancestors.
+/// Returns scored and sorted results.
+fn filter_tree_nodes(nodes: &[TreeNode<CmdData>], pattern: &str) -> Vec<TreeNode<CmdData>> {
+    let mut scored_nodes: Vec<(u32, TreeNode<CmdData>)> = Vec::new();
+
+    for node in nodes {
+        let mut temp_matcher = Matcher::new(Config::DEFAULT);
+
+        // Score this node
+        let name_score = fuzzy_match_score(&node.data.name, pattern, &mut temp_matcher);
+
+        let alias_score = node
+            .data
+            .aliases
+            .iter()
+            .map(|a| fuzzy_match_score(a, pattern, &mut temp_matcher))
+            .max()
+            .unwrap_or(0);
+
+        let help_score = node
+            .data
+            .help
+            .as_ref()
+            .map(|h| fuzzy_match_score(h, pattern, &mut temp_matcher))
+            .unwrap_or(0);
+
+        let node_score = name_score.max(alias_score).max(help_score);
+
+        // Recursively filter children
+        let filtered_children = filter_tree_nodes(&node.children, pattern);
+
+        // If this node matches or has matching children, include it
+        if node_score > 0 || !filtered_children.is_empty() {
+            // For child score, we need to compute it separately since filtered_children
+            // is already Vec<TreeNode<CmdData>>, not scored
+            let child_max_score = if !filtered_children.is_empty() {
+                // Children matched, give them a lower score than direct match
+                node_score / 2
+            } else {
+                0
+            };
+
+            // Use the better score between this node and its children
+            let best_score = node_score.max(child_max_score);
+
+            let new_node = TreeNode::new(
+                &node.id,
+                CmdData {
+                    name: node.data.name.clone(),
+                    help: node.data.help.clone(),
+                    aliases: node.data.aliases.clone(),
+                },
+            )
+            .with_children(filtered_children);
+
+            scored_nodes.push((best_score, new_node));
+        }
+    }
+
+    // Sort by score descending
+    scored_nodes.sort_by(|a, b| b.0.cmp(&a.0));
+
+    scored_nodes.into_iter().map(|(_, node)| node).collect()
+}
+
 /// Count visible nodes in the tree (respecting collapsed state).
 fn count_visible<T>(nodes: &[TreeNode<T>], state: &TreeViewState) -> usize {
     let mut total = 0;
@@ -1355,6 +1471,30 @@ fn parent_id(id: &str) -> Option<String> {
 }
 
 /// Simple fuzzy matching: checks if all characters in the pattern appear in order in the text.
+/// Fuzzy match using nucleo-matcher, returns score (0 if no match).
+pub fn fuzzy_match_score(text: &str, pattern: &str, matcher: &mut Matcher) -> u32 {
+    use nucleo_matcher::pattern::Normalization;
+    use nucleo_matcher::Utf32Str;
+
+    let atom = Atom::new(
+        pattern,
+        CaseMatching::Smart,
+        Normalization::Smart,
+        AtomKind::Fuzzy,
+        false, // append_dollar
+    );
+
+    // Convert text to UTF-32 for matching
+    let mut haystack_buf = Vec::new();
+    let haystack = Utf32Str::new(text, &mut haystack_buf);
+
+    atom.score(haystack, matcher)
+        .map(|score| score as u32)
+        .unwrap_or(0)
+}
+
+/// Simple boolean fuzzy match for backward compatibility (used in tests).
+#[cfg(test)]
 pub fn fuzzy_match(text: &str, pattern: &str) -> bool {
     let mut text_chars = text.chars();
     for pc in pattern.chars() {
