@@ -97,8 +97,8 @@ The core state and logic module (~2050 lines including ~960 lines of tests).
 - **`handle_key()`** — top-level key dispatcher. Routes to `handle_editing_key()`, `handle_filter_key()`, or direct navigation/action based on current mode.
 - **`handle_mouse()`** — maps mouse events to panel focus, item selection, scroll, and activation. Finishes any active edit before switching targets.
 - **`build_command()`** — assembles the complete command string from the current state.
-- **`fuzzy_match_score()`** — scored fuzzy matching using `nucleo-matcher`, returns match quality score (0 for no match).
-- **`fuzzy_match_indices()`** — returns both score and match indices for character-level highlighting.
+- **`fuzzy_match_score()`** — scored fuzzy matching using `nucleo-matcher::Pattern`, returns match quality score (0 for no match). Uses `Pattern::parse()` for proper multi-word and special character support (^, $, !, ').
+- **`fuzzy_match_indices()`** — returns both score and match indices for character-level highlighting. Indices are sorted and deduplicated as recommended by nucleo-matcher docs.
 - **`compute_tree_match_scores()`** — computes match scores for all tree nodes when filtering is active; returns map of node ID → score.
 - **`compute_flag_match_scores()`** — computes match scores for all flags when filtering is active; returns map of flag name → score.
 - **`auto_select_next_match()`** — automatically moves selection to next matching item when current selection doesn't match filter.
@@ -159,7 +159,7 @@ During rendering, each panel's `Rect` is stored in `app.click_regions` as a `(Re
 
 When filtering is active (`app.filtering == true`):
 
-1. **Match Score Computation** — `compute_tree_match_scores()` and `compute_flag_match_scores()` use `nucleo-matcher` to score all items against the filter pattern.
+1. **Match Score Computation** — `compute_tree_match_scores()` and `compute_flag_match_scores()` use `nucleo-matcher::Pattern` to score all items against the filter pattern. Pattern-based matching properly handles multi-word patterns and fzf-style special characters.
 2. **Visual Styling** — Items with score = 0 (non-matches) are rendered with `Modifier::DIM` to subdue them without shifting the layout.
 3. **Character Highlighting** — For flags, `fuzzy_match_indices()` returns the positions of matched characters, and `build_highlighted_text()` in `ui.rs` creates styled spans with matching characters bold+underlined.
 4. **Auto-Selection** — When the filter changes, `auto_select_next_match()` moves the cursor to the first matching item if the current selection doesn't match.
@@ -176,7 +176,7 @@ When filtering is active (`app.filtering == true`):
 | `crossterm` | 0.29 | Terminal backend + events | `event-stream` feature enabled |
 | `ratatui-interact` | 0.4 | UI components | `TreeView`, `TreeNode`, `FocusManager`, `ListPickerState` |
 | `ratatui-themes` | 0.1 | Color theming | Provides `ThemePalette` with named themes |
-| `nucleo-matcher` | 0.3 | Fuzzy matching | Provides scored matching with smart case and normalization |
+| `nucleo-matcher` | 0.3 | Fuzzy matching | Pattern-based scored matching with smart case, normalization, and multi-word support |
 | `color-eyre` | 0.6 | Error reporting | Pretty error messages with backtraces |
 | `insta` | 1 | Snapshot testing (dev) | Full terminal output comparison |
 | `pretty_assertions` | 1 | Test diffs (dev) | Better assertion failure output |
@@ -241,7 +241,7 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - Core app state: navigation, flag values, arg values, command building
 - Full TUI rendering: 3-panel layout, preview, help bar
 - Keyboard navigation: vim keys, Tab cycling, Enter/Space/Backspace actions
-- Fuzzy filtering with scored ranking, subdued non-matches, and character-level match highlighting (nucleo-matcher)
+- Fuzzy filtering with scored ranking, subdued non-matches, and character-level match highlighting (nucleo-matcher Pattern API with proper multi-word and special character support)
 - Mouse support: click, scroll, right-click, click-to-activate
 - Visual polish: theming, scrolling, default indicators, accessible symbols
 - Stdin support for piped specs
