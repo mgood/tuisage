@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style, Stylize},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Padding, Paragraph, Wrap},
     Frame,
@@ -52,16 +52,16 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         ])
         .split(area);
 
-    // Reset panel areas each frame
-    app.panel_areas = Default::default();
+    // Clear click regions each frame so they're rebuilt from current layout
+    app.click_regions.clear();
 
     render_breadcrumb(frame, app, outer[0]);
     render_main_content(frame, app, outer[1]);
     render_help_bar(frame, app, outer[2]);
     render_preview(frame, app, outer[3]);
 
-    // Store preview area
-    app.panel_areas.preview = Some(outer[3]);
+    // Register preview area for click hit-testing
+    app.click_regions.register(outer[3], Focus::Preview);
 }
 
 /// Render the breadcrumb bar showing the current command path.
@@ -95,7 +95,7 @@ fn render_breadcrumb(frame: &mut Frame, app: &App, area: Rect) {
     if app.filtering {
         spans.push(Span::styled("  /", Style::default().fg(colors::FILTER)));
         spans.push(Span::styled(
-            &app.filter,
+            app.filter(),
             Style::default()
                 .fg(colors::FILTER)
                 .add_modifier(Modifier::BOLD),
@@ -177,18 +177,18 @@ fn render_main_content(frame: &mut Frame, app: &mut App, area: Rect) {
 
 /// Render the subcommand list panel.
 fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect) {
-    // Store area for mouse hit-testing
-    app.panel_areas.command_list = Some(area);
+    // Register area for click hit-testing
+    app.click_regions.register(area, Focus::Commands);
 
-    let is_focused = app.focus == Focus::Commands;
+    let is_focused = app.focus() == Focus::Commands;
     let border_color = if is_focused {
         colors::ACTIVE_BORDER
     } else {
         colors::INACTIVE_BORDER
     };
 
-    let title = if app.filtering && app.focus == Focus::Commands {
-        format!(" Commands (/{}) ", app.filter)
+    let title = if app.filtering && app.focus() == Focus::Commands {
+        format!(" Commands (/{}) ", app.filter())
     } else {
         " Commands ".to_string()
     };
@@ -205,11 +205,12 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect) {
     app.ensure_visible(Focus::Commands, inner_height);
 
     let subs = app.visible_subcommands();
+    let command_index = app.command_index();
     let items: Vec<ListItem> = subs
         .iter()
         .enumerate()
         .map(|(i, (name, cmd))| {
-            let is_selected = is_focused && i == app.command_index;
+            let is_selected = is_focused && i == command_index;
             let has_children = !cmd.subcommands.is_empty();
 
             let mut spans = Vec::new();
@@ -258,29 +259,29 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let mut state = ListState::default()
         .with_selected(if is_focused {
-            Some(app.command_index)
+            Some(command_index)
         } else {
             None
         })
-        .with_offset(app.command_scroll);
+        .with_offset(app.command_scroll());
     let list = List::new(items).block(block);
     frame.render_stateful_widget(list, area, &mut state);
 }
 
 /// Render the flag list panel.
 fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
-    // Store area for mouse hit-testing
-    app.panel_areas.flag_list = Some(area);
+    // Register area for click hit-testing
+    app.click_regions.register(area, Focus::Flags);
 
-    let is_focused = app.focus == Focus::Flags;
+    let is_focused = app.focus() == Focus::Flags;
     let border_color = if is_focused {
         colors::ACTIVE_BORDER
     } else {
         colors::INACTIVE_BORDER
     };
 
-    let title = if app.filtering && app.focus == Focus::Flags {
-        format!(" Flags (/{}) ", app.filter)
+    let title = if app.filtering && app.focus() == Focus::Flags {
+        format!(" Flags (/{}) ", app.filter())
     } else {
         " Flags ".to_string()
     };
@@ -298,6 +299,7 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let flags = app.visible_flags();
     let flag_values = app.current_flag_values();
+    let flag_index = app.flag_index();
 
     // Pre-compute default values for each flag so we can show "(default)" indicator
     let flag_defaults: Vec<Option<String>> =
@@ -307,7 +309,7 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
         .iter()
         .enumerate()
         .map(|(i, flag)| {
-            let is_selected = is_focused && i == app.flag_index;
+            let is_selected = is_focused && i == flag_index;
             let is_editing = is_selected && app.editing;
             let value = flag_values.iter().find(|(n, _)| n == &flag.name);
             let default_val = flag_defaults.get(i).and_then(|d| d.as_ref());
@@ -323,12 +325,11 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
                     Span::styled("[ ] ", Style::default().fg(colors::HELP))
                 }
                 Some(FlagValue::Count(n)) => {
-                    let display = if *n > 0 {
+                    if *n > 0 {
                         Span::styled(format!("[{}] ", n), Style::default().fg(colors::COUNT))
                     } else {
                         Span::styled("[0] ", Style::default().fg(colors::HELP))
-                    };
-                    display
+                    }
                 }
                 Some(FlagValue::String(s)) => {
                     if s.is_empty() {
@@ -367,8 +368,10 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
                 spans.push(Span::styled(" = ", Style::default().fg(colors::HELP)));
 
                 if is_editing {
+                    // Show the edit_input text with cursor
+                    let edit_text = app.edit_input.text();
                     spans.push(Span::styled(
-                        s.as_str(),
+                        edit_text,
                         Style::default()
                             .fg(colors::VALUE)
                             .add_modifier(Modifier::UNDERLINED),
@@ -433,20 +436,17 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
         .collect();
 
     let mut state = ListState::default()
-        .with_selected(if is_focused {
-            Some(app.flag_index)
-        } else {
-            None
-        })
-        .with_offset(app.flag_scroll);
+        .with_selected(if is_focused { Some(flag_index) } else { None })
+        .with_offset(app.flag_scroll());
     let list = List::new(items).block(block);
     frame.render_stateful_widget(list, area, &mut state);
 }
 
 fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect) {
-    // Store area for mouse hit-testing
-    app.panel_areas.arg_list = Some(area);
-    let is_focused = app.focus == Focus::Args;
+    // Register area for click hit-testing
+    app.click_regions.register(area, Focus::Args);
+
+    let is_focused = app.focus() == Focus::Args;
     let border_color = if is_focused {
         colors::ACTIVE_BORDER
     } else {
@@ -464,12 +464,13 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect) {
     let inner_height = area.height.saturating_sub(2) as usize;
     app.ensure_visible(Focus::Args, inner_height);
 
+    let arg_index = app.arg_index();
     let items: Vec<ListItem> = app
         .arg_values
         .iter()
         .enumerate()
         .map(|(i, arg_val)| {
-            let is_selected = is_focused && i == app.arg_index;
+            let is_selected = is_focused && i == arg_index;
             let is_editing = is_selected && app.editing;
 
             let mut spans = Vec::new();
@@ -499,8 +500,10 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect) {
             spans.push(Span::styled(" = ", Style::default().fg(colors::HELP)));
 
             if is_editing {
+                // Show edit_input text with cursor
+                let edit_text = app.edit_input.text();
                 spans.push(Span::styled(
-                    &arg_val.value,
+                    edit_text,
                     Style::default()
                         .fg(colors::VALUE)
                         .add_modifier(Modifier::UNDERLINED),
@@ -554,12 +557,8 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect) {
         .collect();
 
     let mut state = ListState::default()
-        .with_selected(if is_focused {
-            Some(app.arg_index)
-        } else {
-            None
-        })
-        .with_offset(app.arg_scroll);
+        .with_selected(if is_focused { Some(arg_index) } else { None })
+        .with_offset(app.arg_scroll());
     let list = List::new(items).block(block);
     frame.render_stateful_widget(list, area, &mut state);
 }
@@ -572,7 +571,7 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
     } else if app.filtering {
         "Enter: apply  Esc: clear  ↑↓: navigate"
     } else {
-        match app.focus {
+        match app.focus() {
             Focus::Commands => {
                 "Enter/→: select  ↑↓: navigate  Tab: next panel  /: filter  Esc: back  q: quit"
             }
@@ -607,7 +606,7 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
 
 /// Render the command preview bar at the bottom.
 fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
-    let is_focused = app.focus == Focus::Preview;
+    let is_focused = app.focus() == Focus::Preview;
     let border_color = if is_focused {
         colors::ACTIVE_BORDER
     } else {
@@ -714,7 +713,7 @@ mod tests {
             .iter()
             .position(|(n, _)| n.as_str() == "config")
             .unwrap();
-        app.command_index = idx;
+        app.set_command_index(idx);
         app.navigate_into_selected();
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
@@ -728,7 +727,7 @@ mod tests {
             .iter()
             .position(|(n, _)| n.as_str() == "deploy")
             .unwrap();
-        app.command_index = idx;
+        app.set_command_index(idx);
         app.navigate_into_selected();
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
@@ -739,7 +738,7 @@ mod tests {
         let mut app = App::new(sample_spec());
         let subs = app.visible_subcommands();
         let idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
-        app.command_index = idx;
+        app.set_command_index(idx);
         app.navigate_into_selected();
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
@@ -754,19 +753,19 @@ mod tests {
             .iter()
             .position(|(n, _)| n.as_str() == "deploy")
             .unwrap();
-        app.command_index = idx;
+        app.set_command_index(idx);
         app.navigate_into_selected();
 
         // Toggle --rollback (find its index)
-        app.focus = Focus::Flags;
+        app.set_focus(Focus::Flags);
         let flag_values = app.current_flag_values();
         let rollback_idx = flag_values
             .iter()
             .position(|(n, _)| n == "rollback")
             .unwrap();
-        app.flag_index = rollback_idx;
+        app.set_flag_index(rollback_idx);
         // Toggle it
-        let fidx = app.flag_index;
+        let fidx = app.flag_index();
         let vals = app.current_flag_values_mut();
         if let Some((_, FlagValue::Bool(ref mut b))) = vals.get_mut(fidx) {
             *b = true;
@@ -778,8 +777,8 @@ mod tests {
             .iter()
             .position(|(n, _)| n == "tag")
             .unwrap();
-        app.flag_index = tag_idx;
-        let fidx = app.flag_index;
+        app.set_flag_index(tag_idx);
+        let fidx = app.flag_index();
         let vals = app.current_flag_values_mut();
         if let Some((_, FlagValue::String(ref mut s))) = vals.get_mut(fidx) {
             *s = "v1.2.3".to_string();
@@ -797,13 +796,14 @@ mod tests {
         let mut app = App::new(sample_spec());
         let subs = app.visible_subcommands();
         let idx = subs.iter().position(|(n, _)| n.as_str() == "init").unwrap();
-        app.command_index = idx;
+        app.set_command_index(idx);
         app.navigate_into_selected();
 
         // Focus on args and start editing
-        app.focus = Focus::Args;
-        app.arg_index = 0;
-        app.editing = true;
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+        app.start_editing();
+        app.edit_input.set_text("my-project");
         app.arg_values[0].value = "my-project".to_string();
 
         let output = render_to_string(&mut app, 100, 24);
@@ -814,7 +814,7 @@ mod tests {
     fn snapshot_filter_active() {
         let mut app = App::new(sample_spec());
         app.filtering = true;
-        app.filter = "pl".to_string();
+        app.filter_input.set_text("pl");
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
@@ -824,11 +824,11 @@ mod tests {
         let mut app = App::new(sample_spec());
         let subs = app.visible_subcommands();
         let idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
-        app.command_index = idx;
+        app.set_command_index(idx);
         app.navigate_into_selected();
 
         app.arg_values[0].value = "lint".to_string();
-        app.focus = Focus::Preview;
+        app.set_focus(Focus::Preview);
 
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
@@ -844,7 +844,7 @@ mod tests {
             .iter()
             .position(|(n, _)| n.as_str() == "plugin")
             .unwrap();
-        app.command_index = idx;
+        app.set_command_index(idx);
         app.navigate_into_selected();
 
         let subs = app.visible_subcommands();
@@ -852,7 +852,7 @@ mod tests {
             .iter()
             .position(|(n, _)| n.as_str() == "install")
             .unwrap();
-        app.command_index = idx;
+        app.set_command_index(idx);
         app.navigate_into_selected();
 
         let output = render_to_string(&mut app, 100, 24);
@@ -894,7 +894,7 @@ cmd "format" help="Format code" {
         "#,
         );
         let mut app = App::new(spec);
-        app.command_index = 0;
+        app.set_command_index(0);
         app.navigate_into_selected();
         let output = render_to_string(&mut app, 80, 20);
         insta::assert_snapshot!(output);
@@ -947,13 +947,13 @@ flag "-q --quiet" help="Quiet mode"
             .iter()
             .position(|(n, _)| n.as_str() == "deploy")
             .unwrap();
-        app.command_index = idx;
+        app.set_command_index(idx);
         app.navigate_into_selected();
 
         // Focus on flags and start filtering
-        app.focus = Focus::Flags;
+        app.set_focus(Focus::Flags);
         app.filtering = true;
-        app.filter = "roll".to_string();
+        app.filter_input.set_text("roll");
 
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
@@ -968,13 +968,13 @@ flag "-q --quiet" help="Quiet mode"
             .iter()
             .position(|(n, _)| n.as_str() == "deploy")
             .unwrap();
-        app.command_index = idx;
+        app.set_command_index(idx);
         app.navigate_into_selected();
 
         // Focus on flags and filter for "verb" (should match --verbose)
-        app.focus = Focus::Flags;
+        app.set_focus(Focus::Flags);
         app.filtering = true;
-        app.filter = "verb".to_string();
+        app.filter_input.set_text("verb");
 
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
@@ -1002,7 +1002,7 @@ flag "-q --quiet" help="Quiet mode"
             .iter()
             .position(|(n, _)| n.as_str() == "config")
             .unwrap();
-        app.command_index = config_idx;
+        app.set_command_index(config_idx);
         app.navigate_into_selected();
 
         let output = render_to_string(&mut app, 100, 30);
@@ -1021,7 +1021,7 @@ flag "-q --quiet" help="Quiet mode"
             .iter()
             .position(|(n, _)| n.as_str() == "deploy")
             .unwrap();
-        app.command_index = deploy_idx;
+        app.set_command_index(deploy_idx);
         app.navigate_into_selected();
 
         let output = render_to_string(&mut app, 100, 30);
@@ -1062,7 +1062,7 @@ flag "-q --quiet" help="Quiet mode"
         let mut app = App::new(sample_spec());
         let subs = app.visible_subcommands();
         let idx = subs.iter().position(|(n, _)| n.as_str() == "init").unwrap();
-        app.command_index = idx;
+        app.set_command_index(idx);
         app.navigate_into_selected();
 
         app.arg_values[0].value = "hello".to_string();
@@ -1079,7 +1079,7 @@ flag "-q --quiet" help="Quiet mode"
             .iter()
             .position(|(n, _)| n.as_str() == "config")
             .unwrap();
-        app.command_index = idx;
+        app.set_command_index(idx);
         app.navigate_into_selected();
 
         let output = render_to_string(&mut app, 100, 30);
@@ -1105,7 +1105,7 @@ flag "-q --quiet" help="Quiet mode"
             .iter()
             .position(|(n, _)| n.as_str() == "deploy")
             .unwrap();
-        app.command_index = idx;
+        app.set_command_index(idx);
         app.navigate_into_selected();
 
         let output = render_to_string(&mut app, 100, 24);
@@ -1121,7 +1121,7 @@ flag "-q --quiet" help="Quiet mode"
             .iter()
             .position(|(n, _)| n.as_str() == "deploy")
             .unwrap();
-        app.command_index = idx;
+        app.set_command_index(idx);
         app.navigate_into_selected();
 
         let output = render_to_string(&mut app, 100, 24);
@@ -1141,14 +1141,14 @@ flag "-q --quiet" help="Quiet mode"
             .iter()
             .position(|(n, _)| n.as_str() == "deploy")
             .unwrap();
-        app.command_index = idx;
+        app.set_command_index(idx);
         app.navigate_into_selected();
 
         // Focus flags and toggle yes flag
-        app.focus = Focus::Flags;
+        app.set_focus(Focus::Flags);
         let flag_values = app.current_flag_values();
         let yes_idx = flag_values.iter().position(|(n, _)| n == "yes").unwrap();
-        app.flag_index = yes_idx;
+        app.set_flag_index(yes_idx);
 
         // Toggle via space key
         app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
