@@ -1,0 +1,94 @@
+name "My CLI"
+bin "mycli"
+about "A sample CLI for testing tuisage"
+version "1.0.0"
+
+flag "-v --verbose" help="Enable verbose logging" global=#true count=#true
+flag "-q --quiet" help="Enable quiet mode" global=#true
+flag "-u --user <user>" help="User to run as"
+
+cmd "init" help="Initialize a new project" {
+    arg "<name>" help="Project name"
+    flag "-t --template <template>" help="Template to use" {
+        arg "<template>" {
+            choices "basic" "full" "minimal"
+        }
+    }
+    flag "-f --force" help="Overwrite existing files"
+}
+
+cmd "config" help="Manage configuration" {
+    cmd "set" help="Set a config value" {
+        alias "add"
+        arg "<key>" help="The config key"
+        arg "<value>" help="The config value"
+        flag "-f --force" help="Overwrite existing value"
+        flag "-g --global" help="Set globally"
+    }
+    cmd "get" help="Get a config value" {
+        arg "<key>" help="The config key"
+        flag "--json" help="Output as JSON"
+    }
+    cmd "list" help="List all config values" {
+        alias "ls"
+        flag "--json" help="Output as JSON"
+        flag "--format <format>" help="Output format" {
+            arg "<format>" {
+                choices "table" "json" "yaml" "toml"
+            }
+        }
+    }
+    cmd "remove" help="Remove a config value" {
+        alias "rm"
+        alias "delete" hide=#true
+        arg "<key>" help="The config key to remove"
+    }
+}
+
+cmd "run" help="Run a task" {
+    arg "<task>" help="Task name to run"
+    arg "[args...]" help="Additional arguments to pass" var=#true
+    flag "-e --env <env>" help="Environment to run in" {
+        arg "<env>" {
+            choices "dev" "staging" "prod"
+        }
+    }
+    flag "-j --jobs <n>" help="Number of parallel jobs" default="4"
+    flag "--dry-run" help="Show what would be run without executing"
+    flag "-w --watch" help="Watch for changes and re-run"
+}
+
+cmd "deploy" help="Deploy the application" {
+    arg "<environment>" help="Target environment" {
+        choices "dev" "staging" "prod"
+    }
+    flag "--tag <tag>" help="Docker image tag"
+    flag "--rollback" help="Rollback to previous version"
+    flag "--skip-tests" help="Skip running tests before deploy"
+    flag "-y --yes" help="Skip confirmation prompt"
+}
+
+cmd "plugin" help="Manage plugins" {
+    cmd "install" help="Install a plugin" {
+        alias "i"
+        arg "<name>" help="Plugin name"
+        arg "[version]" help="Plugin version"
+        flag "-f --force" help="Force reinstall"
+    }
+    cmd "uninstall" help="Uninstall a plugin" {
+        alias "rm"
+        arg "<name>" help="Plugin name"
+    }
+    cmd "list" help="List installed plugins" {
+        alias "ls"
+        flag "--all" help="Show all available plugins"
+        flag "--outdated" help="Show only outdated plugins"
+    }
+    cmd "update" help="Update plugins" {
+        arg "[name]" help="Plugin name (updates all if omitted)"
+        flag "--all" help="Update all plugins"
+    }
+}
+
+cmd "version" help="Print the CLI version"
+cmd "help" help="Print help information"

@@ -1,0 +1,20 @@
+[package]
+name = "tuisage"
+version = "0.1.0"
+edition = "2021"
+description = "TUI application for interacting with CLI commands defined by usage specs"
+license = "MIT"
+
+[[bin]]
+name = "tuisage"
+path = "src/main.rs"
+
+[dependencies]
+color-eyre = "0.6"
+crossterm = { version = "0.28", features = ["event-stream"] }
+ratatui = "0.29"
+usage-lib = { version = "2.16", default-features = false }
+
+[dev-dependencies]
+insta = "1"
+pretty_assertions = "1"

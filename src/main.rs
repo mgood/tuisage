@@ -1,0 +1,74 @@
+use std::path::PathBuf;
+
+mod app;
+mod ui;
+
+use app::App;
+
+fn main() -> color_eyre::Result<()> {
+    color_eyre::install()?;
+
+    let args: Vec<String> = std::env::args().collect();
+    let file_path = match args.get(1) {
+        Some(path) => PathBuf::from(path),
+        None => {
+            eprintln!("Usage: tuisage <spec-file.usage.kdl>");
+            std::process::exit(1);
+        }
+    };
+
+    let spec = usage::Spec::parse_file(&file_path).map_err(|e| {
+        color_eyre::eyre::eyre!(
+            "Failed to parse usage spec '{}': {}",
+            file_path.display(),
+            e
+        )
+    })?;
+
+    let mut terminal = ratatui::init();
+    let mut app = App::new(spec);
+    let result = run_event_loop(&mut terminal, &mut app);
+    ratatui::restore();
+
+    match result {
+        Ok(Some(command)) => {
+            println!("{command}");
+            Ok(())
+        }
+        Ok(None) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+fn run_event_loop(
+    terminal: &mut ratatui::DefaultTerminal,
+    app: &mut App,
+) -> color_eyre::Result<Option<String>> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+
+    loop {
+        terminal.draw(|frame| ui::render(frame, app))?;
+
+        if let Event::Key(key) = event::read()? {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+
+            // Global quit shortcuts
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+                return Ok(None);
+            }
+
+            match app.handle_key(key) {
+                app::Action::None => {}
+                app::Action::Quit => return Ok(None),
+                app::Action::Accept => {
+                    let cmd = app.build_command();
+                    if !cmd.is_empty() {
+                        return Ok(Some(cmd));
+                    }
+                }
+            }
+        }
+    }
+}
