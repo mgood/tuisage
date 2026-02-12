@@ -388,19 +388,20 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
 
     // Compute counts for title before mutable borrow
     let flag_index = app.flag_index();
-    let flag_total = app.current_flag_values().len();
+    let visible_count = app.visible_flags().len();
+    let total_count = app.current_flag_values().len();
 
     let title = if app.filtering && app.focus() == Focus::Flags {
         format!(
             " Flags (/{}) [{}/{}] ",
             app.filter(),
             flag_index + 1,
-            flag_total
+            visible_count
         )
-    } else if flag_total > 0 && is_focused {
-        format!(" Flags [{}/{}] ", flag_index + 1, flag_total)
+    } else if total_count > 0 && is_focused {
+        format!(" Flags [{}/{}] ", flag_index + 1, total_count)
     } else {
-        format!(" Flags ({}) ", flag_total)
+        format!(" Flags ({}) ", total_count)
     };
 
     let block = Block::default()
@@ -749,7 +750,7 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) 
     frame.render_widget(hints, layout[1]);
 }
 
-/// Render the command preview bar at the bottom.
+/// Render the command preview bar at the bottom with colorized parts.
 fn render_preview(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) {
     let is_focused = app.focus() == Focus::Preview;
     let border_color = if is_focused {
@@ -758,8 +759,6 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) {
         colors.inactive_border
     };
 
-    let command = app.build_command();
-
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
@@ -767,24 +766,99 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) {
         .title_style(Style::default().fg(border_color).bold())
         .padding(Padding::horizontal(1));
 
-    let style = if is_focused {
-        Style::default()
-            .fg(colors.preview_cmd)
-            .add_modifier(Modifier::BOLD)
+    let prefix = if is_focused { "▶ " } else { "$ " };
+    let bold = if is_focused {
+        Modifier::BOLD
     } else {
-        Style::default().fg(colors.preview_cmd)
+        Modifier::empty()
     };
 
-    let prefix = if is_focused { "▶ " } else { "$ " };
+    // Build colorized command by tokenizing the built command string
+    let command = app.build_command();
+    let mut spans = vec![Span::styled(prefix, Style::default().fg(colors.command))];
+    colorize_command(&command, app, &mut spans, colors, bold);
 
-    let paragraph = Paragraph::new(Line::from(vec![
-        Span::styled(prefix, Style::default().fg(colors.command)),
-        Span::styled(command, style),
-    ]))
-    .block(block)
-    .wrap(Wrap { trim: false });
+    let paragraph = Paragraph::new(Line::from(spans))
+        .block(block)
+        .wrap(Wrap { trim: false });
 
     frame.render_widget(paragraph, area);
+}
+
+/// Colorize a built command string by categorizing each token as bin, subcommand, flag, or arg.
+fn colorize_command(
+    command: &str,
+    app: &App,
+    spans: &mut Vec<Span<'static>>,
+    colors: &UiColors,
+    bold: Modifier,
+) {
+    let bin = if app.spec.bin.is_empty() {
+        &app.spec.name
+    } else {
+        &app.spec.bin
+    };
+
+    // Collect known subcommand names from the path
+    let subcommand_names: std::collections::HashSet<&str> =
+        app.command_path.iter().map(|s| s.as_str()).collect();
+
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+    let mut i = 0;
+    let mut expect_flag_value = false;
+
+    while i < tokens.len() {
+        if i > 0 {
+            spans.push(Span::raw(" "));
+        }
+
+        let token = tokens[i];
+
+        if i == 0 && token == bin {
+            // Binary name — bold with primary text color
+            spans.push(Span::styled(
+                token.to_string(),
+                Style::default()
+                    .fg(colors.preview_cmd)
+                    .add_modifier(bold | Modifier::BOLD),
+            ));
+        } else if expect_flag_value {
+            // Value following a flag like --tag
+            spans.push(Span::styled(
+                token.to_string(),
+                Style::default().fg(colors.value).add_modifier(bold),
+            ));
+            expect_flag_value = false;
+        } else if token.starts_with('-') {
+            // Flag token
+            spans.push(Span::styled(
+                token.to_string(),
+                Style::default().fg(colors.flag).add_modifier(bold),
+            ));
+            // Check if this flag expects a value (next token is not a flag and not a subcommand)
+            if let Some(&next) = tokens.get(i + 1) {
+                if !next.starts_with('-') && !subcommand_names.contains(next) {
+                    // Heuristic: flags like --tag expect a value; boolean flags like --rollback don't
+                    // We peek ahead: if the next token doesn't look like a subcommand, treat it as a value
+                    expect_flag_value = true;
+                }
+            }
+        } else if subcommand_names.contains(token) {
+            // Subcommand name
+            spans.push(Span::styled(
+                token.to_string(),
+                Style::default().fg(colors.command).add_modifier(bold),
+            ));
+        } else {
+            // Positional argument value
+            spans.push(Span::styled(
+                token.to_string(),
+                Style::default().fg(colors.arg).add_modifier(bold),
+            ));
+        }
+
+        i += 1;
+    }
 }
 
 /// Format a flag's display string (e.g., "-f, --force" or "--verbose").
