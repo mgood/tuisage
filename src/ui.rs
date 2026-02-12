@@ -1487,4 +1487,220 @@ flag "-q --quiet" help="Quiet mode"
         assert!(output.contains("mycli"));
         assert!(output.contains("config"));
     }
+
+    // ── Colorized preview tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_preview_shows_flags_and_args() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "deploy")
+            .unwrap();
+        app.set_command_index(idx);
+        app.navigate_into_selected();
+
+        // Set flag and arg values
+        let fidx = app
+            .current_flag_values()
+            .iter()
+            .position(|(n, _)| n == "tag")
+            .unwrap();
+        app.set_flag_index(fidx);
+        let vals = app.current_flag_values_mut();
+        if let Some((_, FlagValue::String(ref mut s))) = vals.get_mut(fidx) {
+            *s = "latest".to_string();
+        }
+        app.arg_values[0].value = "prod".to_string();
+
+        let output = render_to_string(&mut app, 100, 24);
+        // Preview should contain the full colorized command
+        assert!(output.contains("mycli"));
+        assert!(output.contains("deploy"));
+        assert!(output.contains("--tag"));
+        assert!(output.contains("latest"));
+        assert!(output.contains("prod"));
+    }
+
+    #[test]
+    fn test_preview_focused_shows_run_indicator() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Preview);
+        let output = render_to_string(&mut app, 100, 24);
+        // Focused preview uses ▶ prefix instead of $
+        assert!(output.contains("▶"));
+    }
+
+    #[test]
+    fn test_preview_unfocused_shows_dollar() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Commands);
+        let output = render_to_string(&mut app, 100, 24);
+        // Unfocused preview uses $ prefix
+        assert!(output.contains("$ mycli"));
+    }
+
+    // ── Panel count display tests ───────────────────────────────────────
+
+    #[test]
+    fn test_focused_panel_shows_position() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Commands);
+        app.set_command_index(2);
+        let output = render_to_string(&mut app, 100, 24);
+        // Focused panel shows [position/total]
+        assert!(output.contains("[3/7]"));
+    }
+
+    #[test]
+    fn test_unfocused_panel_shows_count() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Commands);
+        let output = render_to_string(&mut app, 100, 24);
+        // Unfocused flags panel shows (count)
+        assert!(output.contains("Flags (3)"));
+    }
+
+    #[test]
+    fn test_selection_cursor_visible() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Commands);
+        let output = render_to_string(&mut app, 100, 24);
+        // Selected item should have ▸ cursor
+        assert!(output.contains("▸"));
+    }
+
+    #[test]
+    fn test_filter_shows_filtered_count() {
+        let mut app = App::new(sample_spec());
+        // Navigate to deploy (has 6 flags)
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "deploy")
+            .unwrap();
+        app.set_command_index(idx);
+        app.navigate_into_selected();
+
+        app.set_focus(Focus::Flags);
+        app.filtering = true;
+        app.filter_input.set_text("roll");
+
+        let output = render_to_string(&mut app, 100, 24);
+        // Should show filtered count [1/1], not [1/6]
+        assert!(output.contains("[1/1]"));
+    }
+
+    // ── Unicode checkbox tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_checked_flag_shows_checked_box() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "deploy")
+            .unwrap();
+        app.set_command_index(idx);
+        app.navigate_into_selected();
+
+        // Toggle rollback flag on
+        app.set_focus(Focus::Flags);
+        let fidx = app
+            .current_flag_values()
+            .iter()
+            .position(|(n, _)| n == "rollback")
+            .unwrap();
+        app.set_flag_index(fidx);
+        let vals = app.current_flag_values_mut();
+        if let Some((_, FlagValue::Bool(ref mut b))) = vals.get_mut(fidx) {
+            *b = true;
+        }
+
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(output.contains("☑"));
+    }
+
+    #[test]
+    fn test_unchecked_flag_shows_empty_box() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "deploy")
+            .unwrap();
+        app.set_command_index(idx);
+        app.navigate_into_selected();
+
+        let output = render_to_string(&mut app, 100, 24);
+        // Unchecked boolean flags should show ☐
+        assert!(output.contains("☐"));
+    }
+
+    // ── Theme visual consistency tests ──────────────────────────────────
+
+    #[test]
+    fn test_all_themes_render_without_panic() {
+        for theme in ThemeName::all() {
+            let mut app = App::with_theme(sample_spec(), *theme);
+            // Navigate into a command with flags + args for full rendering coverage
+            let subs = app.visible_subcommands();
+            let idx = subs
+                .iter()
+                .position(|(n, _)| n.as_str() == "deploy")
+                .unwrap();
+            app.set_command_index(idx);
+            app.navigate_into_selected();
+
+            // Should render without panicking for any theme
+            let output = render_to_string(&mut app, 100, 24);
+            assert!(
+                output.contains("mycli"),
+                "Theme {:?} failed to render binary name",
+                theme
+            );
+            assert!(
+                output.contains("deploy"),
+                "Theme {:?} failed to render subcommand in breadcrumb",
+                theme
+            );
+            assert!(
+                output.contains(theme.display_name()),
+                "Theme {:?} name not shown in status bar",
+                theme
+            );
+        }
+    }
+
+    #[test]
+    fn test_light_theme_renders() {
+        // Test a light theme to ensure we handle light backgrounds
+        let mut app = App::with_theme(sample_spec(), ThemeName::CatppuccinLatte);
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(output.contains("mycli"));
+        assert!(output.contains("Catppuccin Latte"));
+    }
+
+    #[test]
+    fn test_ui_colors_from_palette_consistency() {
+        // Verify UiColors derives correctly from different palettes
+        let dracula_palette = ThemeName::Dracula.palette();
+        let nord_palette = ThemeName::Nord.palette();
+
+        let dracula_colors = super::UiColors::from_palette(&dracula_palette);
+        let nord_colors = super::UiColors::from_palette(&nord_palette);
+
+        // command uses info color, which should differ between themes
+        assert_eq!(dracula_colors.command, dracula_palette.info);
+        assert_eq!(nord_colors.command, nord_palette.info);
+
+        // flag uses warning color
+        assert_eq!(dracula_colors.flag, dracula_palette.warning);
+        assert_eq!(nord_colors.flag, nord_palette.warning);
+
+        // required uses error color
+        assert_eq!(dracula_colors.required, dracula_palette.error);
+        assert_eq!(nord_colors.required, nord_palette.error);
+    }
 }
