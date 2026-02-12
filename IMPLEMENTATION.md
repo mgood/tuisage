@@ -93,32 +93,34 @@ The core state and logic module (~2050 lines including ~960 lines of tests).
 - **`visible_subcommands()`** — returns subcommands at the current level (test-only, used for backward compatibility).
 - **`visible_flags()`** — returns all flags for the current command plus inherited global flags (no filtering; rendering applies styling).
 - **`sync_state()`** — initializes or restores flag/arg values when navigating to a new command. Handles defaults.
-- **`sync_command_path_from_tree()`** — derives `command_path` from the currently selected tree node and calls `sync_state()`.
+- **`sync_command_path_from_tree()`** — derives `command_path` from the currently selected command in the flat list and calls `sync_state()`.
 - **`handle_key()`** — top-level key dispatcher. Routes to `handle_editing_key()`, `handle_filter_key()`, or direct navigation/action based on current mode.
 - **`handle_mouse()`** — maps mouse events to panel focus, item selection, scroll, and activation. Finishes any active edit before switching targets.
 - **`build_command()`** — assembles the complete command string from the current state.
 - **`fuzzy_match_score()`** — scored fuzzy matching using `nucleo-matcher::Pattern`, returns match quality score (0 for no match). Uses `Pattern::parse()` for proper multi-word and special character support (^, $, !, ').
 - **`fuzzy_match_indices()`** — returns both score and match indices for character-level highlighting. Indices are sorted and deduplicated as recommended by nucleo-matcher docs.
-- **`compute_tree_match_scores()`** — computes match scores for all tree nodes when filtering is active; returns map of node ID → score.
+- **`compute_tree_match_scores()`** — computes match scores for all commands in the flat list when filtering is active; matches against the command name, aliases, help text, and the full ancestor path (e.g. "config set") so queries like "cfgset" work. Returns map of node ID → score.
 - **`compute_flag_match_scores()`** — computes match scores for all flags when filtering is active; returns map of flag name → score.
-- **`auto_select_next_match()`** — automatically moves selection to next matching item when current selection doesn't match filter.
-- **`tree_toggle_selected()`** — toggles expand/collapse of the selected tree node (Enter key on Commands).
-- **`tree_expand_or_enter()`** — expands a collapsed node or moves to its first child (Right/l key).
-- **`tree_collapse_or_parent()`** — collapses an expanded node or moves to its parent (Left/h key).
-- **`navigate_to_command()`** — expands ancestors and selects a specific command by path (used in tests).
-- **`navigate_into_selected()`** / **`navigate_up()`** — backward-compatible wrappers for tree expand+select-child / select-parent.
+- **`auto_select_next_match()`** — automatically moves selection to the first matching item when current selection doesn't match filter. Operates on the full flat command list.
+- **`tree_expand_or_enter()`** — moves selection to first child of the selected command (Right/l key).
+- **`tree_collapse_or_parent()`** — moves selection to the parent command (Left/h key).
+- **`navigate_to_command()`** — selects a specific command by path in the flat list (used in tests).
+- **`navigate_into_selected()`** / **`navigate_up()`** — select first child / select parent in the flat list.
+- **`flatten_command_tree()`** — flattens the `TreeNode` hierarchy into a `Vec<FlatCommand>` with depth and full path information. All commands are always visible.
 - **`ensure_visible()`** — adjusts scroll offset so the selected item is within the visible viewport.
 
-#### Tree Building
+#### Command Tree and Flat List
 
 The command hierarchy is built at startup by `build_command_tree()`:
 
-1. The root node (ID `""`) represents the binary name and the root command's flags/args.
-2. Each subcommand becomes a child `TreeNode<CmdData>` with ID set to the space-joined command path (e.g., `"config set"`).
-3. Hidden commands (`hide=true`) are filtered out.
-4. Non-root nodes with children are initially collapsed, so the tree starts showing only the top-level subcommands.
+1. Each subcommand becomes a child `TreeNode<CmdData>` with ID set to the space-joined command path (e.g., `"config set"`).
+2. Hidden commands (`hide=true`) are filtered out.
+3. `flatten_command_tree()` converts the tree into a flat `Vec<FlatCommand>` for display and navigation. Each `FlatCommand` includes:
+   - `depth` — nesting level (0 for top-level commands)
+   - `full_path` — space-joined ancestor names (e.g. "config set") used for fuzzy matching
+   - `id` — same as the tree node ID, used for score lookups
 
-Helper functions `flatten_visible_ids()`, `flatten_visible_nodes()`, and `count_visible()` traverse the tree respecting collapsed state.
+All commands are always visible — there is no expand/collapse. The flat list is the single source of truth for navigation, matching, and rendering.
 
 #### State Synchronization Flow
 
@@ -143,7 +145,7 @@ A semantic color palette derived from the active `ThemePalette`. Maps abstract r
 
 - **`render()`** — top-level entry point called by the event loop. Computes layout, derives colors, and delegates to sub-renderers.
 - **`render_main_content()`** — splits the area into up to 3 columns (commands, flags, args). Commands tree is always visible. Hides flags/args panels with no content and redistributes space.
-- **`render_command_list()`** — renders the command tree using ratatui-interact's `TreeView` widget with themed `TreeStyle`, showing expand/collapse icons, tree connectors, and aliases.
+- **`render_command_list()`** — renders the command list as a flat `List` widget with depth-based indentation (2 spaces per level). Supports per-item styling: selected items get bold text, non-matching items are dimmed during filtering, and matching characters are highlighted with inverted colors on selected items or bold+underlined on unselected items.
 - **`render_flag_list()`** — renders flags with checkbox indicators (✓/○), values, defaults, global tags, and count badges.
 - **`render_arg_list()`** — renders arguments with required indicators, current values, choices, and inline editing.
 - **`render_preview()`** — renders the colorized command preview with `▶ RUN` or `$` prefix based on focus.
@@ -160,12 +162,12 @@ During rendering, each panel's `Rect` is stored in `app.click_regions` as a `(Re
 When filtering is active (`app.filtering == true`):
 
 1. **Match Score Computation** — `compute_tree_match_scores()` and `compute_flag_match_scores()` use `nucleo-matcher::Pattern` to score all items against the filter pattern. Pattern-based matching properly handles multi-word patterns and fzf-style special characters.
-2. **Visual Styling** — Items with score = 0 (non-matches) are rendered with `Modifier::DIM` to subdue them without shifting the layout.
-3. **Character Highlighting** — For flags, `fuzzy_match_indices()` returns the positions of matched characters, and `build_highlighted_text()` in `ui.rs` creates styled spans with matching characters bold+underlined.
-4. **Auto-Selection** — When the filter changes, `auto_select_next_match()` moves the cursor to the first matching item if the current selection doesn't match.
-5. **Panel Switching** — `set_focus()` clears the filter when changing panels (via Tab or mouse) to prevent confusion.
-
-**Note**: TreeView from `ratatui-interact` doesn't support per-item styling, so command tree items can't be dimmed individually. Flags use manual rendering with styled spans, enabling full highlighting support.
+2. **Full-Path Matching** — Commands are scored against their full ancestor path (e.g. "config set") in addition to the command name, aliases, and help text. This means queries like "cfgset" will match "config set" where "set" is a subcommand of "config".
+3. **Visual Styling** — Items with score = 0 (non-matches) are rendered with `Modifier::DIM` to subdue them without shifting the layout. This applies to both commands and flags.
+4. **Character Highlighting** — `fuzzy_match_indices()` returns the positions of matched characters, and `build_highlighted_text()` creates styled spans. On unselected items, matches are bold+underlined. On selected items, matches use inverted colors (foreground↔background) for visibility against the selection background.
+5. **Auto-Selection** — When the filter changes, `auto_select_next_match()` moves the cursor to the first matching item if the current selection doesn't match. This operates on the full flat command list for commands, and the full flag list for flags.
+6. **Panel Switching** — `set_focus()` clears the filter when changing panels (via Tab or mouse) to prevent confusion.
+7. **Clean Headers** — Panel titles show just the panel name (e.g. "Commands", "Flags", "Arguments") without counts. When filtering is active, the filter query is shown (e.g. "Flags (/roll)").
 
 ## Dependencies
 
@@ -241,7 +243,7 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - Core app state: navigation, flag values, arg values, command building
 - Full TUI rendering: 3-panel layout, preview, help bar
 - Keyboard navigation: vim keys, Tab cycling, Enter/Space/Backspace actions
-- Fuzzy filtering with scored ranking, subdued non-matches, and character-level match highlighting (nucleo-matcher Pattern API with proper multi-word and special character support)
+- Fuzzy filtering with scored ranking, subdued non-matches, character-level match highlighting, and full-path subcommand matching (nucleo-matcher Pattern API)
 - Mouse support: click, scroll, right-click, click-to-activate
 - Visual polish: theming, scrolling, default indicators, accessible symbols
 - Stdin support for piped specs

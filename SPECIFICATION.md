@@ -70,17 +70,18 @@ The terminal is divided into the following regions, rendered top-to-bottom:
 
 ### Commands Panel
 
-- Displays the full command hierarchy as an expandable/collapsible tree view using `ratatui-interact`'s `TreeView` component.
-- Each node shows the command name and its `help` text (if available).
+- Displays the full command hierarchy as a flat list with depth-based indentation (2 spaces per level).
+- All commands and subcommands are always visible — there is no expand/collapse.
+- Each item shows the command name and its `help` text (if available).
 - Aliases are shown alongside the command name (e.g., `remove (rm)`).
-- Tree nodes can be expanded (→) or collapsed (←) to show/hide subcommands.
-- The selected command in the tree determines which flags and arguments are displayed in the other panels.
+- Left arrow (←/h) moves selection to the parent command; Right arrow (→/l) moves to the first child.
+- The selected command determines which flags and arguments are displayed in the other panels.
 - When filtering is active, all commands remain visible:
   - **Non-matching commands** are displayed in a dimmed/subdued color
-  - **Matching commands** are displayed normally, with matching characters highlighted
+  - **Matching commands** are displayed normally, with matching characters highlighted (bold+underlined on unselected items, inverted colors on the selected item)
+  - **Matching includes the full ancestor path** so that queries like "cfgset" match "config set"
   - **Selected command** is always shown with bold styling and cursor indicator
-- The panel title shows position when focused (e.g., `Commands [2/15]`) or matching count when filtering (e.g., `Commands (/query) [2/15 matched]`).
-- The root command (binary name) is always visible at the top of the tree.
+- The panel title shows just "Commands" (no counts), or "Commands (/query)" when filtering is active.
 
 ### Flags Panel
 
@@ -90,12 +91,14 @@ The terminal is divided into the following regions, rendered top-to-bottom:
   - The flag name (long form preferred, short form shown alongside)
   - Current value for value-bearing flags
   - `(default: X)` indicator when a default value exists
-  - `[global]` indicator for inherited flags
-  - Count value for count flags (e.g., `(×3)`)
+  - `[G]` indicator for inherited global flags
+  - Count value for count flags (e.g., `[3]`)
 - Flags with choices show the current selection.
+- The panel title shows just "Flags" (no counts), or "Flags (/query)" when filtering is active.
 
 ### Arguments Panel
 
+- The panel title shows just "Arguments" (no counts).
 - Lists positional arguments for the currently selected command.
 - Each argument shows:
   - The argument name
@@ -186,7 +189,7 @@ When the user navigates to a new command, the state is synchronized:
 |---|---|
 | `Ctrl-C` | Quit immediately (no output) |
 | `q` | Quit (when not editing or filtering) |
-| `Esc` | Context-dependent: cancel filter → cancel edit → navigate up → quit |
+| `Esc` | Context-dependent: cancel filter → cancel edit → move to parent command → quit |
 
 ### Navigation Keys
 
@@ -270,15 +273,15 @@ If the user is currently editing a value and clicks on a different item or panel
 Filtering uses scored fuzzy-matching (powered by `nucleo-matcher::Pattern`):
 
 1. The user presses `/` to activate filter mode in the Commands or Flags panel.
-2. The panel title shows the filter query (e.g., `Commands (/query) [2/15 matched]`).
+2. The panel title shows the filter query (e.g., `Commands (/query)` or `Flags (/roll)`). No counts are shown.
 3. As the user types, items are scored against the filter pattern using `Pattern::parse()`:
    - **Pattern matching** supports multi-word patterns (whitespace-separated) and fzf-style special characters (^, $, !, ')
-   - **Matching items** (score > 0) are displayed in normal color with matching characters highlighted (bold + underlined)
+   - **Matching items** (score > 0) are displayed in normal color with matching characters highlighted (bold+underlined on unselected items, inverted colors on the selected item)
    - **Non-matching items** (score = 0) are displayed in a dimmed/subdued color without shifting the layout
    - Match indices are sorted and deduplicated for accurate character-level highlighting
-4. In the Commands panel, the full tree structure is preserved — users can see all available commands for context.
-5. **Auto-selection**: If the currently selected item doesn't match the filter, the selection automatically moves to the next matching item.
-6. The panel title updates to show matching count vs. total (e.g., `Commands (/pl) [2/7 matched]`).
+4. **Full-path matching**: In the Commands panel, subcommands are matched against their full ancestor path (e.g. "config set") so that queries like "cfgset" match subcommands via their parent chain.
+5. All commands remain visible for context — the flat list structure is preserved.
+6. **Auto-selection**: If the currently selected item doesn't match the filter, the selection automatically moves to the first matching item.
 7. Navigation keys (`↑`/`↓`) operate on all items, but matching items stand out visually.
 8. `Enter` applies the filter and exits filter mode.
 9. `Esc` clears the filter and returns to the normal view.
