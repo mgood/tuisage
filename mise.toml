@@ -1,0 +1,32 @@
+[tasks.test]
+description = "Run tests"
+usage = '''
+arg "[pattern]" help="Test name pattern to filter"
+flag "-v --verbose" help="Show test output" count=#true
+flag "--no-capture" help="Don't capture stdout/stderr"
+flag "--ignored" help="Run only ignored tests"
+'''
+run = '''
+ARGS=""
+[[ -n "${usage_pattern:-}" ]] && ARGS="$ARGS ${usage_pattern}"
+[[ "${usage_verbose:-0}" -gt 0 ]] && ARGS="$ARGS --verbose"
+[[ "${usage_no_capture:-false}" == "true" ]] && ARGS="$ARGS --nocapture"
+[[ "${usage_ignored:-false}" == "true" ]] && ARGS="$ARGS --ignored"
+cargo test $ARGS
+'''
+
+[tasks.lint]
+description = "Run linters"
+usage = '''
+flag "--fix" help="Automatically fix issues"
+flag "--format <format>" help="Output format" default="human" {
+  choices "human" "json" "checkstyle"
+}
+'''
+run = '''
+if [[ "${usage_fix:-false}" == "true" ]]; then
+  cargo clippy --fix --allow-dirty --allow-staged
+else
+  cargo clippy -- -D warnings
+fi
+'''
