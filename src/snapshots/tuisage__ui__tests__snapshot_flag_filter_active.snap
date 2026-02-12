@@ -3,12 +3,12 @@ source: src/ui.rs
 expression: output
 ---
 ┌ Commands (7) ────────────────────────┐┌ Flags (/roll) [1/1 matched] ─────────────────────────────┐
-│  init — Initialize a new project     ││ · ▶ [·] --tag = <tag> — Docker image tag                 │
+│  init — Initialize a new project     ││ ▶ [·] --tag = <tag> — Docker image tag                   │
 │  ▶ config — Manage configuration     ││   ○ --rollback — Rollback to previous version            │
-│  run — Run a task                    ││ ·   ○ --skip-tests — Skip running tests before deploy    │
-│▶ deploy — Deploy the application     ││ ·   ○ -y, --yes — Skip confirmation prompt               │
-│  ▶ plugin — Manage plugins           ││ ·   [0] -v, --verbose [G] — Enable verbose logging       │
-│  version — Print the CLI version     ││ ·   ○ -q, --quiet [G] — Enable quiet mode                │
+│  run — Run a task                    ││   ○ --skip-tests — Skip running tests before deploy      │
+│▶ deploy — Deploy the application     ││   ○ -y, --yes — Skip confirmation prompt                 │
+│  ▶ plugin — Manage plugins           ││   [0] -v, --verbose [G] — Enable verbose logging         │
+│  version — Print the CLI version     ││   ○ -q, --quiet [G] — Enable quiet mode                  │
 │  help — Print help information       ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │

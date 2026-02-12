@@ -182,6 +182,11 @@ impl App {
 
     /// Set the focus to a specific panel.
     pub fn set_focus(&mut self, panel: Focus) {
+        // Clear filter when changing panels
+        if self.focus() != panel && self.filtering {
+            self.filtering = false;
+            self.filter_input.clear();
+        }
         self.focus_manager.set(panel);
     }
 
@@ -1503,6 +1508,32 @@ pub fn fuzzy_match_score(text: &str, pattern: &str, matcher: &mut Matcher) -> u3
     atom.score(haystack, matcher)
         .map(|score| score as u32)
         .unwrap_or(0)
+}
+
+/// Fuzzy match and return both score and match indices.
+/// Returns (score, Vec<byte_indices>) where indices are the positions of matched characters.
+pub fn fuzzy_match_indices(text: &str, pattern: &str, matcher: &mut Matcher) -> (u32, Vec<u32>) {
+    use nucleo_matcher::pattern::Normalization;
+    use nucleo_matcher::Utf32Str;
+
+    let atom = Atom::new(
+        pattern,
+        CaseMatching::Smart,
+        Normalization::Smart,
+        AtomKind::Fuzzy,
+        false, // append_dollar
+    );
+
+    // Convert text to UTF-32 for matching
+    let mut haystack_buf = Vec::new();
+    let haystack = Utf32Str::new(text, &mut haystack_buf);
+
+    let mut indices = Vec::new();
+    if let Some(score) = atom.indices(haystack, matcher, &mut indices) {
+        (score as u32, indices)
+    } else {
+        (0, Vec::new())
+    }
 }
 
 /// Simple boolean fuzzy match for backward compatibility (used in tests).

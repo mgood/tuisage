@@ -83,7 +83,60 @@ impl UiColors {
     }
 }
 
-/// Main render function called from the event loop.
+/// Build spans with highlighted characters based on fuzzy match indices.
+/// Returns a Vec<Span> where matching characters are styled with highlight_style.
+fn build_highlighted_text(
+    text: &str,
+    pattern: &str,
+    normal_style: Style,
+    highlight_style: Style,
+) -> Vec<Span<'static>> {
+    use crate::app::fuzzy_match_indices;
+    use nucleo_matcher::{Config, Matcher};
+
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let (_score, indices) = fuzzy_match_indices(text, pattern, &mut matcher);
+
+    if indices.is_empty() {
+        // No matches, return whole text with normal style
+        return vec![Span::styled(text.to_string(), normal_style)];
+    }
+
+    let mut spans = Vec::new();
+    let chars: Vec<char> = text.chars().collect();
+    let mut last_idx = 0;
+
+    for &match_idx in &indices {
+        let idx = match_idx as usize;
+        if idx >= chars.len() {
+            continue;
+        }
+
+        // Add normal text before this match
+        if last_idx < idx {
+            let before: String = chars[last_idx..idx].iter().collect();
+            if !before.is_empty() {
+                spans.push(Span::styled(before, normal_style));
+            }
+        }
+
+        // Add highlighted match character
+        spans.push(Span::styled(chars[idx].to_string(), highlight_style));
+        last_idx = idx + 1;
+    }
+
+    // Add remaining text after last match
+    if last_idx < chars.len() {
+        let after: String = chars[last_idx..].iter().collect();
+        if !after.is_empty() {
+            spans.push(Span::styled(after, normal_style));
+        }
+    }
+
+    spans
+}
+
+/// Render the full UI: command panel, flag panel, arg panel, preview, help bar.
 pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
@@ -237,24 +290,13 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
         cursor_normal: "  ",
     };
 
-    // Always use the full tree - compute match scores for filtering
-    let match_scores =
-        if app.filtering && !app.filter().is_empty() && app.focus() == Focus::Commands {
-            app.compute_tree_match_scores()
-        } else {
-            std::collections::HashMap::new()
-        };
-
+    // Always use the full tree
+    // Note: TreeView doesn't support per-item styling, so we can't dim non-matches here
+    // For now, commands remain visible with normal styling during filtering
     let tree = TreeView::new(&app.command_tree_nodes, &app.command_tree_state)
         .style(tree_style)
         .render_item(move |node, _is_selected| {
-            let score = match_scores.get(&node.id).copied().unwrap_or(1);
-            let is_match = score > 0 || match_scores.is_empty();
-
-            // Add visual indicator for non-matches
-            let prefix = if is_match { "" } else { "· " };
-
-            let mut text = format!("{}{}", prefix, node.data.name);
+            let mut text = node.data.name.clone();
 
             // Aliases
             if !node.data.aliases.is_empty() {
@@ -347,11 +389,6 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
 
             let mut spans = Vec::new();
 
-            // Visual indicator for non-matching items (subdued)
-            if !is_match {
-                spans.push(Span::styled("· ", Style::default().fg(colors.help)));
-            }
-
             // Selection cursor indicator (prominent triangle)
             if is_selected {
                 spans.push(Span::styled(
@@ -391,25 +428,53 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
             };
             spans.push(indicator);
 
-            // Flag display (short + long)
+            // Flag display (short + long) with highlighting
             let flag_display = flag_display_string(flag);
-            let flag_style = if is_selected {
-                Style::default()
+
+            if is_selected {
+                // Selected flag - bold, no highlighting
+                let flag_style = Style::default()
                     .fg(colors.flag)
-                    .add_modifier(Modifier::BOLD)
+                    .add_modifier(Modifier::BOLD);
+                spans.push(Span::styled(flag_display, flag_style));
+            } else if !is_match {
+                // Non-matching flag - subdued/dimmed
+                let flag_style = Style::default().fg(colors.help).add_modifier(Modifier::DIM);
+                spans.push(Span::styled(flag_display, flag_style));
+            } else if !match_scores.is_empty() {
+                // Matching flag - highlight matched characters
+                let pattern = app.filter();
+                let normal_style = Style::default().fg(colors.flag);
+                let highlight_style = Style::default()
+                    .fg(colors.flag)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+                let highlighted_spans =
+                    build_highlighted_text(&flag_display, pattern, normal_style, highlight_style);
+                spans.extend(highlighted_spans);
             } else {
-                Style::default().fg(colors.flag)
-            };
-            spans.push(Span::styled(flag_display, flag_style));
+                // Normal display
+                let flag_style = Style::default().fg(colors.flag);
+                spans.push(Span::styled(flag_display, flag_style));
+            }
 
             // Global indicator
             if flag.global {
-                spans.push(Span::styled(" [G]", Style::default().fg(colors.help)));
+                let global_style = if !is_match {
+                    Style::default().fg(colors.help).add_modifier(Modifier::DIM)
+                } else {
+                    Style::default().fg(colors.help)
+                };
+                spans.push(Span::styled(" [G]", global_style));
             }
 
             // Required indicator
             if flag.required {
-                spans.push(Span::styled(" *", Style::default().fg(colors.required)));
+                let required_style = if !is_match {
+                    Style::default().fg(colors.help).add_modifier(Modifier::DIM)
+                } else {
+                    Style::default().fg(colors.required)
+                };
+                spans.push(Span::styled(" *", required_style));
             }
 
             // Value display for string flags
@@ -463,11 +528,13 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
 
             // Help text
             if let Some(help) = &flag.help {
-                spans.push(Span::styled(" — ", Style::default().fg(colors.help)));
-                spans.push(Span::styled(
-                    help.as_str(),
-                    Style::default().fg(colors.help),
-                ));
+                let help_style = if !is_match {
+                    Style::default().fg(colors.help).add_modifier(Modifier::DIM)
+                } else {
+                    Style::default().fg(colors.help)
+                };
+                spans.push(Span::styled(" — ", help_style));
+                spans.push(Span::styled(help.as_str(), help_style));
             }
 
             let line = Line::from(spans);
