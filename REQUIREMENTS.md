@@ -55,9 +55,10 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 
 - Provide fuzzy filtering to highlight matching commands and flags by name.
 - Activate filtering with a keyboard shortcut (`/`).
-- **Keep all items visible** — non-matching items are subdued (dimmed/grayed) rather than hidden, so users can see the full context and all available options.
-- **Matching items stand out** — items that match the filter pattern are displayed normally or highlighted.
+- **Keep all items visible** — non-matching items are subdued using color (dimmed/grayed) rather than hidden, so users can see the full context and all available options without layout shift.
+- **Matching items stand out** — items that match the filter pattern are displayed in normal color with matching characters highlighted/emphasized.
 - **Auto-select matching items** — if the currently selected item doesn't match the filter, automatically move the selection to the next matching item.
+- **Clear filter when changing panels** — switching focus via Tab or mouse click clears the active filter to prevent confusion.
 - Use scored matching (powered by `nucleo-matcher`) to rank results by relevance.
 - Show filtered/matching count vs. total count in the panel title.
 

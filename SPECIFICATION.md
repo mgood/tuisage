@@ -75,7 +75,10 @@ The terminal is divided into the following regions, rendered top-to-bottom:
 - Aliases are shown alongside the command name (e.g., `remove (rm)`).
 - Tree nodes can be expanded (→) or collapsed (←) to show/hide subcommands.
 - The selected command in the tree determines which flags and arguments are displayed in the other panels.
-- When filtering is active, all commands remain visible but non-matching commands are subdued (dimmed/grayed), making matching commands stand out.
+- When filtering is active, all commands remain visible:
+  - **Non-matching commands** are displayed in a dimmed/subdued color
+  - **Matching commands** are displayed normally, with matching characters highlighted
+  - **Selected command** is always shown with bold styling and cursor indicator
 - The panel title shows position when focused (e.g., `Commands [2/15]`) or matching count when filtering (e.g., `Commands (/query) [2/15 matched]`).
 - The root command (binary name) is always visible at the top of the tree.
 
@@ -269,15 +272,15 @@ Filtering uses scored subsequence-matching (powered by `nucleo-matcher`):
 1. The user presses `/` to activate filter mode in the Commands or Flags panel.
 2. The panel title shows the filter query (e.g., `Commands (/query) [2/15 matched]`).
 3. As the user types, items are scored against the filter pattern:
-   - **Matching items** (score > 0) are displayed normally or highlighted, sorted by relevance score.
-   - **Non-matching items** (score = 0) are subdued (dimmed/grayed) but remain visible.
+   - **Matching items** (score > 0) are displayed in normal color with matching characters highlighted (emphasized)
+   - **Non-matching items** (score = 0) are displayed in a dimmed/subdued color without shifting the layout
 4. In the Commands panel, the full tree structure is preserved — users can see all available commands for context.
 5. **Auto-selection**: If the currently selected item doesn't match the filter, the selection automatically moves to the next matching item.
 6. The panel title updates to show matching count vs. total (e.g., `Commands (/pl) [2/7 matched]`).
 7. Navigation keys (`↑`/`↓`) operate on all items, but matching items stand out visually.
 8. `Enter` applies the filter and exits filter mode.
 9. `Esc` clears the filter and returns to the normal view.
-10. `Tab` during filtering switches focus to the other panel and clears the filter.
+10. **Changing panels** (via `Tab` or mouse click) clears the filter and resets the filter state.
 
 ## Command Building
 
