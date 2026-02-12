@@ -26,3 +26,14 @@ Start with a selection of a few different commands with a representative set of 
 Widgets that take text input should use fzf-style matching to allow the user to type a name to filter the list of choices.
 
 The TUI should present a friendly UI that would be geared toward repeatedly running various commands for a tool. It should make efficient use of terminal coloring to help the user navigate and quickly use the application. It should prioritize fast keyboard navigation, though should support mouse inputs as well for selecting from widgets.
+
+# Features
+## Fuzzy matching
+Use https://crates.io/crates/nucleo-matcher to filter options based on fuzzy matching
+
+## Colors
+We'll use https://crates.io/crates/ratatui-themes to help ensure the colors follow a consistent pattern. Later we could consider a theme picker.
+
+## UI Components
+We should use components from here to handle mouse and focus management, and a number of good basic UI components:
+https://crates.io/crates/ratatui-interact
