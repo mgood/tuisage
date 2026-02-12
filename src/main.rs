@@ -1,3 +1,4 @@
+use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 
 mod app;
@@ -9,21 +10,42 @@ fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
 
     let args: Vec<String> = std::env::args().collect();
-    let file_path = match args.get(1) {
-        Some(path) => PathBuf::from(path),
+
+    let spec = match args.get(1).map(|s| s.as_str()) {
+        Some("-") => {
+            // Explicit stdin: read usage spec from stdin
+            let mut input = String::new();
+            std::io::stdin().read_to_string(&mut input)?;
+            input.parse::<usage::Spec>().map_err(|e| {
+                color_eyre::eyre::eyre!("Failed to parse usage spec from stdin: {}", e)
+            })?
+        }
+        Some(path) => {
+            let file_path = PathBuf::from(path);
+            usage::Spec::parse_file(&file_path).map_err(|e| {
+                color_eyre::eyre::eyre!(
+                    "Failed to parse usage spec '{}': {}",
+                    file_path.display(),
+                    e
+                )
+            })?
+        }
         None => {
-            eprintln!("Usage: tuisage <spec-file.usage.kdl>");
-            std::process::exit(1);
+            // No argument: check if stdin is piped (not a TTY)
+            if std::io::stdin().is_terminal() {
+                eprintln!("Usage: tuisage <spec-file.usage.kdl>");
+                eprintln!("       tuisage -              # read spec from stdin");
+                eprintln!("       cat spec.kdl | tuisage  # pipe spec via stdin");
+                std::process::exit(1);
+            } else {
+                let mut input = String::new();
+                std::io::stdin().read_to_string(&mut input)?;
+                input.parse::<usage::Spec>().map_err(|e| {
+                    color_eyre::eyre::eyre!("Failed to parse usage spec from stdin: {}", e)
+                })?
+            }
         }
     };
-
-    let spec = usage::Spec::parse_file(&file_path).map_err(|e| {
-        color_eyre::eyre::eyre!(
-            "Failed to parse usage spec '{}': {}",
-            file_path.display(),
-            e
-        )
-    })?;
 
     // Enable mouse capture before initializing the terminal
     crossterm::execute!(std::io::stderr(), crossterm::event::EnableMouseCapture)?;

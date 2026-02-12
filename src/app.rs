@@ -322,18 +322,24 @@ impl App {
 
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // Check which panel was clicked and focus it
+                // Check which panel was clicked and focus it.
+                // If clicking on an already-selected item, activate it (like double-click).
                 if let Some(area) = self.panel_areas.command_list {
                     if Self::point_in_rect(col, row, area) {
+                        let was_focused = self.focus == Focus::Commands;
                         self.focus = Focus::Commands;
-                        // Calculate which item was clicked (account for border + padding)
                         let inner_top = area.y + 1; // border
                         if row >= inner_top {
                             let clicked_offset = (row - inner_top) as usize;
                             let item_index = self.command_scroll + clicked_offset;
                             let len = self.visible_subcommands().len();
                             if item_index < len {
-                                self.command_index = item_index;
+                                if was_focused && self.command_index == item_index {
+                                    // Click on already-selected item → activate (navigate in)
+                                    self.navigate_into_selected();
+                                } else {
+                                    self.command_index = item_index;
+                                }
                             }
                         }
                         return Action::None;
@@ -341,6 +347,7 @@ impl App {
                 }
                 if let Some(area) = self.panel_areas.flag_list {
                     if Self::point_in_rect(col, row, area) {
+                        let was_focused = self.focus == Focus::Flags;
                         self.focus = Focus::Flags;
                         let inner_top = area.y + 1;
                         if row >= inner_top {
@@ -348,7 +355,12 @@ impl App {
                             let item_index = self.flag_scroll + clicked_offset;
                             let len = self.current_flag_values().len();
                             if item_index < len {
-                                self.flag_index = item_index;
+                                if was_focused && self.flag_index == item_index {
+                                    // Click on already-selected flag → toggle/activate
+                                    return self.handle_enter();
+                                } else {
+                                    self.flag_index = item_index;
+                                }
                             }
                         }
                         return Action::None;
@@ -356,6 +368,7 @@ impl App {
                 }
                 if let Some(area) = self.panel_areas.arg_list {
                     if Self::point_in_rect(col, row, area) {
+                        let was_focused = self.focus == Focus::Args;
                         self.focus = Focus::Args;
                         let inner_top = area.y + 1;
                         if row >= inner_top {
@@ -363,7 +376,12 @@ impl App {
                             let item_index = self.arg_scroll + clicked_offset;
                             let len = self.arg_values.len();
                             if item_index < len {
-                                self.arg_index = item_index;
+                                if was_focused && self.arg_index == item_index {
+                                    // Click on already-selected arg → start editing
+                                    return self.handle_enter();
+                                } else {
+                                    self.arg_index = item_index;
+                                }
                             }
                         }
                         return Action::None;
@@ -371,6 +389,10 @@ impl App {
                 }
                 if let Some(area) = self.panel_areas.preview {
                     if Self::point_in_rect(col, row, area) {
+                        if self.focus == Focus::Preview {
+                            // Click on already-focused preview → accept command
+                            return Action::Accept;
+                        }
                         self.focus = Focus::Preview;
                         return Action::None;
                     }
@@ -394,11 +416,7 @@ impl App {
                 self.scroll_down_in_focused();
                 Action::None
             }
-            MouseEventKind::Up(MouseButton::Left) => {
-                // Double-click simulation: if already selected and clicked again, activate
-                // (handled by Down already selecting the item)
-                Action::None
-            }
+            MouseEventKind::Up(MouseButton::Left) => Action::None,
             _ => Action::None,
         }
     }
@@ -795,19 +813,16 @@ impl App {
     }
 
     fn handle_space(&mut self) {
-        match self.focus {
-            Focus::Flags => {
-                let flag_idx = self.flag_index;
-                let values = self.current_flag_values_mut();
-                if let Some((_, value)) = values.get_mut(flag_idx) {
-                    match value {
-                        FlagValue::Bool(b) => *b = !*b,
-                        FlagValue::Count(c) => *c += 1,
-                        _ => {}
-                    }
+        if self.focus == Focus::Flags {
+            let flag_idx = self.flag_index;
+            let values = self.current_flag_values_mut();
+            if let Some((_, value)) = values.get_mut(flag_idx) {
+                match value {
+                    FlagValue::Bool(b) => *b = !*b,
+                    FlagValue::Count(c) => *c += 1,
+                    _ => {}
                 }
             }
-            _ => {}
         }
     }
 

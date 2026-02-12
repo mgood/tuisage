@@ -299,6 +299,10 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
     let flags = app.visible_flags();
     let flag_values = app.current_flag_values();
 
+    // Pre-compute default values for each flag so we can show "(default)" indicator
+    let flag_defaults: Vec<Option<String>> =
+        flags.iter().map(|f| f.default.first().cloned()).collect();
+
     let items: Vec<ListItem> = flags
         .iter()
         .enumerate()
@@ -306,6 +310,7 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
             let is_selected = is_focused && i == app.flag_index;
             let is_editing = is_selected && app.editing;
             let value = flag_values.iter().find(|(n, _)| n == &flag.name);
+            let default_val = flag_defaults.get(i).and_then(|d| d.as_ref());
 
             let mut spans = Vec::new();
 
@@ -357,47 +362,50 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
                 spans.push(Span::styled(" *", Style::default().fg(colors::REQUIRED)));
             }
 
-            // Value display
-            if let Some((_, val)) = value {
-                match val {
-                    FlagValue::String(s) => {
-                        spans.push(Span::styled(" = ", Style::default().fg(colors::HELP)));
+            // Value display for string flags
+            if let Some((_, FlagValue::String(s))) = value {
+                spans.push(Span::styled(" = ", Style::default().fg(colors::HELP)));
 
-                        if is_editing {
+                if is_editing {
+                    spans.push(Span::styled(
+                        s.as_str(),
+                        Style::default()
+                            .fg(colors::VALUE)
+                            .add_modifier(Modifier::UNDERLINED),
+                    ));
+                    spans.push(Span::styled(
+                        "▎",
+                        Style::default()
+                            .fg(colors::VALUE)
+                            .add_modifier(Modifier::SLOW_BLINK),
+                    ));
+                } else if s.is_empty() {
+                    // Show choices hint or default
+                    if let Some(ref arg) = flag.arg {
+                        if let Some(ref choices) = arg.choices {
+                            let hint = choices.choices.join("|");
                             spans.push(Span::styled(
-                                s.as_str(),
-                                Style::default()
-                                    .fg(colors::VALUE)
-                                    .add_modifier(Modifier::UNDERLINED),
+                                format!("<{}>", hint),
+                                Style::default().fg(colors::CHOICE),
                             ));
-                            spans.push(Span::styled(
-                                "▎",
-                                Style::default()
-                                    .fg(colors::VALUE)
-                                    .add_modifier(Modifier::SLOW_BLINK),
-                            ));
-                        } else if s.is_empty() {
-                            // Show choices hint or default
-                            if let Some(ref arg) = flag.arg {
-                                if let Some(ref choices) = arg.choices {
-                                    let hint = choices.choices.join("|");
-                                    spans.push(Span::styled(
-                                        format!("<{}>", hint),
-                                        Style::default().fg(colors::CHOICE),
-                                    ));
-                                } else {
-                                    spans.push(Span::styled(
-                                        format!("<{}>", arg.name),
-                                        Style::default().fg(colors::DEFAULT_VAL),
-                                    ));
-                                }
-                            }
                         } else {
-                            spans
-                                .push(Span::styled(s.as_str(), Style::default().fg(colors::VALUE)));
+                            spans.push(Span::styled(
+                                format!("<{}>", arg.name),
+                                Style::default().fg(colors::DEFAULT_VAL),
+                            ));
                         }
                     }
-                    _ => {} // Bool and Count already shown via indicator
+                } else {
+                    spans.push(Span::styled(s.as_str(), Style::default().fg(colors::VALUE)));
+                    // Show "(default)" if value matches the spec default
+                    if let Some(def) = default_val {
+                        if s == def {
+                            spans.push(Span::styled(
+                                " (default)",
+                                Style::default().fg(colors::DEFAULT_VAL).italic(),
+                            ));
+                        }
+                    }
                 }
             }
 
