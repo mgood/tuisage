@@ -2,13 +2,13 @@
 source: src/ui.rs
 expression: output
 ---
-┌ Commands (7) ────────────────────────┐┌ Flags (/roll) [1/1] ─────────────────────────────────────┐
-│  init — Initialize a new project     ││ ▶ ○ --rollback — Rollback to previous version            │
-│  ▶ config — Manage configuration     ││                                                          │
-│  run — Run a task                    ││                                                          │
-│▶ deploy — Deploy the application     ││                                                          │
-│  ▶ plugin — Manage plugins           ││                                                          │
-│  version — Print the CLI version     ││                                                          │
+┌ Commands (7) ────────────────────────┐┌ Flags (/roll) [1/1 matched] ─────────────────────────────┐
+│  init — Initialize a new project     ││ · ▶ [·] --tag = <tag> — Docker image tag                 │
+│  ▶ config — Manage configuration     ││   ○ --rollback — Rollback to previous version            │
+│  run — Run a task                    ││ ·   ○ --skip-tests — Skip running tests before deploy    │
+│▶ deploy — Deploy the application     ││ ·   ○ -y, --yes — Skip confirmation prompt               │
+│  ▶ plugin — Manage plugins           ││ ·   [0] -v, --verbose [G] — Enable verbose logging       │
+│  version — Print the CLI version     ││ ·   ○ -q, --quiet [G] — Enable quiet mode                │
 │  help — Print help information       ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
@@ -21,7 +21,7 @@ expression: output
 │                                      ││                                                          │
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
- 💡  Rollback to previous version
+ 💡  Docker image tag
  Enter: apply  Esc: clear  ↑↓: navigate [Dracula]
 ┌ Command ─────────────────────────────────────────────────────────────────────────────────────────┐
 │ $ mycli deploy                                                                                   │

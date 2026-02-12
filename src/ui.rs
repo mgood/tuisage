@@ -195,12 +195,13 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
     let total = app.total_visible_commands();
     let command_index = app.command_index();
 
-    let title = if app.filtering && app.focus() == Focus::Commands {
+    let title = if app.filtering && !app.filter().is_empty() && app.focus() == Focus::Commands {
+        let matching = app.matching_commands_count();
         format!(
-            " Commands (/{}) [{}/{}] ",
+            " Commands (/{}) [{}/{} matched] ",
             app.filter(),
             command_index + 1,
-            total
+            matching
         )
     } else if total > 0 && is_focused {
         format!(" Commands [{}/{}] ", command_index + 1, total)
@@ -236,18 +237,24 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
         cursor_normal: "  ",
     };
 
-    // Use filtered tree when filtering is active on commands
-    let tree_nodes = if app.filtering && !app.filter().is_empty() && app.focus() == Focus::Commands
-    {
-        &app.filtered_command_tree()
-    } else {
-        &app.command_tree_nodes
-    };
+    // Always use the full tree - compute match scores for filtering
+    let match_scores =
+        if app.filtering && !app.filter().is_empty() && app.focus() == Focus::Commands {
+            app.compute_tree_match_scores()
+        } else {
+            std::collections::HashMap::new()
+        };
 
-    let tree = TreeView::new(tree_nodes, &app.command_tree_state)
+    let tree = TreeView::new(&app.command_tree_nodes, &app.command_tree_state)
         .style(tree_style)
-        .render_item(|node, _is_selected| {
-            let mut text = node.data.name.clone();
+        .render_item(move |node, _is_selected| {
+            let score = match_scores.get(&node.id).copied().unwrap_or(1);
+            let is_match = score > 0 || match_scores.is_empty();
+
+            // Add visual indicator for non-matches
+            let prefix = if is_match { "" } else { "· " };
+
+            let mut text = format!("{}{}", prefix, node.data.name);
 
             // Aliases
             if !node.data.aliases.is_empty() {
@@ -283,15 +290,22 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
 
     // Compute counts for title before mutable borrow
     let flag_index = app.flag_index();
-    let visible_count = app.visible_flags().len();
     let total_count = app.current_flag_values().len();
 
-    let title = if app.filtering && app.focus() == Focus::Flags {
+    // Compute match scores for filtering
+    let match_scores = if app.filtering && !app.filter().is_empty() && app.focus() == Focus::Flags {
+        app.compute_flag_match_scores()
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    let title = if app.filtering && !app.filter().is_empty() && app.focus() == Focus::Flags {
+        let matching = match_scores.values().filter(|&&score| score > 0).count();
         format!(
-            " Flags (/{}) [{}/{}] ",
+            " Flags (/{}) [{}/{} matched] ",
             app.filter(),
             flag_index + 1,
-            visible_count
+            matching
         )
     } else if total_count > 0 && is_focused {
         format!(" Flags [{}/{}] ", flag_index + 1, total_count)
@@ -327,7 +341,16 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
             let value = flag_values.iter().find(|(n, _)| n == &flag.name);
             let default_val = flag_defaults.get(i).and_then(|d| d.as_ref());
 
+            // Check if this flag matches the filter
+            let score = match_scores.get(&flag.name).copied().unwrap_or(1);
+            let is_match = score > 0 || match_scores.is_empty();
+
             let mut spans = Vec::new();
+
+            // Visual indicator for non-matching items (subdued)
+            if !is_match {
+                spans.push(Span::styled("· ", Style::default().fg(colors.help)));
+            }
 
             // Selection cursor indicator (prominent triangle)
             if is_selected {
@@ -912,8 +935,23 @@ mod tests {
     #[test]
     fn snapshot_filter_active() {
         let mut app = App::new(sample_spec());
-        app.filtering = true;
-        app.filter_input.set_text("pl");
+
+        // Activate filter mode
+        let slash = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('/'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(slash);
+
+        // Type "pl" to filter - this will trigger auto-select
+        for c in "pl".chars() {
+            let key = crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(c),
+                crossterm::event::KeyModifiers::NONE,
+            );
+            app.handle_key(key);
+        }
+
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
@@ -1381,8 +1419,8 @@ flag "-q --quiet" help="Quiet mode"
         app.filter_input.set_text("roll");
 
         let output = render_to_string(&mut app, 100, 24);
-        // Should show filtered count [1/1], not [1/6]
-        assert!(output.contains("[1/1]"));
+        // Should show matched count [1/1 matched], not total count
+        assert!(output.contains("[1/1 matched]"));
     }
 
     // ── Unicode checkbox tests ──────────────────────────────────────────

@@ -292,64 +292,8 @@ impl App {
             }
         }
 
-        // Apply fuzzy filter when focus is on flags
-        if self.filtering && !self.filter().is_empty() && self.focus() == Focus::Flags {
-            let pattern = self.filter();
-
-            // Score each flag and filter out non-matches
-            let mut scored_flags: Vec<(u32, &SpecFlag)> = flags
-                .into_iter()
-                .filter_map(|f| {
-                    let mut temp_matcher = Matcher::new(Config::DEFAULT);
-
-                    // Try matching against name
-                    let name_score = fuzzy_match_score(&f.name, pattern, &mut temp_matcher);
-
-                    // Try matching against long flags
-                    let long_score = f
-                        .long
-                        .iter()
-                        .map(|l| fuzzy_match_score(l, pattern, &mut temp_matcher))
-                        .max()
-                        .unwrap_or(0);
-
-                    // Try matching against short flags
-                    let short_score = f
-                        .short
-                        .iter()
-                        .map(|s| {
-                            let s_str = s.to_string();
-                            fuzzy_match_score(&s_str, pattern, &mut temp_matcher)
-                        })
-                        .max()
-                        .unwrap_or(0);
-
-                    // Try matching against help text
-                    let help_score = f
-                        .help
-                        .as_ref()
-                        .map(|h| fuzzy_match_score(h, pattern, &mut temp_matcher))
-                        .unwrap_or(0);
-
-                    // Take the best score from all fields
-                    let best_score = name_score.max(long_score).max(short_score).max(help_score);
-
-                    if best_score > 0 {
-                        Some((best_score, f))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            // Sort by score (descending)
-            scored_flags.sort_by(|a, b| b.0.cmp(&a.0));
-
-            // Extract just the flags
-            scored_flags.into_iter().map(|(_, f)| f).collect()
-        } else {
-            flags
-        }
+        // No filtering here - rendering will apply subdued styling to non-matches
+        flags
     }
 
     /// Synchronize internal state (arg_values, flag_values) when navigating to a new command.
@@ -436,21 +380,69 @@ impl App {
 
     /// Get the total number of visible nodes in the command tree.
     pub fn total_visible_commands(&self) -> usize {
+        count_visible(&self.command_tree_nodes, &self.command_tree_state)
+    }
+
+    /// Get the number of matching nodes when filtering is active.
+    pub fn matching_commands_count(&self) -> usize {
         if self.filtering && !self.filter().is_empty() && self.focus() == Focus::Commands {
-            count_visible(&self.filtered_command_tree(), &self.command_tree_state)
+            let scores = self.compute_tree_match_scores();
+            scores.values().filter(|&&score| score > 0).count()
         } else {
-            count_visible(&self.command_tree_nodes, &self.command_tree_state)
+            self.total_visible_commands()
         }
     }
 
-    /// Get filtered command tree nodes when filtering is active.
-    /// Returns nodes that match the filter pattern, preserving ancestors.
-    pub fn filtered_command_tree(&self) -> Vec<TreeNode<CmdData>> {
+    /// Compute match scores for all tree nodes when filtering.
+    /// Returns a map of node ID → score (0 for non-matches).
+    pub fn compute_tree_match_scores(&self) -> std::collections::HashMap<String, u32> {
         let pattern = self.filter();
         if pattern.is_empty() {
-            return self.command_tree_nodes.clone();
+            return std::collections::HashMap::new();
         }
-        filter_tree_nodes(&self.command_tree_nodes, pattern)
+        compute_tree_scores(&self.command_tree_nodes, pattern)
+    }
+
+    /// Compute match scores for all flags when filtering.
+    /// Returns a map of flag name → score (0 for non-matches).
+    pub fn compute_flag_match_scores(&self) -> std::collections::HashMap<String, u32> {
+        let pattern = self.filter();
+        if pattern.is_empty() {
+            return std::collections::HashMap::new();
+        }
+
+        let flags = self.visible_flags();
+        let mut scores = std::collections::HashMap::new();
+
+        for flag in flags {
+            let mut temp_matcher = Matcher::new(Config::DEFAULT);
+            let name_score = fuzzy_match_score(&flag.name, pattern, &mut temp_matcher);
+            let long_score = flag
+                .long
+                .iter()
+                .map(|l| fuzzy_match_score(l, pattern, &mut temp_matcher))
+                .max()
+                .unwrap_or(0);
+            let short_score = flag
+                .short
+                .iter()
+                .map(|s| {
+                    let s_str = s.to_string();
+                    fuzzy_match_score(&s_str, pattern, &mut temp_matcher)
+                })
+                .max()
+                .unwrap_or(0);
+            let help_score = flag
+                .help
+                .as_ref()
+                .map(|h| fuzzy_match_score(h, pattern, &mut temp_matcher))
+                .unwrap_or(0);
+
+            let best_score = name_score.max(long_score).max(short_score).max(help_score);
+            scores.insert(flag.name.clone(), best_score);
+        }
+
+        scores
     }
 
     /// Get the ID of the currently selected tree node.
@@ -971,32 +963,14 @@ impl App {
             }
             KeyCode::Backspace => {
                 self.filter_input.delete_char_backward();
-                // Reset selection index when filter changes
-                match self.focus() {
-                    Focus::Commands => {
-                        // For tree view, reset to first visible node
-                        self.command_tree_state.selected_index = 0;
-                        self.sync_command_path_from_tree();
-                    }
-                    Focus::Flags => {
-                        self.flag_list_state.select_first();
-                    }
-                    _ => {}
-                }
+                // Auto-select next matching item if current doesn't match
+                self.auto_select_next_match();
                 Action::None
             }
             KeyCode::Char(c) => {
                 self.filter_input.insert_char(c);
-                match self.focus() {
-                    Focus::Commands => {
-                        self.command_tree_state.selected_index = 0;
-                        self.sync_command_path_from_tree();
-                    }
-                    Focus::Flags => {
-                        self.flag_list_state.select_first();
-                    }
-                    _ => {}
-                }
+                // Auto-select next matching item if current doesn't match
+                self.auto_select_next_match();
                 Action::None
             }
             KeyCode::Up => {
@@ -1121,6 +1095,69 @@ impl App {
                     _ => {}
                 }
             }
+        }
+    }
+
+    /// Auto-select the next matching item if the current selection doesn't match the filter.
+    fn auto_select_next_match(&mut self) {
+        match self.focus() {
+            Focus::Commands => {
+                let scores = self.compute_tree_match_scores();
+                let visible =
+                    flatten_visible_ids(&self.command_tree_nodes, &self.command_tree_state);
+                let current_idx = self.command_tree_state.selected_index;
+
+                // Check if current selection matches
+                if let Some(id) = visible.get(current_idx) {
+                    if let Some(&score) = scores.get(id) {
+                        if score > 0 {
+                            // Current selection matches, keep it
+                            return;
+                        }
+                    }
+                }
+
+                // Current doesn't match, find next matching item
+                for (idx, id) in visible.iter().enumerate() {
+                    if let Some(&score) = scores.get(id) {
+                        if score > 0 {
+                            self.command_tree_state.selected_index = idx;
+                            self.sync_command_path_from_tree();
+                            return;
+                        }
+                    }
+                }
+
+                // No matches found, stay at current position
+            }
+            Focus::Flags => {
+                let scores = self.compute_flag_match_scores();
+                let flags = self.visible_flags();
+                let current_idx = self.flag_list_state.selected_index;
+
+                // Check if current selection matches
+                if let Some(flag) = flags.get(current_idx) {
+                    if let Some(&score) = scores.get(&flag.name) {
+                        if score > 0 {
+                            // Current selection matches, keep it
+                            return;
+                        }
+                    }
+                }
+
+                // Current doesn't match, find next matching item
+                for (idx, flag) in flags.iter().enumerate() {
+                    if let Some(&score) = scores.get(&flag.name) {
+                        if score > 0 {
+                            self.flag_list_state.select(idx);
+                            return;
+                        }
+                    }
+                }
+
+                // No matches found, stay at current position
+            }
+            _ => {}
         }
     }
 
@@ -1339,10 +1376,13 @@ fn collapse_descendants(nodes: &[TreeNode<CmdData>], state: &mut TreeViewState) 
     }
 }
 
-/// Filter tree nodes recursively, keeping nodes that match and their ancestors.
-/// Returns scored and sorted results.
-fn filter_tree_nodes(nodes: &[TreeNode<CmdData>], pattern: &str) -> Vec<TreeNode<CmdData>> {
-    let mut scored_nodes: Vec<(u32, TreeNode<CmdData>)> = Vec::new();
+/// Compute match scores for all tree nodes recursively.
+/// Returns a map of node ID → score (0 for non-matches).
+fn compute_tree_scores(
+    nodes: &[TreeNode<CmdData>],
+    pattern: &str,
+) -> std::collections::HashMap<String, u32> {
+    let mut scores = std::collections::HashMap::new();
 
     for node in nodes {
         let mut temp_matcher = Matcher::new(Config::DEFAULT);
@@ -1366,42 +1406,14 @@ fn filter_tree_nodes(nodes: &[TreeNode<CmdData>], pattern: &str) -> Vec<TreeNode
             .unwrap_or(0);
 
         let node_score = name_score.max(alias_score).max(help_score);
+        scores.insert(node.id.clone(), node_score);
 
-        // Recursively filter children
-        let filtered_children = filter_tree_nodes(&node.children, pattern);
-
-        // If this node matches or has matching children, include it
-        if node_score > 0 || !filtered_children.is_empty() {
-            // For child score, we need to compute it separately since filtered_children
-            // is already Vec<TreeNode<CmdData>>, not scored
-            let child_max_score = if !filtered_children.is_empty() {
-                // Children matched, give them a lower score than direct match
-                node_score / 2
-            } else {
-                0
-            };
-
-            // Use the better score between this node and its children
-            let best_score = node_score.max(child_max_score);
-
-            let new_node = TreeNode::new(
-                &node.id,
-                CmdData {
-                    name: node.data.name.clone(),
-                    help: node.data.help.clone(),
-                    aliases: node.data.aliases.clone(),
-                },
-            )
-            .with_children(filtered_children);
-
-            scored_nodes.push((best_score, new_node));
-        }
+        // Recursively score children
+        let child_scores = compute_tree_scores(&node.children, pattern);
+        scores.extend(child_scores);
     }
 
-    // Sort by score descending
-    scored_nodes.sort_by(|a, b| b.0.cmp(&a.0));
-
-    scored_nodes.into_iter().map(|(_, node)| node).collect()
+    scores
 }
 
 /// Count visible nodes in the tree (respecting collapsed state).
@@ -1879,12 +1891,25 @@ mod tests {
         }
         assert_eq!(app.filter(), "roll");
 
-        // visible_flags should only include rollback
+        // visible_flags returns all flags, but match scores show which ones match
         let flags = app.visible_flags();
+        let scores = app.compute_flag_match_scores();
+
+        // rollback should match (score > 0)
+        let rollback_score = scores.get("rollback").copied().unwrap_or(0);
+        assert!(rollback_score > 0, "rollback should match 'roll'");
+
+        // tag and yes should not match (score = 0)
+        let tag_score = scores.get("tag").copied().unwrap_or(0);
+        let yes_score = scores.get("yes").copied().unwrap_or(0);
+        assert_eq!(tag_score, 0, "tag should not match 'roll'");
+        assert_eq!(yes_score, 0, "yes should not match 'roll'");
+
+        // All flags should still be in visible_flags (subdued filtering)
         let names: Vec<&str> = flags.iter().map(|f| f.name.as_str()).collect();
         assert!(names.contains(&"rollback"));
-        assert!(!names.contains(&"tag"));
-        assert!(!names.contains(&"yes"));
+        assert!(names.contains(&"tag"));
+        assert!(names.contains(&"yes"));
     }
 
     #[test]
