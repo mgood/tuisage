@@ -89,27 +89,6 @@ eval "$(tuisage spec.kdl)"
 | Right click (commands) | Navigate into subcommand |
 | Scroll wheel | Move selection up/down |
 
-## Flag and Argument Display
-
-**Boolean flags** show with a checkmark indicator:
-- `✓` — flag is enabled
-- `○` — flag is disabled
-
-**Count flags** (e.g., `--verbose`) show with a bracket counter:
-- `[0]` — not set
-- `[1]` — set once (`-v`)
-- `[2]` — set twice (`-vv`)
-- etc.
-
-Increment with `Space`, decrement with `Backspace`.
-
-**String flags** with values show with a bullet indicator:
-- `[•]` — value is set
-- `[·]` — value is empty
-
-**Selection indicator** shows with a bold triangle:
-- `▶` — currently selected item
-
 ## Example Spec
 
 Here's a minimal `.usage.kdl` spec that TuiSage can read:
