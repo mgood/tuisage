@@ -4,8 +4,8 @@ expression: output
 ---
 mycli
 ┌ Commands [1/7] ──────────────────────┐┌ Flags (3) ───────────────────────────────────────────────┐
-│ ▸ init — Initialize a new project    ││   [0] -v, --verbose [G] — Enable verbose logging         │
-│   config ▸ — Manage configuration    ││   ☐ -q, --quiet [G] — Enable quiet mode                  │
+│ ▶ init — Initialize a new project    ││   [0] -v, --verbose [G] — Enable verbose logging         │
+│   config ▸ — Manage configuration    ││   ○ -q, --quiet [G] — Enable quiet mode                  │
 │   run — Run a task                   ││   [·] -u, --user = <user> — User to run as               │
 │   deploy — Deploy the application    ││                                                          │
 │   plugin ▸ — Manage plugins          ││                                                          │

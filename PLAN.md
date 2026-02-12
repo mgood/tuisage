@@ -101,6 +101,12 @@ TuiSage is a TUI application that reads a `usage` spec (KDL format) and presents
 - [x] Support reading usage spec from stdin (`-` arg or piped input)
 - [ ] Support script-embedded USAGE blocks (usage-lib already supports this)
 
+### Phase 10: UX Bug Fixes
+- [x] Use CheckBoxStyle::checkmark symbols (✓/○) instead of small Unicode boxes (☑/☐) for boolean flag indicators, and make the selection caret more prominent (▶ instead of ▸)
+- [x] Fix shared edit_input state bug: clicking a different argument while editing copies the text from the previous input; finish editing before switching items via mouse or keyboard
+- [x] Add count flag decrement: pressing Space increments count flags but there is no way to decrement; add Backspace to decrement (floor at 0)
+- [x] Write tests for all three bug fixes (14 new tests added)
+
 ### Phase 9: Code Quality & CI
 - [x] Implement scrolling with command_scroll, flag_scroll, arg_scroll
 - [x] Remove unused `breadcrumb()` method
@@ -126,7 +132,7 @@ Tests are structured in layers:
 2. **Rendering tests**: Assertion-based checks for specific UI elements (11 tests in ui.rs)
 3. **Snapshot tests**: Using `insta` to capture full terminal output (15 snapshots in ui.rs)
 
-Total: 54 tests passing (28 app + 11 render assertions + 15 snapshots).
+Total: 94 tests passing (42 app + 33 render/UI assertions + 19 snapshots).
 
 ### Representative Test Fixtures
 

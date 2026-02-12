@@ -4,7 +4,7 @@ expression: output
 ---
 mycli › deploy   /roll
 ┌ Flags (/roll) [1/1] ─────────────────────────────────────────────────────────────────────────────┐
-│ ▸ ☐ --rollback — Rollback to previous version                                                    │
+│ ▶ ○ --rollback — Rollback to previous version                                                    │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

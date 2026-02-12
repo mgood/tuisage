@@ -4,7 +4,7 @@ expression: output
 ---
 simple
 ┌ Flags [1/1] ─────────────────────────────────────────────────────────────────┐
-│ ▸ [·] -o, --output = <path> — Output path                                    │
+│ ▶ [·] -o, --output = <path> — Output path                                    │
 │                                                                              │
 │                                                                              │
 │                                                                              │

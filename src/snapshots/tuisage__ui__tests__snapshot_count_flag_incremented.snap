@@ -4,8 +4,8 @@ expression: output
 ---
 mycli
 ┌ Flags [1/2] ─────────────────────────────────────────────────────────────────┐
-│ ▸ [3] -v, --verbose — Increase verbosity                                     │
-│   ☐ -q, --quiet — Quiet mode                                                 │
+│ ▶ [3] -v, --verbose — Increase verbosity                                     │
+│   ○ -q, --quiet — Quiet mode                                                 │
 │                                                                              │
 │                                                                              │
 │                                                                              │

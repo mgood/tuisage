@@ -23,7 +23,7 @@ pub enum Focus {
 }
 
 /// Tracks the value set for a flag.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FlagValue {
     /// Boolean flag toggled on/off.
     Bool(bool),
@@ -382,6 +382,10 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) => {
                 // Use click region registry for hit-testing
                 if let Some(&clicked_panel) = self.click_regions.handle_click(col, row) {
+                    // Finish any in-progress editing before switching focus or item
+                    if self.editing {
+                        self.finish_editing();
+                    }
                     let was_focused = self.focus() == clicked_panel;
                     self.set_focus(clicked_panel);
 
@@ -541,6 +545,13 @@ impl App {
 
         match key.code {
             KeyCode::Char('q') => Action::Quit,
+            KeyCode::Backspace => {
+                // Decrement count flags
+                if self.focus() == Focus::Flags {
+                    self.handle_decrement();
+                }
+                Action::None
+            }
             KeyCode::Char('T') => {
                 self.next_theme();
                 Action::None
@@ -867,6 +878,15 @@ impl App {
                     _ => {}
                 }
             }
+        }
+    }
+
+    /// Decrement a count flag (floor at 0).
+    fn handle_decrement(&mut self) {
+        let flag_idx = self.flag_index();
+        let values = self.current_flag_values_mut();
+        if let Some((_, FlagValue::Count(c))) = values.get_mut(flag_idx) {
+            *c = c.saturating_sub(1);
         }
     }
 
@@ -1780,5 +1800,253 @@ mod tests {
         app.handle_key(esc);
         assert!(!app.filtering);
         assert!(app.filter().is_empty());
+    }
+
+    // ── Phase 10: UX Bug Fix Tests ──────────────────────────────────────
+
+    #[test]
+    fn test_count_flag_decrement_via_backspace() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::new(sample_spec());
+
+        // verbose is a count flag at the root level
+        app.set_focus(Focus::Flags);
+        let fidx = app
+            .current_flag_values()
+            .iter()
+            .position(|(n, _)| n == "verbose")
+            .unwrap();
+        app.set_flag_index(fidx);
+
+        // Increment via space three times
+        for _ in 0..3 {
+            app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        }
+        assert_eq!(
+            app.current_flag_values()[fidx].1,
+            FlagValue::Count(3),
+            "Space should increment count to 3"
+        );
+
+        // Decrement via backspace
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(
+            app.current_flag_values()[fidx].1,
+            FlagValue::Count(2),
+            "Backspace should decrement count to 2"
+        );
+
+        // Decrement all the way to zero
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(
+            app.current_flag_values()[fidx].1,
+            FlagValue::Count(0),
+            "Count should be 0 after decrementing fully"
+        );
+
+        // Decrement again — should stay at 0 (floor)
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(
+            app.current_flag_values()[fidx].1,
+            FlagValue::Count(0),
+            "Count should not go below 0"
+        );
+    }
+
+    #[test]
+    fn test_backspace_only_affects_count_flags() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::new(sample_spec());
+
+        // quiet is a boolean flag — backspace should not change it
+        app.set_focus(Focus::Flags);
+        let fidx = app
+            .current_flag_values()
+            .iter()
+            .position(|(n, _)| n == "quiet")
+            .unwrap();
+        app.set_flag_index(fidx);
+
+        // Toggle it on first
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert_eq!(app.current_flag_values()[fidx].1, FlagValue::Bool(true));
+
+        // Backspace should not toggle it off (only affects count flags)
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(
+            app.current_flag_values()[fidx].1,
+            FlagValue::Bool(true),
+            "Backspace should not affect boolean flags"
+        );
+    }
+
+    #[test]
+    fn test_editing_finished_on_mouse_click_different_arg() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+        let mut app = App::new(sample_spec());
+
+        // Navigate to "run" command which has <task> and [args...] arguments
+        let subs = app.visible_subcommands();
+        let run_idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
+        app.set_command_index(run_idx);
+        app.navigate_into_selected();
+
+        // Focus on args panel
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0); // <task>
+
+        // Start editing <task> and type some text
+        app.start_editing();
+        assert!(app.editing);
+        app.edit_input.insert_char('h');
+        app.edit_input.insert_char('i');
+        app.sync_edit_to_value();
+        assert_eq!(app.arg_values[0].value, "hi");
+
+        // Now simulate clicking on the args area (which triggers finish_editing)
+        // Set up a fake click region for Args
+        let args_area = ratatui::layout::Rect::new(40, 5, 60, 10);
+        app.click_regions.clear();
+        app.click_regions.register(args_area, Focus::Args);
+
+        // Click on the second arg item (row offset 1 from inner top)
+        let mouse_event = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 50,
+            row: 7, // args_area.y + 1 (border) + 1 (second item)
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse_event);
+
+        // Editing should have been finished before switching
+        assert!(
+            !app.editing,
+            "Editing should be finished after clicking a different item"
+        );
+
+        // The <task> arg should still have the value we typed
+        assert_eq!(
+            app.arg_values[0].value, "hi",
+            "First arg value should be preserved"
+        );
+
+        // The [args...] arg should NOT have the old edit_input text
+        assert_eq!(
+            app.arg_values[1].value, "",
+            "Second arg value should be empty, not copied from first"
+        );
+    }
+
+    #[test]
+    fn test_editing_finished_on_mouse_click_different_panel() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+        let mut app = App::new(sample_spec());
+
+        // Navigate to "run" command
+        let subs = app.visible_subcommands();
+        let run_idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
+        app.set_command_index(run_idx);
+        app.navigate_into_selected();
+
+        // Focus on args panel and start editing
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+        app.start_editing();
+        app.edit_input.insert_char('t');
+        app.edit_input.insert_char('e');
+        app.edit_input.insert_char('s');
+        app.edit_input.insert_char('t');
+        app.sync_edit_to_value();
+        assert_eq!(app.arg_values[0].value, "test");
+        assert!(app.editing);
+
+        // Set up click regions and click on the Flags panel
+        app.click_regions.clear();
+        app.click_regions
+            .register(ratatui::layout::Rect::new(0, 0, 40, 15), Focus::Flags);
+        app.click_regions
+            .register(ratatui::layout::Rect::new(40, 0, 60, 15), Focus::Args);
+
+        let mouse_event = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 10,
+            row: 3,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse_event);
+
+        // Editing should be finished
+        assert!(
+            !app.editing,
+            "Editing should be finished when clicking another panel"
+        );
+        // The arg value should be preserved
+        assert_eq!(app.arg_values[0].value, "test");
+        // Focus should have moved to Flags
+        assert_eq!(app.focus(), Focus::Flags);
+    }
+
+    #[test]
+    fn test_edit_input_not_shared_between_args() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::new(sample_spec());
+
+        // Navigate to "run" command
+        let subs = app.visible_subcommands();
+        let run_idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
+        app.set_command_index(run_idx);
+        app.navigate_into_selected();
+
+        // Focus on args, edit <task>
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+        app.start_editing();
+        app.edit_input.insert_char('b');
+        app.edit_input.insert_char('u');
+        app.edit_input.insert_char('i');
+        app.edit_input.insert_char('l');
+        app.edit_input.insert_char('d');
+        app.sync_edit_to_value();
+        assert_eq!(app.arg_values[0].value, "build");
+
+        // Finish editing via Enter key
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.editing);
+
+        // Move to next arg and start editing
+        app.set_arg_index(1);
+        app.start_editing();
+
+        // edit_input should now contain the value of the second arg (empty),
+        // NOT the value from the first arg
+        assert_eq!(
+            app.edit_input.text(),
+            "",
+            "edit_input should be initialized from the new arg's value, not the old one"
+        );
+
+        // The first arg should still have its value
+        assert_eq!(app.arg_values[0].value, "build");
+        // The second arg should still be empty
+        assert_eq!(app.arg_values[1].value, "");
+    }
+
+    #[test]
+    fn test_handle_decrement_only_on_flags_focus() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::new(sample_spec());
+
+        // Focus on commands — backspace should do nothing harmful
+        app.set_focus(Focus::Commands);
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        // Should not panic or change state
+        assert_eq!(app.focus(), Focus::Commands);
     }
 }

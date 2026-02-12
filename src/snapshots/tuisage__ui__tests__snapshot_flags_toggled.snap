@@ -4,12 +4,12 @@ expression: output
 ---
 mycli › deploy
 ┌ Flags [1/6] ─────────────────────────────────────────────────────────────────────────────────────┐
-│ ▸ [•] --tag = v1.2.3 — Docker image tag                                                          │
-│   ☑ --rollback — Rollback to previous version                                                    │
-│   ☐ --skip-tests — Skip running tests before deploy                                              │
-│   ☐ -y, --yes — Skip confirmation prompt                                                         │
+│ ▶ [•] --tag = v1.2.3 — Docker image tag                                                          │
+│   ✓ --rollback — Rollback to previous version                                                    │
+│   ○ --skip-tests — Skip running tests before deploy                                              │
+│   ○ -y, --yes — Skip confirmation prompt                                                         │
 │   [0] -v, --verbose [G] — Enable verbose logging                                                 │
-│   ☐ -q, --quiet [G] — Enable quiet mode                                                          │
+│   ○ -q, --quiet [G] — Enable quiet mode                                                          │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

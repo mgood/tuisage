@@ -4,7 +4,7 @@ expression: output
 ---
 mycli › format
 ┌ Flags [1/1] ─────────────────────────────────────────────────────────────────┐
-│ ▸ [·] --style = <compact|expanded|default> — Code style                      │
+│ ▶ [·] --style = <compact|expanded|default> — Code style                      │
 │                                                                              │
 │                                                                              │
 │                                                                              │

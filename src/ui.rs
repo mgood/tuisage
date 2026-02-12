@@ -311,11 +311,13 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
 
             let mut spans = Vec::new();
 
-            // Selection cursor indicator
+            // Selection cursor indicator (prominent triangle)
             if is_selected {
                 spans.push(Span::styled(
-                    "▸ ",
-                    Style::default().fg(colors.active_border),
+                    "▶ ",
+                    Style::default()
+                        .fg(colors.active_border)
+                        .add_modifier(Modifier::BOLD),
                 ));
             } else {
                 spans.push(Span::styled("  ", Style::default()));
@@ -434,21 +436,26 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
 
             let mut spans = Vec::new();
 
-            // Selection cursor indicator
+            // Selection cursor indicator (prominent triangle)
             if is_selected {
                 spans.push(Span::styled(
-                    "▸ ",
-                    Style::default().fg(colors.active_border),
+                    "▶ ",
+                    Style::default()
+                        .fg(colors.active_border)
+                        .add_modifier(Modifier::BOLD),
                 ));
             } else {
                 spans.push(Span::styled("  ", Style::default()));
             }
 
-            // Checkbox / toggle indicator using Unicode checkboxes
+            // Checkbox / toggle indicator using checkmark style (✓/○)
             let indicator = match value.map(|(_, v)| v) {
-                Some(FlagValue::Bool(true)) => Span::styled("☑ ", Style::default().fg(colors.arg)),
+                Some(FlagValue::Bool(true)) => Span::styled(
+                    "✓ ",
+                    Style::default().fg(colors.arg).add_modifier(Modifier::BOLD),
+                ),
                 Some(FlagValue::Bool(false)) => {
-                    Span::styled("☐ ", Style::default().fg(colors.help))
+                    Span::styled("○ ", Style::default().fg(colors.help))
                 }
                 Some(FlagValue::Count(n)) => {
                     if *n > 0 {
@@ -464,7 +471,7 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
                         Span::styled("[•] ", Style::default().fg(colors.arg))
                     }
                 }
-                None => Span::styled("☐ ", Style::default().fg(colors.help)),
+                None => Span::styled("○ ", Style::default().fg(colors.help)),
             };
             spans.push(indicator);
 
@@ -609,11 +616,13 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
 
             let mut spans = Vec::new();
 
-            // Selection cursor indicator
+            // Selection cursor indicator (prominent triangle)
             if is_selected {
                 spans.push(Span::styled(
-                    "▸ ",
-                    Style::default().fg(colors.active_border),
+                    "▶ ",
+                    Style::default()
+                        .fg(colors.active_border)
+                        .add_modifier(Modifier::BOLD),
                 ));
             } else {
                 spans.push(Span::styled("  ", Style::default()));
@@ -1404,8 +1413,8 @@ flag "-q --quiet" help="Quiet mode"
         app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
 
         let output = render_to_string(&mut app, 100, 24);
-        // After toggling, should show checkbox checked indicator
-        assert!(output.contains("☑"));
+        // After toggling, should show checkmark indicator
+        assert!(output.contains("✓"));
         // Preview should include --yes
         assert!(output.contains("--yes"));
     }
@@ -1567,8 +1576,8 @@ flag "-q --quiet" help="Quiet mode"
         let mut app = App::new(sample_spec());
         app.set_focus(Focus::Commands);
         let output = render_to_string(&mut app, 100, 24);
-        // Selected item should have ▸ cursor
-        assert!(output.contains("▸"));
+        // Selected item should have ▶ cursor
+        assert!(output.contains("▶"));
     }
 
     #[test]
@@ -1619,7 +1628,7 @@ flag "-q --quiet" help="Quiet mode"
         }
 
         let output = render_to_string(&mut app, 100, 24);
-        assert!(output.contains("☑"));
+        assert!(output.contains("✓"));
     }
 
     #[test]
@@ -1634,8 +1643,8 @@ flag "-q --quiet" help="Quiet mode"
         app.navigate_into_selected();
 
         let output = render_to_string(&mut app, 100, 24);
-        // Unchecked boolean flags should show ☐
-        assert!(output.contains("☐"));
+        // Unchecked boolean flags should show ○
+        assert!(output.contains("○"));
     }
 
     // ── Theme visual consistency tests ──────────────────────────────────
@@ -1702,5 +1711,245 @@ flag "-q --quiet" help="Quiet mode"
         // required uses error color
         assert_eq!(dracula_colors.required, dracula_palette.error);
         assert_eq!(nord_colors.required, nord_palette.error);
+    }
+
+    // ── Phase 10: UX Bug Fix Tests ──────────────────────────────────────
+
+    #[test]
+    fn test_checkmark_style_checked() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "deploy")
+            .unwrap();
+        app.set_command_index(idx);
+        app.navigate_into_selected();
+
+        // Toggle --rollback on
+        app.set_focus(Focus::Flags);
+        let fidx = app
+            .current_flag_values()
+            .iter()
+            .position(|(n, _)| n == "rollback")
+            .unwrap();
+        app.set_flag_index(fidx);
+        let vals = app.current_flag_values_mut();
+        if let Some((_, FlagValue::Bool(ref mut b))) = vals.get_mut(fidx) {
+            *b = true;
+        }
+
+        let output = render_to_string(&mut app, 100, 24);
+        // Checked flags should use checkmark ✓ (not ☑)
+        assert!(
+            output.contains('✓'),
+            "Checked flag should show ✓ checkmark symbol"
+        );
+        assert!(
+            !output.contains('☑'),
+            "Should NOT use small ☑ symbol anymore"
+        );
+    }
+
+    #[test]
+    fn test_checkmark_style_unchecked() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "deploy")
+            .unwrap();
+        app.set_command_index(idx);
+        app.navigate_into_selected();
+
+        let output = render_to_string(&mut app, 100, 24);
+        // Unchecked flags should use ○ (not ☐)
+        assert!(
+            output.contains('○'),
+            "Unchecked flag should show ○ circle symbol"
+        );
+        assert!(
+            !output.contains('☐'),
+            "Should NOT use small ☐ symbol anymore"
+        );
+    }
+
+    #[test]
+    fn test_prominent_selection_caret() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Commands);
+        let output = render_to_string(&mut app, 100, 24);
+        // Selected item should have prominent ▶ cursor (not thin ▸)
+        assert!(
+            output.contains('▶'),
+            "Selection caret should be the prominent ▶ triangle"
+        );
+        // The old thin ▸ should only appear as a subcommand indicator, not as a selection caret
+        // (subcommand indicator "▸" is still used for has-children indicator)
+    }
+
+    #[test]
+    fn test_prominent_caret_in_flags_panel() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "deploy")
+            .unwrap();
+        app.set_command_index(idx);
+        app.navigate_into_selected();
+        app.set_focus(Focus::Flags);
+
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(
+            output.contains('▶'),
+            "Flags panel should use prominent ▶ caret for selected item"
+        );
+    }
+
+    #[test]
+    fn test_prominent_caret_in_args_panel() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
+        app.set_command_index(idx);
+        app.navigate_into_selected();
+        app.set_focus(Focus::Args);
+
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(
+            output.contains('▶'),
+            "Args panel should use prominent ▶ caret for selected item"
+        );
+    }
+
+    #[test]
+    fn test_count_flag_decrement_renders() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Flags);
+
+        // Find verbose (count flag)
+        let fidx = app
+            .current_flag_values()
+            .iter()
+            .position(|(n, _)| n == "verbose")
+            .unwrap();
+        app.set_flag_index(fidx);
+
+        // Increment to 3
+        for _ in 0..3 {
+            app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        }
+
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(
+            output.contains("[3]"),
+            "Count flag at 3 should show [3] in the UI"
+        );
+
+        // Decrement via backspace
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(
+            output.contains("[2]"),
+            "After backspace, count flag should show [2]"
+        );
+
+        // Decrement to zero
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(output.contains("[0]"), "Count flag at 0 should show [0]");
+
+        // One more backspace — should stay at 0
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(output.contains("[0]"), "Count flag should not go below 0");
+    }
+
+    #[test]
+    fn test_editing_arg_then_switching_does_not_bleed() {
+        let mut app = App::new(sample_spec());
+
+        // Navigate to "run" command
+        let subs = app.visible_subcommands();
+        let run_idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
+        app.set_command_index(run_idx);
+        app.navigate_into_selected();
+
+        // Focus on args and edit <task>
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+        app.start_editing();
+        // Type via handle_key which calls sync_edit_to_value internally
+        for c in ['h', 'e', 'l', 'l', 'o'] {
+            app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+
+        // Render while editing first arg
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(
+            output.contains("hello"),
+            "Editing first arg should show 'hello'"
+        );
+
+        // Finish editing and switch to second arg
+        app.finish_editing();
+        app.set_arg_index(1);
+
+        // Render: second arg should NOT show 'hello'
+        let output = render_to_string(&mut app, 100, 24);
+        // The second arg row should show (empty) not 'hello'
+        // Split output into lines, find the line with [args...]
+        let args_line = output.lines().find(|l| l.contains("args")).unwrap_or("");
+        assert!(
+            !args_line.contains("hello"),
+            "Second arg should not contain text from first arg. Line: {}",
+            args_line
+        );
+    }
+
+    #[test]
+    fn test_count_flag_preview_after_decrement() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Flags);
+
+        let fidx = app
+            .current_flag_values()
+            .iter()
+            .position(|(n, _)| n == "verbose")
+            .unwrap();
+        app.set_flag_index(fidx);
+
+        // Increment to 2
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(
+            output.contains("-vv"),
+            "Preview should show -vv for count 2"
+        );
+
+        // Decrement to 1
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(
+            output.contains("-v") && !output.contains("-vv"),
+            "Preview should show -v for count 1"
+        );
+
+        // Decrement to 0
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(
+            !output.contains("-v ") && !output.contains("-vv"),
+            "Preview should not contain -v when count is 0"
+        );
     }
 }

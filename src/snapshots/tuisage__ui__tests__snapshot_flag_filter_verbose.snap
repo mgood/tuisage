@@ -4,7 +4,7 @@ expression: output
 ---
 mycli › deploy   /verb
 ┌ Flags (/verb) [1/1] ─────────────────────────────────────────────────────────────────────────────┐
-│ ▸ [0] -v, --verbose [G] — Enable verbose logging                                                 │
+│ ▶ [0] -v, --verbose [G] — Enable verbose logging                                                 │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

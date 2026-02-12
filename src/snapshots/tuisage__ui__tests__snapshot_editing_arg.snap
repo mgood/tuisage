@@ -5,9 +5,9 @@ expression: output
 mycli › init
 ┌ Flags (4) ───────────────────────────────────────────────────────────────────────────────────────┐
 │   [·] -t, --template = <basic|full|minimal> — Template to use                                    │
-│   ☐ -f, --force — Overwrite existing files                                                       │
+│   ○ -f, --force — Overwrite existing files                                                       │
 │   [0] -v, --verbose [G] — Enable verbose logging                                                 │
-│   ☐ -q, --quiet [G] — Enable quiet mode                                                          │
+│   ○ -q, --quiet [G] — Enable quiet mode                                                          │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
@@ -15,7 +15,7 @@ mycli › init
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ Arguments [1/1] ─────────────────────────────────────────────────────────────────────────────────┐
-│ ▸ ● <name> = my-project▎                                                                         │
+│ ▶ ● <name> = my-project▎                                                                         │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
