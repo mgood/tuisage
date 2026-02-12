@@ -74,6 +74,7 @@ eval "$(tuisage spec.kdl)"
 | `Tab` / `Shift-Tab` | Cycle focus between panels |
 | `Enter` | Select subcommand / toggle flag / edit arg / accept command |
 | `Space` | Toggle boolean flag / increment count flag |
+| `Backspace` | Decrement count flag (floor at 0) |
 | `/` | Start fuzzy filter (works in Commands and Flags panels) |
 | `Esc` | Cancel filter / stop editing / go back / quit |
 | `q` | Quit |
@@ -87,6 +88,27 @@ eval "$(tuisage spec.kdl)"
 | Click on selected item | Activate (navigate in / toggle / edit) |
 | Right click (commands) | Navigate into subcommand |
 | Scroll wheel | Move selection up/down |
+
+## Flag and Argument Display
+
+**Boolean flags** show with a checkmark indicator:
+- `✓` — flag is enabled
+- `○` — flag is disabled
+
+**Count flags** (e.g., `--verbose`) show with a bracket counter:
+- `[0]` — not set
+- `[1]` — set once (`-v`)
+- `[2]` — set twice (`-vv`)
+- etc.
+
+Increment with `Space`, decrement with `Backspace`.
+
+**String flags** with values show with a bullet indicator:
+- `[•]` — value is set
+- `[·]` — value is empty
+
+**Selection indicator** shows with a bold triangle:
+- `▶` — currently selected item
 
 ## Example Spec
 
@@ -131,7 +153,7 @@ src/
 ## Testing
 
 ```sh
-# Run all tests (54 tests: unit + rendering + snapshots)
+# Run all tests (94 tests: unit + rendering + snapshots)
 cargo test
 
 # Review snapshot changes interactively
