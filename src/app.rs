@@ -1,3 +1,4 @@
+use ratatui::layout::Rect;
 use usage::{Spec, SpecCommand, SpecFlag};
 
 /// Actions that the event loop should take after handling a key.
@@ -35,6 +36,15 @@ pub struct ArgValue {
     pub value: String,
     pub required: bool,
     pub choices: Vec<String>,
+}
+
+/// Stores the rendered areas of each panel for mouse hit-testing.
+#[derive(Debug, Clone, Default)]
+pub struct PanelAreas {
+    pub command_list: Option<Rect>,
+    pub flag_list: Option<Rect>,
+    pub arg_list: Option<Rect>,
+    pub preview: Option<Rect>,
 }
 
 /// Main application state.
@@ -78,6 +88,12 @@ pub struct App {
 
     /// Scroll offset for the flag list.
     pub flag_scroll: usize,
+
+    /// Scroll offset for the arg list.
+    pub arg_scroll: usize,
+
+    /// Rendered panel areas for mouse hit-testing (updated each frame).
+    pub panel_areas: PanelAreas,
 }
 
 impl App {
@@ -96,6 +112,8 @@ impl App {
             filtering: false,
             command_scroll: 0,
             flag_scroll: 0,
+            arg_scroll: 0,
+            panel_areas: PanelAreas::default(),
         };
         app.sync_state();
         app
@@ -115,18 +133,21 @@ impl App {
     }
 
     /// Returns the visible (non-hidden) subcommands of the current command,
-    /// optionally filtered by the current filter string.
+    /// optionally filtered by the current filter string when focus is Commands.
     pub fn visible_subcommands(&self) -> Vec<(&String, &SpecCommand)> {
         let cmd = self.current_command();
         let items: Vec<(&String, &SpecCommand)> =
             cmd.subcommands.iter().filter(|(_, c)| !c.hide).collect();
 
-        if self.filtering && !self.filter.is_empty() {
+        if self.filtering && !self.filter.is_empty() && self.focus == Focus::Commands {
             let filter_lower = self.filter.to_lowercase();
             items
                 .into_iter()
                 .filter(|(name, c)| {
                     fuzzy_match(&name.to_lowercase(), &filter_lower)
+                        || c.aliases
+                            .iter()
+                            .any(|a| fuzzy_match(&a.to_lowercase(), &filter_lower))
                         || c.help
                             .as_ref()
                             .map(|h| fuzzy_match(&h.to_lowercase(), &filter_lower))
@@ -139,7 +160,7 @@ impl App {
     }
 
     /// Returns the visible (non-hidden) flags of the current command,
-    /// including global flags from ancestors.
+    /// including global flags from ancestors, optionally filtered when focus is Flags.
     pub fn visible_flags(&self) -> Vec<&SpecFlag> {
         let cmd = self.current_command();
         let mut flags: Vec<&SpecFlag> = cmd.flags.iter().filter(|f| !f.hide).collect();
@@ -154,7 +175,29 @@ impl App {
             }
         }
 
-        flags
+        // Apply fuzzy filter when focus is on flags
+        if self.filtering && !self.filter.is_empty() && self.focus == Focus::Flags {
+            let filter_lower = self.filter.to_lowercase();
+            flags
+                .into_iter()
+                .filter(|f| {
+                    fuzzy_match(&f.name.to_lowercase(), &filter_lower)
+                        || f.long
+                            .iter()
+                            .any(|l| fuzzy_match(&l.to_lowercase(), &filter_lower))
+                        || f.short.iter().any(|s| {
+                            let s_lower: String = s.to_lowercase().collect();
+                            fuzzy_match(&s_lower, &filter_lower)
+                        })
+                        || f.help
+                            .as_ref()
+                            .map(|h| fuzzy_match(&h.to_lowercase(), &filter_lower))
+                            .unwrap_or(false)
+                })
+                .collect()
+        } else {
+            flags
+        }
     }
 
     /// Synchronize internal state (arg_values, flag_values) when navigating to a new command.
@@ -270,6 +313,141 @@ impl App {
     }
 
     /// Handle a key event, returning the action the event loop should take.
+    /// Handle a mouse event and return the resulting Action.
+    pub fn handle_mouse(&mut self, event: crossterm::event::MouseEvent) -> Action {
+        use crossterm::event::{MouseButton, MouseEventKind};
+
+        let col = event.column;
+        let row = event.row;
+
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Check which panel was clicked and focus it
+                if let Some(area) = self.panel_areas.command_list {
+                    if Self::point_in_rect(col, row, area) {
+                        self.focus = Focus::Commands;
+                        // Calculate which item was clicked (account for border + padding)
+                        let inner_top = area.y + 1; // border
+                        if row >= inner_top {
+                            let clicked_offset = (row - inner_top) as usize;
+                            let item_index = self.command_scroll + clicked_offset;
+                            let len = self.visible_subcommands().len();
+                            if item_index < len {
+                                self.command_index = item_index;
+                            }
+                        }
+                        return Action::None;
+                    }
+                }
+                if let Some(area) = self.panel_areas.flag_list {
+                    if Self::point_in_rect(col, row, area) {
+                        self.focus = Focus::Flags;
+                        let inner_top = area.y + 1;
+                        if row >= inner_top {
+                            let clicked_offset = (row - inner_top) as usize;
+                            let item_index = self.flag_scroll + clicked_offset;
+                            let len = self.current_flag_values().len();
+                            if item_index < len {
+                                self.flag_index = item_index;
+                            }
+                        }
+                        return Action::None;
+                    }
+                }
+                if let Some(area) = self.panel_areas.arg_list {
+                    if Self::point_in_rect(col, row, area) {
+                        self.focus = Focus::Args;
+                        let inner_top = area.y + 1;
+                        if row >= inner_top {
+                            let clicked_offset = (row - inner_top) as usize;
+                            let item_index = self.arg_scroll + clicked_offset;
+                            let len = self.arg_values.len();
+                            if item_index < len {
+                                self.arg_index = item_index;
+                            }
+                        }
+                        return Action::None;
+                    }
+                }
+                if let Some(area) = self.panel_areas.preview {
+                    if Self::point_in_rect(col, row, area) {
+                        self.focus = Focus::Preview;
+                        return Action::None;
+                    }
+                }
+                Action::None
+            }
+            MouseEventKind::Down(MouseButton::Right) => {
+                // Right-click in commands to navigate into selected
+                if let Some(area) = self.panel_areas.command_list {
+                    if Self::point_in_rect(col, row, area) && self.focus == Focus::Commands {
+                        self.navigate_into_selected();
+                    }
+                }
+                Action::None
+            }
+            MouseEventKind::ScrollUp => {
+                self.scroll_up_in_focused();
+                Action::None
+            }
+            MouseEventKind::ScrollDown => {
+                self.scroll_down_in_focused();
+                Action::None
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                // Double-click simulation: if already selected and clicked again, activate
+                // (handled by Down already selecting the item)
+                Action::None
+            }
+            _ => Action::None,
+        }
+    }
+
+    fn point_in_rect(col: u16, row: u16, rect: Rect) -> bool {
+        col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
+    }
+
+    /// Scroll up in the currently focused list.
+    fn scroll_up_in_focused(&mut self) {
+        self.move_up();
+    }
+
+    /// Scroll down in the currently focused list.
+    fn scroll_down_in_focused(&mut self) {
+        self.move_down();
+    }
+
+    /// Ensure the scroll offset keeps the selected index visible within the given viewport height.
+    pub fn ensure_visible(&mut self, panel: Focus, viewport_height: usize) {
+        if viewport_height == 0 {
+            return;
+        }
+        match panel {
+            Focus::Commands => {
+                if self.command_index < self.command_scroll {
+                    self.command_scroll = self.command_index;
+                } else if self.command_index >= self.command_scroll + viewport_height {
+                    self.command_scroll = self.command_index - viewport_height + 1;
+                }
+            }
+            Focus::Flags => {
+                if self.flag_index < self.flag_scroll {
+                    self.flag_scroll = self.flag_index;
+                } else if self.flag_index >= self.flag_scroll + viewport_height {
+                    self.flag_scroll = self.flag_index - viewport_height + 1;
+                }
+            }
+            Focus::Args => {
+                if self.arg_index < self.arg_scroll {
+                    self.arg_scroll = self.arg_index;
+                } else if self.arg_index >= self.arg_scroll + viewport_height {
+                    self.arg_scroll = self.arg_index - viewport_height + 1;
+                }
+            }
+            Focus::Preview => {}
+        }
+    }
+
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
         use crossterm::event::KeyCode;
 
@@ -403,15 +581,48 @@ impl App {
                 // Keep the filter active to show filtered results
                 Action::None
             }
+            KeyCode::Tab => {
+                // Allow switching focus while filtering — stop filtering first
+                self.filtering = false;
+                self.filter.clear();
+                self.cycle_focus_forward();
+                Action::None
+            }
+            KeyCode::BackTab => {
+                self.filtering = false;
+                self.filter.clear();
+                self.cycle_focus_backward();
+                Action::None
+            }
             KeyCode::Backspace => {
                 self.filter.pop();
                 // Reset selection index when filter changes
-                self.command_index = 0;
+                match self.focus {
+                    Focus::Commands => {
+                        self.command_index = 0;
+                        self.command_scroll = 0;
+                    }
+                    Focus::Flags => {
+                        self.flag_index = 0;
+                        self.flag_scroll = 0;
+                    }
+                    _ => {}
+                }
                 Action::None
             }
             KeyCode::Char(c) => {
                 self.filter.push(c);
-                self.command_index = 0;
+                match self.focus {
+                    Focus::Commands => {
+                        self.command_index = 0;
+                        self.command_scroll = 0;
+                    }
+                    Focus::Flags => {
+                        self.flag_index = 0;
+                        self.flag_scroll = 0;
+                    }
+                    _ => {}
+                }
                 Action::None
             }
             KeyCode::Up => {
@@ -470,16 +681,25 @@ impl App {
             Focus::Commands => {
                 if self.command_index > 0 {
                     self.command_index -= 1;
+                    if self.command_index < self.command_scroll {
+                        self.command_scroll = self.command_index;
+                    }
                 }
             }
             Focus::Flags => {
                 if self.flag_index > 0 {
                     self.flag_index -= 1;
+                    if self.flag_index < self.flag_scroll {
+                        self.flag_scroll = self.flag_index;
+                    }
                 }
             }
             Focus::Args => {
                 if self.arg_index > 0 {
                     self.arg_index -= 1;
+                    if self.arg_index < self.arg_scroll {
+                        self.arg_scroll = self.arg_index;
+                    }
                 }
             }
             Focus::Preview => {}
@@ -599,6 +819,9 @@ impl App {
             self.command_index = 0;
             self.flag_index = 0;
             self.arg_index = 0;
+            self.command_scroll = 0;
+            self.flag_scroll = 0;
+            self.arg_scroll = 0;
             self.filter.clear();
             self.filtering = false;
             self.sync_state();
@@ -611,6 +834,9 @@ impl App {
             self.command_index = 0;
             self.flag_index = 0;
             self.arg_index = 0;
+            self.command_scroll = 0;
+            self.flag_scroll = 0;
+            self.arg_scroll = 0;
             self.filter.clear();
             self.filtering = false;
             self.sync_state();
@@ -768,17 +994,6 @@ impl App {
             }),
             Focus::Preview => Some("Press Enter to accept the command, Esc to go back".to_string()),
         }
-    }
-
-    /// Returns the display title for the current command context.
-    pub fn breadcrumb(&self) -> String {
-        let mut parts = vec![if self.spec.bin.is_empty() {
-            self.spec.name.clone()
-        } else {
-            self.spec.bin.clone()
-        }];
-        parts.extend(self.command_path.clone());
-        parts.join(" > ")
     }
 }
 
@@ -946,9 +1161,9 @@ mod tests {
     }
 
     #[test]
-    fn test_breadcrumb() {
+    fn test_command_path_navigation() {
         let mut app = App::new(sample_spec());
-        assert_eq!(app.breadcrumb(), "mycli");
+        assert!(app.command_path.is_empty());
 
         let subs = app.visible_subcommands();
         let config_idx = subs
@@ -957,13 +1172,16 @@ mod tests {
             .unwrap();
         app.command_index = config_idx;
         app.navigate_into_selected();
-        assert_eq!(app.breadcrumb(), "mycli > config");
+        assert_eq!(app.command_path, vec!["config"]);
 
         let subs = app.visible_subcommands();
         let set_idx = subs.iter().position(|(n, _)| n.as_str() == "set").unwrap();
         app.command_index = set_idx;
         app.navigate_into_selected();
-        assert_eq!(app.breadcrumb(), "mycli > config > set");
+        assert_eq!(app.command_path, vec!["config", "set"]);
+
+        app.navigate_up();
+        assert_eq!(app.command_path, vec!["config"]);
     }
 
     #[test]
@@ -1121,5 +1339,253 @@ mod tests {
         assert!(names.contains(&"config"));
         // "init" should not match "cfg"
         assert!(!names.contains(&"init"));
+    }
+
+    #[test]
+    fn test_filter_flags() {
+        let mut app = App::new(sample_spec());
+        // Navigate to deploy (has multiple flags)
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "deploy")
+            .unwrap();
+        app.command_index = idx;
+        app.navigate_into_selected();
+
+        // Focus on flags
+        app.focus = Focus::Flags;
+
+        // Enter filter mode
+        let slash = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('/'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(slash);
+        assert!(app.filtering);
+
+        // Type "roll" to filter for --rollback
+        for c in "roll".chars() {
+            let key = crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(c),
+                crossterm::event::KeyModifiers::NONE,
+            );
+            app.handle_key(key);
+        }
+        assert_eq!(app.filter, "roll");
+
+        // visible_flags should only include rollback
+        let flags = app.visible_flags();
+        let names: Vec<&str> = flags.iter().map(|f| f.name.as_str()).collect();
+        assert!(names.contains(&"rollback"));
+        assert!(!names.contains(&"tag"));
+        assert!(!names.contains(&"yes"));
+    }
+
+    #[test]
+    fn test_filter_tab_switches_focus_and_clears() {
+        let mut app = App::new(sample_spec());
+        app.focus = Focus::Commands;
+
+        // Enter filter mode
+        let slash = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('/'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(slash);
+        assert!(app.filtering);
+
+        // Type something
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('x'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(key);
+        assert_eq!(app.filter, "x");
+
+        // Tab should stop filtering and switch focus
+        let tab = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Tab,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(tab);
+        assert!(!app.filtering);
+        assert!(app.filter.is_empty());
+        assert_eq!(app.focus, Focus::Flags);
+    }
+
+    #[test]
+    fn test_scroll_offset_ensure_visible() {
+        let mut app = App::new(sample_spec());
+        app.focus = Focus::Commands;
+
+        // Manually set command_index beyond a small viewport
+        app.command_index = 5;
+        app.command_scroll = 0;
+        app.ensure_visible(Focus::Commands, 3);
+        // Index 5 should push scroll to at least 3 (5 - 3 + 1)
+        assert_eq!(app.command_scroll, 3);
+
+        // Now move index back into view
+        app.command_index = 2;
+        app.ensure_visible(Focus::Commands, 3);
+        // Index 2 < scroll 3, so scroll should snap to 2
+        assert_eq!(app.command_scroll, 2);
+
+        // Already visible: no change
+        app.command_index = 3;
+        app.ensure_visible(Focus::Commands, 3);
+        assert_eq!(app.command_scroll, 2);
+    }
+
+    #[test]
+    fn test_scroll_offset_on_move_up() {
+        let mut app = App::new(sample_spec());
+        app.focus = Focus::Commands;
+
+        // Set scroll and index so move_up triggers scroll adjustment
+        app.command_scroll = 2;
+        app.command_index = 2;
+        app.move_up();
+        assert_eq!(app.command_index, 1);
+        assert_eq!(app.command_scroll, 1);
+    }
+
+    #[test]
+    fn test_navigate_resets_scroll() {
+        let mut app = App::new(sample_spec());
+        app.command_scroll = 5;
+        app.flag_scroll = 3;
+
+        // Navigate into a subcommand — all scroll offsets should reset
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "config")
+            .unwrap();
+        app.command_index = idx;
+        app.navigate_into_selected();
+        assert_eq!(app.command_scroll, 0);
+        assert_eq!(app.flag_scroll, 0);
+        assert_eq!(app.arg_scroll, 0);
+
+        // Navigate up — all scroll offsets should reset
+        app.command_scroll = 2;
+        app.navigate_up();
+        assert_eq!(app.command_scroll, 0);
+        assert_eq!(app.flag_scroll, 0);
+        assert_eq!(app.arg_scroll, 0);
+    }
+
+    #[test]
+    fn test_mouse_click_focuses_panel() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+        let mut app = App::new(sample_spec());
+        app.focus = Focus::Commands;
+
+        // Set up fake panel areas (simulating what render would produce)
+        app.panel_areas.command_list = Some(ratatui::layout::Rect::new(0, 1, 40, 18));
+        app.panel_areas.flag_list = Some(ratatui::layout::Rect::new(40, 1, 60, 18));
+        app.panel_areas.preview = Some(ratatui::layout::Rect::new(0, 21, 100, 3));
+
+        // Click in the flag area
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 50,
+            row: 3,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse);
+        assert_eq!(app.focus, Focus::Flags);
+
+        // Click in the preview area
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 10,
+            row: 22,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse);
+        assert_eq!(app.focus, Focus::Preview);
+
+        // Click in the command area
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 10,
+            row: 3,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse);
+        assert_eq!(app.focus, Focus::Commands);
+    }
+
+    #[test]
+    fn test_mouse_click_selects_item() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+        let mut app = App::new(sample_spec());
+        app.focus = Focus::Commands;
+        app.command_index = 0;
+
+        // Set up panel area — border at y=1, first item at y=2
+        app.panel_areas.command_list = Some(ratatui::layout::Rect::new(0, 1, 40, 18));
+
+        // Click on 3rd item (row = border_top + 1 + 2 = 4)
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 10,
+            row: 4,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse);
+        assert_eq!(app.command_index, 2);
+    }
+
+    #[test]
+    fn test_mouse_scroll_moves_selection() {
+        use crossterm::event::{MouseEvent, MouseEventKind};
+
+        let mut app = App::new(sample_spec());
+        app.focus = Focus::Commands;
+        app.command_index = 0;
+
+        // Scroll down
+        let mouse = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 10,
+            row: 5,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse);
+        assert_eq!(app.command_index, 1);
+
+        // Scroll down again
+        app.handle_mouse(mouse);
+        assert_eq!(app.command_index, 2);
+
+        // Scroll up
+        let mouse_up = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 10,
+            row: 5,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse_up);
+        assert_eq!(app.command_index, 1);
+    }
+
+    #[test]
+    fn test_point_in_rect() {
+        let rect = ratatui::layout::Rect::new(10, 20, 30, 15);
+        // Inside
+        assert!(App::point_in_rect(10, 20, rect));
+        assert!(App::point_in_rect(25, 30, rect));
+        assert!(App::point_in_rect(39, 34, rect));
+        // Outside
+        assert!(!App::point_in_rect(9, 20, rect));
+        assert!(!App::point_in_rect(10, 19, rect));
+        assert!(!App::point_in_rect(40, 20, rect));
+        assert!(!App::point_in_rect(10, 35, rect));
     }
 }

@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, ListState, Padding, Paragraph, Wrap},
     Frame,
 };
 
@@ -34,7 +34,7 @@ mod colors {
 }
 
 /// Main render function called from the event loop.
-pub fn render(frame: &mut Frame, app: &App) {
+pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
     // Top-level vertical layout:
@@ -52,10 +52,16 @@ pub fn render(frame: &mut Frame, app: &App) {
         ])
         .split(area);
 
+    // Reset panel areas each frame
+    app.panel_areas = Default::default();
+
     render_breadcrumb(frame, app, outer[0]);
     render_main_content(frame, app, outer[1]);
     render_help_bar(frame, app, outer[2]);
     render_preview(frame, app, outer[3]);
+
+    // Store preview area
+    app.panel_areas.preview = Some(outer[3]);
 }
 
 /// Render the breadcrumb bar showing the current command path.
@@ -108,7 +114,7 @@ fn render_breadcrumb(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Render the main content area with panels for commands, flags, and args.
-fn render_main_content(frame: &mut Frame, app: &App, area: Rect) {
+fn render_main_content(frame: &mut Frame, app: &mut App, area: Rect) {
     let has_commands = !app.visible_subcommands().is_empty();
     let has_flags = !app.visible_flags().is_empty();
     let has_args = !app.arg_values.is_empty();
@@ -170,7 +176,10 @@ fn render_main_content(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Render the subcommand list panel.
-fn render_command_list(frame: &mut Frame, app: &App, area: Rect) {
+fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect) {
+    // Store area for mouse hit-testing
+    app.panel_areas.command_list = Some(area);
+
     let is_focused = app.focus == Focus::Commands;
     let border_color = if is_focused {
         colors::ACTIVE_BORDER
@@ -178,7 +187,7 @@ fn render_command_list(frame: &mut Frame, app: &App, area: Rect) {
         colors::INACTIVE_BORDER
     };
 
-    let title = if app.filtering && is_focused {
+    let title = if app.filtering && app.focus == Focus::Commands {
         format!(" Commands (/{}) ", app.filter)
     } else {
         " Commands ".to_string()
@@ -190,6 +199,10 @@ fn render_command_list(frame: &mut Frame, app: &App, area: Rect) {
         .title(title)
         .title_style(Style::default().fg(border_color).bold())
         .padding(Padding::horizontal(1));
+
+    // Calculate inner height for scroll offset (area minus borders)
+    let inner_height = area.height.saturating_sub(2) as usize;
+    app.ensure_visible(Focus::Commands, inner_height);
 
     let subs = app.visible_subcommands();
     let items: Vec<ListItem> = subs
@@ -243,12 +256,22 @@ fn render_command_list(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
+    let mut state = ListState::default()
+        .with_selected(if is_focused {
+            Some(app.command_index)
+        } else {
+            None
+        })
+        .with_offset(app.command_scroll);
     let list = List::new(items).block(block);
-    frame.render_widget(list, area);
+    frame.render_stateful_widget(list, area, &mut state);
 }
 
 /// Render the flag list panel.
-fn render_flag_list(frame: &mut Frame, app: &App, area: Rect) {
+fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
+    // Store area for mouse hit-testing
+    app.panel_areas.flag_list = Some(area);
+
     let is_focused = app.focus == Focus::Flags;
     let border_color = if is_focused {
         colors::ACTIVE_BORDER
@@ -256,12 +279,22 @@ fn render_flag_list(frame: &mut Frame, app: &App, area: Rect) {
         colors::INACTIVE_BORDER
     };
 
+    let title = if app.filtering && app.focus == Focus::Flags {
+        format!(" Flags (/{}) ", app.filter)
+    } else {
+        " Flags ".to_string()
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
-        .title(" Flags ")
+        .title(title)
         .title_style(Style::default().fg(border_color).bold())
         .padding(Padding::horizontal(1));
+
+    // Calculate inner height for scroll offset
+    let inner_height = area.height.saturating_sub(2) as usize;
+    app.ensure_visible(Focus::Flags, inner_height);
 
     let flags = app.visible_flags();
     let flag_values = app.current_flag_values();
@@ -391,12 +424,20 @@ fn render_flag_list(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
+    let mut state = ListState::default()
+        .with_selected(if is_focused {
+            Some(app.flag_index)
+        } else {
+            None
+        })
+        .with_offset(app.flag_scroll);
     let list = List::new(items).block(block);
-    frame.render_widget(list, area);
+    frame.render_stateful_widget(list, area, &mut state);
 }
 
-/// Render the positional argument list panel.
-fn render_arg_list(frame: &mut Frame, app: &App, area: Rect) {
+fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect) {
+    // Store area for mouse hit-testing
+    app.panel_areas.arg_list = Some(area);
     let is_focused = app.focus == Focus::Args;
     let border_color = if is_focused {
         colors::ACTIVE_BORDER
@@ -410,6 +451,10 @@ fn render_arg_list(frame: &mut Frame, app: &App, area: Rect) {
         .title(" Arguments ")
         .title_style(Style::default().fg(border_color).bold())
         .padding(Padding::horizontal(1));
+
+    // Calculate inner height for scroll offset (must happen before borrowing app.arg_values)
+    let inner_height = area.height.saturating_sub(2) as usize;
+    app.ensure_visible(Focus::Args, inner_height);
 
     let items: Vec<ListItem> = app
         .arg_values
@@ -500,11 +545,17 @@ fn render_arg_list(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
+    let mut state = ListState::default()
+        .with_selected(if is_focused {
+            Some(app.arg_index)
+        } else {
+            None
+        })
+        .with_offset(app.arg_scroll);
     let list = List::new(items).block(block);
-    frame.render_widget(list, area);
+    frame.render_stateful_widget(list, area, &mut state);
 }
 
-/// Render the help/status bar.
 fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
     let help_text = app.current_help().unwrap_or_default();
 
@@ -518,7 +569,7 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
                 "Enter/→: select  ↑↓: navigate  Tab: next panel  /: filter  Esc: back  q: quit"
             }
             Focus::Flags => {
-                "Enter/Space: toggle  ↑↓: navigate  Tab: next panel  Esc: back  q: quit"
+                "Enter/Space: toggle  ↑↓: navigate  Tab: next panel  /: filter  Esc: back  q: quit"
             }
             Focus::Args => "Enter: edit  ↑↓: navigate  Tab: next panel  Esc: back  q: quit",
             Focus::Preview => "Enter: accept command  Tab: next panel  Esc: back  q: quit",
@@ -619,7 +670,7 @@ mod tests {
         input.parse::<usage::Spec>().expect("Failed to parse spec")
     }
 
-    fn render_to_string(app: &App, width: u16, height: u16) -> String {
+    fn render_to_string(app: &mut App, width: u16, height: u16) -> String {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|frame| render(frame, app)).unwrap();
@@ -642,8 +693,8 @@ mod tests {
 
     #[test]
     fn snapshot_root_view() {
-        let app = App::new(sample_spec());
-        let output = render_to_string(&app, 100, 24);
+        let mut app = App::new(sample_spec());
+        let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
 
@@ -657,7 +708,7 @@ mod tests {
             .unwrap();
         app.command_index = idx;
         app.navigate_into_selected();
-        let output = render_to_string(&app, 100, 24);
+        let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
 
@@ -671,7 +722,7 @@ mod tests {
             .unwrap();
         app.command_index = idx;
         app.navigate_into_selected();
-        let output = render_to_string(&app, 100, 24);
+        let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
 
@@ -682,7 +733,7 @@ mod tests {
         let idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
         app.command_index = idx;
         app.navigate_into_selected();
-        let output = render_to_string(&app, 100, 24);
+        let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
 
@@ -729,7 +780,7 @@ mod tests {
         // Set arg <environment> = prod
         app.arg_values[0].value = "prod".to_string();
 
-        let output = render_to_string(&app, 100, 24);
+        let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
 
@@ -747,7 +798,7 @@ mod tests {
         app.editing = true;
         app.arg_values[0].value = "my-project".to_string();
 
-        let output = render_to_string(&app, 100, 24);
+        let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
 
@@ -756,7 +807,7 @@ mod tests {
         let mut app = App::new(sample_spec());
         app.filtering = true;
         app.filter = "pl".to_string();
-        let output = render_to_string(&app, 100, 24);
+        let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
 
@@ -771,7 +822,7 @@ mod tests {
         app.arg_values[0].value = "lint".to_string();
         app.focus = Focus::Preview;
 
-        let output = render_to_string(&app, 100, 24);
+        let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
 
@@ -796,7 +847,7 @@ mod tests {
         app.command_index = idx;
         app.navigate_into_selected();
 
-        let output = render_to_string(&app, 100, 24);
+        let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
 
@@ -814,8 +865,8 @@ arg "<input>" help="Input file"
 arg "[output]" help="Output file"
         "#,
         );
-        let app = App::new(spec);
-        let output = render_to_string(&app, 80, 20);
+        let mut app = App::new(spec);
+        let output = render_to_string(&mut app, 80, 20);
         insta::assert_snapshot!(output);
     }
 
@@ -837,7 +888,7 @@ cmd "format" help="Format code" {
         let mut app = App::new(spec);
         app.command_index = 0;
         app.navigate_into_selected();
-        let output = render_to_string(&app, 80, 20);
+        let output = render_to_string(&mut app, 80, 20);
         insta::assert_snapshot!(output);
     }
 
@@ -851,8 +902,8 @@ arg "<file>" help="File to process"
 flag "-o --output <path>" help="Output path"
         "#,
         );
-        let app = App::new(spec);
-        let output = render_to_string(&app, 80, 20);
+        let mut app = App::new(spec);
+        let output = render_to_string(&mut app, 80, 20);
         insta::assert_snapshot!(output);
     }
 
@@ -875,7 +926,49 @@ flag "-q --quiet" help="Quiet mode"
                 }
             }
         }
-        let output = render_to_string(&app, 80, 20);
+        let output = render_to_string(&mut app, 80, 20);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_flag_filter_active() {
+        let mut app = App::new(sample_spec());
+        // Navigate to deploy (has multiple flags)
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "deploy")
+            .unwrap();
+        app.command_index = idx;
+        app.navigate_into_selected();
+
+        // Focus on flags and start filtering
+        app.focus = Focus::Flags;
+        app.filtering = true;
+        app.filter = "roll".to_string();
+
+        let output = render_to_string(&mut app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_flag_filter_verbose() {
+        let mut app = App::new(sample_spec());
+        // Navigate to deploy
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "deploy")
+            .unwrap();
+        app.command_index = idx;
+        app.navigate_into_selected();
+
+        // Focus on flags and filter for "verb" (should match --verbose)
+        app.focus = Focus::Flags;
+        app.filtering = true;
+        app.filter = "verb".to_string();
+
+        let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
 
@@ -883,8 +976,8 @@ flag "-q --quiet" help="Quiet mode"
 
     #[test]
     fn test_render_root() {
-        let app = App::new(sample_spec());
-        let output = render_to_string(&app, 100, 30);
+        let mut app = App::new(sample_spec());
+        let output = render_to_string(&mut app, 100, 30);
         assert!(output.contains("mycli"));
         assert!(output.contains("init"));
         assert!(output.contains("config"));
@@ -904,7 +997,7 @@ flag "-q --quiet" help="Quiet mode"
         app.command_index = config_idx;
         app.navigate_into_selected();
 
-        let output = render_to_string(&app, 100, 30);
+        let output = render_to_string(&mut app, 100, 30);
         assert!(output.contains("config"));
         assert!(output.contains("set"));
         assert!(output.contains("get"));
@@ -923,7 +1016,7 @@ flag "-q --quiet" help="Quiet mode"
         app.command_index = deploy_idx;
         app.navigate_into_selected();
 
-        let output = render_to_string(&app, 100, 30);
+        let output = render_to_string(&mut app, 100, 30);
         assert!(output.contains("Flags"));
         assert!(output.contains("Arguments"));
         assert!(output.contains("environment"));
@@ -966,7 +1059,7 @@ flag "-q --quiet" help="Quiet mode"
 
         app.arg_values[0].value = "hello".to_string();
 
-        let output = render_to_string(&app, 100, 24);
+        let output = render_to_string(&mut app, 100, 24);
         assert!(output.contains("mycli init hello"));
     }
 
@@ -981,7 +1074,7 @@ flag "-q --quiet" help="Quiet mode"
         app.command_index = idx;
         app.navigate_into_selected();
 
-        let output = render_to_string(&app, 100, 30);
+        let output = render_to_string(&mut app, 100, 30);
         // "set" has alias "add", "list" has alias "ls", "remove" has alias "rm"
         assert!(output.contains("add"));
         assert!(output.contains("ls"));
@@ -990,8 +1083,8 @@ flag "-q --quiet" help="Quiet mode"
 
     #[test]
     fn test_render_global_flag_indicator() {
-        let app = App::new(sample_spec());
-        let output = render_to_string(&app, 100, 30);
+        let mut app = App::new(sample_spec());
+        let output = render_to_string(&mut app, 100, 30);
         // Global flags should show [G] indicator
         assert!(output.contains("[G]"));
     }
@@ -1007,7 +1100,7 @@ flag "-q --quiet" help="Quiet mode"
         app.command_index = idx;
         app.navigate_into_selected();
 
-        let output = render_to_string(&app, 100, 24);
+        let output = render_to_string(&mut app, 100, 24);
         // Required args should be shown with <> brackets
         assert!(output.contains("<environment>"));
     }
@@ -1023,7 +1116,7 @@ flag "-q --quiet" help="Quiet mode"
         app.command_index = idx;
         app.navigate_into_selected();
 
-        let output = render_to_string(&app, 100, 24);
+        let output = render_to_string(&mut app, 100, 24);
         // Choices should be displayed
         assert!(output.contains("dev"));
         assert!(output.contains("staging"));
@@ -1052,7 +1145,7 @@ flag "-q --quiet" help="Quiet mode"
         // Toggle via space key
         app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
 
-        let output = render_to_string(&app, 100, 24);
+        let output = render_to_string(&mut app, 100, 24);
         // After toggling, should show checkmark
         assert!(output.contains("[✓]"));
         // Preview should include --yes
@@ -1061,8 +1154,8 @@ flag "-q --quiet" help="Quiet mode"
 
     #[test]
     fn test_render_narrow_terminal() {
-        let app = App::new(sample_spec());
-        let output = render_to_string(&app, 60, 16);
+        let mut app = App::new(sample_spec());
+        let output = render_to_string(&mut app, 60, 16);
         // Should still render without panicking
         assert!(output.contains("mycli"));
         assert!(output.contains("Commands"));

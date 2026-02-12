@@ -25,10 +25,16 @@ fn main() -> color_eyre::Result<()> {
         )
     })?;
 
+    // Enable mouse capture before initializing the terminal
+    crossterm::execute!(std::io::stderr(), crossterm::event::EnableMouseCapture)?;
+
     let mut terminal = ratatui::init();
     let mut app = App::new(spec);
     let result = run_event_loop(&mut terminal, &mut app);
+
+    // Restore terminal and disable mouse capture
     ratatui::restore();
+    crossterm::execute!(std::io::stderr(), crossterm::event::DisableMouseCapture)?;
 
     match result {
         Ok(Some(command)) => {
@@ -49,17 +55,29 @@ fn run_event_loop(
     loop {
         terminal.draw(|frame| ui::render(frame, app))?;
 
-        if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
+        match event::read()? {
+            Event::Key(key) => {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
 
-            // Global quit shortcuts
-            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-                return Ok(None);
-            }
+                // Global quit shortcuts
+                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+                    return Ok(None);
+                }
 
-            match app.handle_key(key) {
+                match app.handle_key(key) {
+                    app::Action::None => {}
+                    app::Action::Quit => return Ok(None),
+                    app::Action::Accept => {
+                        let cmd = app.build_command();
+                        if !cmd.is_empty() {
+                            return Ok(Some(cmd));
+                        }
+                    }
+                }
+            }
+            Event::Mouse(mouse) => match app.handle_mouse(mouse) {
                 app::Action::None => {}
                 app::Action::Quit => return Ok(None),
                 app::Action::Accept => {
@@ -68,7 +86,11 @@ fn run_event_loop(
                         return Ok(Some(cmd));
                     }
                 }
+            },
+            Event::Resize(_, _) => {
+                // Terminal will be redrawn on next loop iteration
             }
+            _ => {}
         }
     }
 }
