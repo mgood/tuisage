@@ -6,7 +6,7 @@ Point TuiSage at a `.usage.kdl` file and it presents an interactive interface fo
 
 ## Features
 
-- **Browse subcommands** — navigate nested command trees with arrow keys or mouse
+- **Browse subcommands** — explore the full command hierarchy as an expandable/collapsible tree
 - **Toggle flags** — boolean flags, count flags (`-vvv`), and flags with values
 - **Fill arguments** — positional args with free-text input or choice cycling
 - **Live preview** — see the assembled command update in real time
@@ -69,11 +69,11 @@ eval "$(tuisage spec.kdl)"
 
 | Key | Action |
 |---|---|
-| `↑` / `↓` or `k` / `j` | Navigate within a list |
-| `←` / `h` | Go back (navigate up) |
-| `→` / `l` | Enter selected subcommand |
+| `↑` / `↓` or `k` / `j` | Navigate within a panel |
+| `←` / `h` | Collapse tree node (or move to parent) |
+| `→` / `l` | Expand tree node (or move to first child) |
 | `Tab` / `Shift-Tab` | Cycle focus between panels |
-| `Enter` | Select subcommand / toggle flag / edit arg / accept command |
+| `Enter` | Toggle expand/collapse / toggle flag / edit arg / accept command |
 | `Space` | Toggle boolean flag / increment count flag |
 | `Backspace` | Decrement count flag (floor at 0) |
 | `/` | Start fuzzy filter (works in Commands and Flags panels) |
@@ -87,8 +87,8 @@ eval "$(tuisage spec.kdl)"
 | Action | Effect |
 |---|---|
 | Left click | Focus panel and select item |
-| Click on selected item | Activate (navigate in / toggle / edit) |
-| Right click (commands) | Navigate into subcommand |
+| Click on selected item | Activate (toggle expand/collapse / toggle / edit) |
+| Right click (commands) | Expand tree node |
 | Scroll wheel | Move selection up/down |
 
 ## Example Spec
@@ -125,7 +125,7 @@ See `fixtures/sample.usage.kdl` for a more comprehensive example.
 ## Testing
 
 ```sh
-# Run all tests (94 tests: unit + rendering + snapshots)
+# Run all tests (111 tests: unit + rendering + snapshots)
 cargo test
 
 # Review snapshot changes interactively
@@ -152,7 +152,7 @@ cargo insta test --accept
 | [usage-lib](https://crates.io/crates/usage-lib) | Parse usage specs (KDL format) |
 | [ratatui](https://crates.io/crates/ratatui) | TUI framework |
 | [crossterm](https://crates.io/crates/crossterm) | Terminal backend & events |
-| [ratatui-interact](https://crates.io/crates/ratatui-interact) | UI components (breadcrumb, input, focus management) |
+| [ratatui-interact](https://crates.io/crates/ratatui-interact) | UI components (TreeView, breadcrumb, input, focus management) |
 | [ratatui-themes](https://crates.io/crates/ratatui-themes) | Color theming |
 | [color-eyre](https://crates.io/crates/color-eyre) | Error reporting |
 | [insta](https://crates.io/crates/insta) | Snapshot testing (dev) |

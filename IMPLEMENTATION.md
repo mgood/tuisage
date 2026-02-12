@@ -64,6 +64,7 @@ The core state and logic module (~2050 lines including ~960 lines of tests).
 - **`Focus`** — enum of focusable panels: `Commands`, `Flags`, `Args`, `Preview`.
 - **`FlagValue`** — discriminated union: `Bool(bool)`, `String(String)`, `Count(u32)`.
 - **`ArgValue`** — struct with `name`, `value`, `required`, `choices` fields.
+- **`CmdData`** — data stored in each tree node: `name`, `help`, `aliases`.
 - **`App`** — the main application state struct.
 
 #### `App` Struct Fields
@@ -72,14 +73,15 @@ The core state and logic module (~2050 lines including ~960 lines of tests).
 |---|---|---|
 | `spec` | `usage::Spec` | The parsed usage specification |
 | `theme_name` | `String` | Current color theme name |
-| `command_path` | `Vec<String>` | Current position in the command tree |
-| `flag_values` | `HashMap<String, HashMap<String, FlagValue>>` | Flag state keyed by command path |
-| `arg_values` | `HashMap<String, Vec<ArgValue>>` | Arg state keyed by command path |
+| `command_path` | `Vec<String>` | Current position in the command tree (derived from tree selection) |
+| `flag_values` | `HashMap<String, Vec<(String, FlagValue)>>` | Flag state keyed by command path |
+| `arg_values` | `Vec<ArgValue>` | Arg values for the current command |
 | `focus_manager` | `FocusManager<Focus>` | Focus cycling logic (from ratatui-interact) |
 | `editing` | `bool` | Whether a text input is currently active |
 | `filter_input` | `InputState` | State for the fuzzy filter text input |
 | `filtering` | `bool` | Whether filter mode is active |
-| `command_list_state` | `ListPickerState` | Selection + scroll state for commands |
+| `command_tree_nodes` | `Vec<TreeNode<CmdData>>` | Full command hierarchy as tree nodes (built from spec) |
+| `command_tree_state` | `TreeViewState` | Tree view state: selection index, collapsed set, scroll |
 | `flag_list_state` | `ListPickerState` | Selection + scroll state for flags |
 | `arg_list_state` | `ListPickerState` | Selection + scroll state for args |
 | `edit_input` | `InputState` | State for the value editing text input |
@@ -91,22 +93,39 @@ The core state and logic module (~2050 lines including ~960 lines of tests).
 - **`visible_subcommands()`** — returns subcommands at the current level, filtered if filter mode is active.
 - **`visible_flags()`** — returns flags for the current command plus inherited global flags, filtered if active.
 - **`sync_state()`** — initializes or restores flag/arg values when navigating to a new command. Handles defaults.
+- **`sync_command_path_from_tree()`** — derives `command_path` from the currently selected tree node and calls `sync_state()`.
 - **`handle_key()`** — top-level key dispatcher. Routes to `handle_editing_key()`, `handle_filter_key()`, or direct navigation/action based on current mode.
 - **`handle_mouse()`** — maps mouse events to panel focus, item selection, scroll, and activation. Finishes any active edit before switching targets.
 - **`build_command()`** — assembles the complete command string from the current state.
 - **`fuzzy_match()`** — standalone function for case-insensitive subsequence matching.
-- **`navigate_into_selected()`** / **`navigate_up()`** — push/pop the command path and re-sync state.
+- **`tree_toggle_selected()`** — toggles expand/collapse of the selected tree node (Enter key on Commands).
+- **`tree_expand_or_enter()`** — expands a collapsed node or moves to its first child (Right/l key).
+- **`tree_collapse_or_parent()`** — collapses an expanded node or moves to its parent (Left/h key).
+- **`navigate_to_command()`** — expands ancestors and selects a specific command by path (used in tests).
+- **`navigate_into_selected()`** / **`navigate_up()`** — backward-compatible wrappers for tree expand+select-child / select-parent.
 - **`ensure_visible()`** — adjusts scroll offset so the selected item is within the visible viewport.
+
+#### Tree Building
+
+The command hierarchy is built at startup by `build_command_tree()`:
+
+1. The root node (ID `""`) represents the binary name and the root command's flags/args.
+2. Each subcommand becomes a child `TreeNode<CmdData>` with ID set to the space-joined command path (e.g., `"config set"`).
+3. Hidden commands (`hide=true`) are filtered out.
+4. Non-root nodes with children are initially collapsed, so the tree starts showing only the top-level subcommands.
+
+Helper functions `flatten_visible_ids()`, `flatten_visible_nodes()`, and `count_visible()` traverse the tree respecting collapsed state.
 
 #### State Synchronization Flow
 
-When `sync_state()` is called (on navigation):
+When `sync_command_path_from_tree()` is called (on tree selection change):
 
-1. Look up the current command in the spec.
-2. For each flag: if a stored value exists, preserve it; otherwise initialize from the flag's default (or `false`/empty/`0`).
-3. For each argument: if a stored value exists, preserve it; otherwise initialize with an empty value and metadata.
-4. Reset list indices to 0 and scroll offsets to 0.
-5. Rebuild the focus manager, skipping panels that have no items.
+1. Derive `command_path` from the selected tree node's ID (split by space).
+2. Call `sync_state()` which:
+   a. Looks up the current command in the spec.
+   b. For each flag: if a stored value exists, preserves it; otherwise initializes from the flag's default (or `false`/empty/`0`).
+   c. For each argument: if a stored value exists, preserves it; otherwise initializes with an empty value and metadata.
+   d. Rebuilds the focus manager, skipping panels that have no items.
 
 ### `src/ui.rs`
 
@@ -121,7 +140,7 @@ A semantic color palette derived from the active `ThemePalette`. Maps abstract r
 - **`render()`** — top-level entry point called by the event loop. Computes layout, derives colors, and delegates to sub-renderers.
 - **`render_breadcrumb()`** — renders the navigation breadcrumb using `ratatui-interact`'s `Breadcrumb` widget.
 - **`render_main_content()`** — splits the middle area into up to 3 columns (commands, flags, args). Hides panels with no content and redistributes space.
-- **`render_command_list()`** — renders the subcommand list with selection caret, aliases, help text, and filter bar.
+- **`render_command_list()`** — renders the command tree using ratatui-interact's `TreeView` widget with themed `TreeStyle`, showing expand/collapse icons, tree connectors, and aliases.
 - **`render_flag_list()`** — renders flags with checkbox indicators (✓/○), values, defaults, global tags, and count badges.
 - **`render_arg_list()`** — renders arguments with required indicators, current values, choices, and inline editing.
 - **`render_preview()`** — renders the colorized command preview with `▶ RUN` or `$` prefix based on focus.
@@ -154,8 +173,8 @@ The `usage-lib` crate includes optional features for generating documentation, m
 
 ### Test Count
 
-94 tests total:
-- **42 tests** in `app.rs` — state logic, command building, navigation, key handling, mouse handling, filtering, editing
+111 tests total:
+- **59 tests** in `app.rs` — state logic, command building, tree navigation, key handling, mouse handling, filtering, editing, tree expand/collapse
 - **52 tests** in `ui.rs` — 19 snapshot tests + 33 assertion-based rendering tests
 
 ### Test Fixtures
@@ -191,7 +210,8 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 | Rendering to stderr, output to stdout | Enables composability: `eval "$(tuisage spec.kdl)"` works because TUI output doesn't mix with the command string. |
 | Crossterm backend | Best cross-platform terminal support (macOS, Linux, Windows). |
 | Theme palette mapping | Instead of hardcoding colors, derive semantic colors from the active theme. This makes all themes work automatically. |
-| `ListPickerState` from ratatui-interact | Provides selection index + scroll offset tracking in one struct, avoiding manual state management. |
+| `TreeViewState` + `TreeNode` from ratatui-interact | Provides the full command hierarchy as a collapsible tree with selection, expand/collapse state, and scroll offset. |
+| `ListPickerState` from ratatui-interact | Provides selection index + scroll offset tracking for flags and args panels. |
 | `FocusManager` from ratatui-interact | Handles Tab/Shift-Tab cycling with dynamic panel availability, reducing boilerplate. |
 | Finishing edits on focus change | Prevents a class of bugs where the edit input text leaks into the wrong field when clicking elsewhere. |
 
@@ -207,12 +227,9 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - Mouse support: click, scroll, right-click, click-to-activate
 - Visual polish: theming, scrolling, default indicators, accessible symbols
 - Stdin support for piped specs
-- Comprehensive test suite (94 tests)
+- **TreeView display** — full command hierarchy shown as an expandable/collapsible tree using `ratatui-interact`'s `TreeView` widget, with tree connectors, expand/collapse icons, and keyboard/mouse navigation (Left/Right to collapse/expand, Enter to toggle)
+- Comprehensive test suite (111 tests)
 - Zero clippy warnings
-
-### In Progress
-
-- **TreeView display** — replacing flat command list with `ratatui-interact`'s `TreeView` to show the full command hierarchy with expand/collapse functionality
 
 ### Remaining Work
 

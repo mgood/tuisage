@@ -97,7 +97,5 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 
 - Print/export keybinding to output the current command to stdout for piping or copying to clipboard.
 - Copy command to clipboard directly from the TUI.
-- TreeView display for the command hierarchy with expandable/collapsible nodes.
 - Fuzzy matching with scoring and ranking (fzf-style behavior).
-- Show aliases inline in the command list with dimmed styling.
 - Continuous integration pipeline for automated testing and quality checks.
