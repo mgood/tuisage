@@ -90,15 +90,17 @@ The core state and logic module (~2050 lines including ~960 lines of tests).
 #### Key Methods
 
 - **`current_command()`** — resolves the `command_path` to the current `SpecCommand` in the spec tree.
-- **`visible_subcommands()`** — returns subcommands at the current level, filtered if filter mode is active.
-- **`visible_flags()`** — returns flags for the current command plus inherited global flags, filtered if active.
+- **`visible_subcommands()`** — returns subcommands at the current level (test-only, used for backward compatibility).
+- **`visible_flags()`** — returns all flags for the current command plus inherited global flags (no filtering; rendering applies styling).
 - **`sync_state()`** — initializes or restores flag/arg values when navigating to a new command. Handles defaults.
 - **`sync_command_path_from_tree()`** — derives `command_path` from the currently selected tree node and calls `sync_state()`.
 - **`handle_key()`** — top-level key dispatcher. Routes to `handle_editing_key()`, `handle_filter_key()`, or direct navigation/action based on current mode.
 - **`handle_mouse()`** — maps mouse events to panel focus, item selection, scroll, and activation. Finishes any active edit before switching targets.
 - **`build_command()`** — assembles the complete command string from the current state.
-- **`fuzzy_match_score()`** — scored fuzzy matching using `nucleo-matcher`, returns match quality score.
-- **`filter_tree_nodes()`** — recursively filters tree nodes preserving ancestors, sorted by relevance score.
+- **`fuzzy_match_score()`** — scored fuzzy matching using `nucleo-matcher`, returns match quality score (0 for no match).
+- **`compute_tree_match_scores()`** — computes match scores for all tree nodes when filtering is active; returns map of node ID → score.
+- **`compute_flag_match_scores()`** — computes match scores for all flags when filtering is active; returns map of flag name → score.
+- **`should_auto_select_next_match()`** — checks if the current selection doesn't match the filter and returns the next matching item index.
 - **`tree_toggle_selected()`** — toggles expand/collapse of the selected tree node (Enter key on Commands).
 - **`tree_expand_or_enter()`** — expands a collapsed node or moves to its first child (Right/l key).
 - **`tree_collapse_or_parent()`** — collapses an expanded node or moves to its parent (Left/h key).
@@ -226,7 +228,7 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - Core app state: navigation, flag values, arg values, command building
 - Full TUI rendering: 3-panel layout, preview, help bar
 - Keyboard navigation: vim keys, Tab cycling, Enter/Space/Backspace actions
-- Fuzzy filtering for commands and flags with scored ranking (nucleo-matcher)
+- Fuzzy filtering for commands and flags with scored ranking and subdued non-matches (nucleo-matcher)
 - Mouse support: click, scroll, right-click, click-to-activate
 - Visual polish: theming, scrolling, default indicators, accessible symbols
 - Stdin support for piped specs

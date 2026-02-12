@@ -75,8 +75,8 @@ The terminal is divided into the following regions, rendered top-to-bottom:
 - Aliases are shown alongside the command name (e.g., `remove (rm)`).
 - Tree nodes can be expanded (→) or collapsed (←) to show/hide subcommands.
 - The selected command in the tree determines which flags and arguments are displayed in the other panels.
-- When filtering is active, only matching commands are shown with a count indicator, but the tree structure is preserved.
-- The panel title shows position when focused (e.g., `Commands [2/15]`) or total count when unfocused (e.g., `Commands (15)`).
+- When filtering is active, all commands remain visible but non-matching commands are subdued (dimmed/grayed), making matching commands stand out.
+- The panel title shows position when focused (e.g., `Commands [2/15]`) or matching count when filtering (e.g., `Commands (/query) [2/15 matched]`).
 - The root command (binary name) is always visible at the top of the tree.
 
 ### Flags Panel
@@ -228,11 +228,11 @@ When the fuzzy filter is active:
 
 | Key | Action |
 |---|---|
-| Any character | Append to the filter query |
-| `Backspace` | Delete the last character from the query |
+| Any character | Append to the filter query; auto-select next matching item if current item doesn't match |
+| `Backspace` | Delete the last character from the query; auto-select next matching item if current item doesn't match |
 | `Esc` | Clear the filter and exit filter mode |
-| `↑` / `↓` | Navigate within filtered results |
-| `Enter` | Select the highlighted result and exit filter mode |
+| `↑` / `↓` | Navigate within all results (matching items displayed normally, non-matching items subdued) |
+| `Enter` | Apply the filter and exit filter mode |
 | `Tab` | Switch focus to the other panel and clear the filter |
 
 ### Theme Keys
@@ -264,16 +264,20 @@ If the user is currently editing a value and clicks on a different item or panel
 
 ## Fuzzy Filtering
 
-Filtering uses a subsequence-matching algorithm:
+Filtering uses scored subsequence-matching (powered by `nucleo-matcher`):
 
 1. The user presses `/` to activate filter mode in the Commands or Flags panel.
-2. A filter input bar appears at the top of the panel.
-3. As the user types, items are filtered to those whose names contain the typed characters as a subsequence (case-insensitive).
-4. In the Commands panel, the tree structure is preserved but only matching nodes (and their ancestors) are shown.
-5. The panel title updates to show filtered count vs. total (e.g., `Commands [1/15 filtered]`).
-6. Navigation keys (`↑`/`↓`, `Enter`) operate on the filtered list.
-7. `Esc` clears the filter and returns to the full tree.
-8. `Tab` during filtering switches focus to the other panel and clears the filter.
+2. The panel title shows the filter query (e.g., `Commands (/query) [2/15 matched]`).
+3. As the user types, items are scored against the filter pattern:
+   - **Matching items** (score > 0) are displayed normally or highlighted, sorted by relevance score.
+   - **Non-matching items** (score = 0) are subdued (dimmed/grayed) but remain visible.
+4. In the Commands panel, the full tree structure is preserved — users can see all available commands for context.
+5. **Auto-selection**: If the currently selected item doesn't match the filter, the selection automatically moves to the next matching item.
+6. The panel title updates to show matching count vs. total (e.g., `Commands (/pl) [2/7 matched]`).
+7. Navigation keys (`↑`/`↓`) operate on all items, but matching items stand out visually.
+8. `Enter` applies the filter and exits filter mode.
+9. `Esc` clears the filter and returns to the normal view.
+10. `Tab` during filtering switches focus to the other panel and clears the filter.
 
 ## Command Building
 

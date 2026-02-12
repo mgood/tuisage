@@ -53,9 +53,13 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 
 ### Filtering
 
-- Provide fuzzy filtering to narrow down commands and flags by name.
+- Provide fuzzy filtering to highlight matching commands and flags by name.
 - Activate filtering with a keyboard shortcut (`/`).
-- Show filtered count vs. total count.
+- **Keep all items visible** — non-matching items are subdued (dimmed/grayed) rather than hidden, so users can see the full context and all available options.
+- **Matching items stand out** — items that match the filter pattern are displayed normally or highlighted.
+- **Auto-select matching items** — if the currently selected item doesn't match the filter, automatically move the selection to the next matching item.
+- Use scored matching (powered by `nucleo-matcher`) to rank results by relevance.
+- Show filtered/matching count vs. total count in the panel title.
 
 ### Command Preview
 
@@ -97,5 +101,4 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 
 - Print/export keybinding to output the current command to stdout for piping or copying to clipboard.
 - Copy command to clipboard directly from the TUI.
-- Fuzzy matching with scoring and ranking (fzf-style behavior).
 - Continuous integration pipeline for automated testing and quality checks.
