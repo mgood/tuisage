@@ -23,9 +23,11 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 
 ### Input
 
-- Accept a `.usage.kdl` file path as a CLI argument.
-- Accept a usage spec piped via stdin (explicit `-` argument or automatic detection).
-- Support script files with embedded `USAGE` heredoc blocks.
+- Accept a usage spec via `--spec-cmd`, which runs a command and parses its stdout as a usage spec (e.g., `--spec-cmd "mise tasks ls --usage"`).
+- Accept a usage spec via `--spec-file`, which reads a `.usage.kdl` file from disk.
+- Exactly one of `--spec-cmd` or `--spec-file` must be provided.
+- Accept an optional `--cmd` flag to override the base command being built (e.g., `--cmd "mise run"`), replacing the spec's binary name.
+- Support `--usage` to output TuiSage's own usage spec in `.usage.kdl` format (via `clap_usage`).
 
 ### Command Navigation
 
@@ -73,6 +75,7 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Remain open after execution to allow building and running additional commands.
 - Provide an optional print-only mode (or keybinding) to output the command to stdout for piping or integration with external tools.
 - Exit cleanly with no output when the user quits the application.
+- Support `--usage` flag to output TuiSage's own usage spec and exit, enabling self-describing CLI integration.
 
 ## Non-Functional Requirements
 
@@ -103,3 +106,4 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Print/export keybinding to output the current command to stdout for piping or copying to clipboard.
 - Copy command to clipboard directly from the TUI.
 - Continuous integration pipeline for automated testing and quality checks.
+- Support script files with embedded `USAGE` heredoc blocks via `--spec-file`.

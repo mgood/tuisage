@@ -7,8 +7,10 @@ This document describes how TuiSage is built — its architecture, code structur
 ```
 ┌─────────────────────────────────────────────────┐
 │                   main.rs                       │
-│  - CLI arg parsing (file path or stdin)         │
-│  - Parse usage spec via usage-lib               │
+│  - CLI arg parsing (clap derive)                │
+│  - --usage output (clap_usage)                  │
+│  - Spec loading (--spec-cmd or --spec-file)     │
+│  - Base command override (--cmd)                │
 │  - Terminal setup (ratatui + mouse capture)      │
 │  - Event loop (key, mouse, resize)              │
 │  - Terminal teardown and command output          │
@@ -45,8 +47,11 @@ This document describes how TuiSage is built — its architecture, code structur
 
 The entry point. Responsibilities:
 
-- Parse CLI arguments to determine the spec source (file path, stdin, or piped input).
-- Use `usage::Spec::parse_file()` or `String::parse::<usage::Spec>()` to load the spec.
+- Parse CLI arguments via `clap` (derive mode) into an `Args` struct with `--spec-cmd`, `--spec-file`, `--cmd`, and `--usage` flags.
+- Handle `--usage` by generating TuiSage's own usage spec via `clap_usage::generate()` and exiting.
+- Validate that exactly one of `--spec-cmd` or `--spec-file` is provided.
+- Load the usage spec: run a shell command (`sh -c` / `cmd /C`) for `--spec-cmd`, or read a file for `--spec-file`.
+- Override the spec's `bin` field if `--cmd` is provided.
 - Enable mouse capture via `crossterm::event::EnableMouseCapture`.
 - Initialize the ratatui `DefaultTerminal`.
 - Run the event loop (`run_event_loop`), which draws frames and dispatches events.
@@ -173,6 +178,8 @@ When filtering is active (`app.filtering == true`):
 
 | Crate | Version | Purpose | Notes |
 |---|---|---|---|
+| `clap` | 4 | CLI argument parsing | `derive` feature for struct-based arg definitions |
+| `clap_usage` | 2.0 | Usage spec generation | Generates `.usage.kdl` output from clap `Command` |
 | `usage-lib` | 2.16 | Parse `.usage.kdl` specs | `default-features = false` (skip docs/tera/roff) |
 | `ratatui` | 0.30 | TUI framework | Provides `Frame`, `Terminal`, widgets, layout |
 | `crossterm` | 0.29 | Terminal backend + events | `event-stream` feature enabled |
@@ -191,9 +198,9 @@ The `usage-lib` crate includes optional features for generating documentation, m
 
 ### Test Count
 
-111 tests total:
-- **59 tests** in `app.rs` — state logic, command building, tree navigation, key handling, mouse handling, filtering, editing, tree expand/collapse
-- **52 tests** in `ui.rs` — 19 snapshot tests + 33 assertion-based rendering tests
+113 tests total:
+- **56 tests** in `app.rs` — state logic, command building, tree navigation, key handling, mouse handling, filtering, editing, tree expand/collapse
+- **57 tests** in `ui.rs` — rendering assertions, snapshot tests, theming, click regions, filter display
 
 ### Test Fixtures
 
@@ -240,15 +247,18 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 ### Completed
 
 - Project setup and spec parsing
+- CLI argument parsing via `clap` (derive mode) with `--spec-cmd`, `--spec-file`, `--cmd`, and `--usage` flags
+- Usage spec output via `clap_usage` (`--usage` flag)
+- Spec loading from shell commands (`--spec-cmd`) and files (`--spec-file`)
+- Base command override (`--cmd`) to set the built command prefix independently of the spec
 - Core app state: navigation, flag values, arg values, command building
 - Full TUI rendering: 3-panel layout, preview, help bar
 - Keyboard navigation: vim keys, Tab cycling, Enter/Space/Backspace actions
 - Fuzzy filtering with scored ranking, subdued non-matches, character-level match highlighting, and full-path subcommand matching (nucleo-matcher Pattern API)
 - Mouse support: click, scroll, right-click, click-to-activate
 - Visual polish: theming, scrolling, default indicators, accessible symbols
-- Stdin support for piped specs
 - **TreeView display** — full command hierarchy shown as an expandable/collapsible tree using `ratatui-interact`'s `TreeView` widget, with tree connectors, expand/collapse icons, and keyboard/mouse navigation (Left/Right to collapse/expand, Enter to toggle). Top-level commands are direct tree nodes (no root wrapper), maximizing screen space and simplifying navigation.
-- Comprehensive test suite (111 tests)
+- Comprehensive test suite (113 tests)
 - Zero clippy warnings
 
 ### Remaining Work
@@ -257,6 +267,6 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - **Command execution** — execute built commands directly within the TUI, remain open for building next command
 - **Print-only mode** — optional keybinding to output command to stdout for shell integration
 - **Clipboard copy** — copy the built command to the system clipboard from within the TUI
-- **Embedded USAGE blocks** — verify and test support for script files with heredoc USAGE blocks
+- **Embedded USAGE blocks** — verify and test support for script files with heredoc USAGE blocks via `--spec-file`
 - **Module splitting** — break `app.rs` into `state`, `input`, `builder` sub-modules; break `ui.rs` into widget modules
 - **CI pipeline** — GitHub Actions for `cargo test`, `cargo clippy`, and `insta` snapshot checks

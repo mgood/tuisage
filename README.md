@@ -2,7 +2,7 @@
 
 A terminal UI for interactively building CLI commands from [usage](https://usage.jdx.dev/) specs.
 
-Point TuiSage at a `.usage.kdl` file and it presents an interactive interface for browsing subcommands, toggling flags, filling in arguments, and producing a complete command string.
+Point TuiSage at a usage spec — from a file or by running a command — and it presents an interactive interface for browsing subcommands, toggling flags, filling in arguments, and producing a complete command string.
 
 ## Features
 
@@ -15,7 +15,7 @@ Point TuiSage at a `.usage.kdl` file and it presents an interactive interface fo
 - **Scrolling** — long lists scroll automatically to keep the selection visible
 - **Default indicators** — flags with default values are clearly marked
 - **Color themes** — multiple built-in themes, switchable at runtime with `[` and `]`
-- **Stdin support** — pipe a usage spec directly into TuiSage
+- **Usage spec output** — generate TuiSage's own usage spec with `--usage`
 
 ## Installation
 
@@ -31,26 +31,36 @@ cargo build --release
 
 ## Usage
 
+### From a command (standard use case)
+
+Run a command that outputs a usage spec, and optionally specify the base command to build:
+
+```sh
+# Build a "mise run" command using the spec from "mise tasks ls --usage"
+tuisage --cmd "mise run" --spec-cmd "mise tasks ls --usage"
+
+# Just explore a tool's usage spec
+tuisage --spec-cmd "mytool --usage"
+```
+
 ### From a file
 
 ```sh
-tuisage path/to/cli.usage.kdl
+tuisage --spec-file path/to/cli.usage.kdl
 ```
 
-### From stdin
+### With a base command override
+
+The `--cmd` flag overrides the binary name from the spec, so the built command starts with whatever you provide:
 
 ```sh
-cat cli.usage.kdl | tuisage
-# or
-tuisage - < cli.usage.kdl
+tuisage --cmd "docker compose" --spec-file docker-compose.usage.kdl
 ```
 
-### From a script with embedded USAGE
-
-If your script contains a `USAGE` heredoc block, usage-lib will parse it:
+### Generate TuiSage's own usage spec
 
 ```sh
-tuisage ./my-script.sh
+tuisage --usage
 ```
 
 ### Output
@@ -59,11 +69,24 @@ When you press **Enter** on the command preview, TuiSage prints the assembled co
 
 ```sh
 # Copy the built command to your clipboard (macOS)
-tuisage spec.kdl | pbcopy
+tuisage --spec-file spec.kdl | pbcopy
 
 # Execute the built command directly
-eval "$(tuisage spec.kdl)"
+eval "$(tuisage --spec-cmd 'mytool --usage')"
 ```
+
+## CLI Reference
+
+| Flag | Description |
+|---|---|
+| `--spec-cmd <CMD>` | Run a command to get the usage spec (e.g., `"mise tasks ls --usage"`) |
+| `--spec-file <FILE>` | Read usage spec from a file |
+| `--cmd <CMD>` | Base command to build (overrides the spec's binary name) |
+| `--usage` | Generate usage spec for TuiSage itself |
+| `-h, --help` | Print help |
+| `-V, --version` | Print version |
+
+One of `--spec-cmd` or `--spec-file` is required (but not both).
 
 ## Keyboard Shortcuts
 
@@ -125,7 +148,7 @@ See `fixtures/sample.usage.kdl` for a more comprehensive example.
 ## Testing
 
 ```sh
-# Run all tests (111 tests: unit + rendering + snapshots)
+# Run all tests (113 tests: unit + rendering + snapshots)
 cargo test
 
 # Review snapshot changes interactively
@@ -149,11 +172,14 @@ cargo insta test --accept
 
 | Crate | Purpose |
 |---|---|
+| [clap](https://crates.io/crates/clap) | CLI argument parsing (derive) |
+| [clap_usage](https://crates.io/crates/clap_usage) | Generate usage specs from clap definitions |
 | [usage-lib](https://crates.io/crates/usage-lib) | Parse usage specs (KDL format) |
 | [ratatui](https://crates.io/crates/ratatui) | TUI framework |
 | [crossterm](https://crates.io/crates/crossterm) | Terminal backend & events |
 | [ratatui-interact](https://crates.io/crates/ratatui-interact) | UI components (TreeView, breadcrumb, input, focus management) |
 | [ratatui-themes](https://crates.io/crates/ratatui-themes) | Color theming |
+| [nucleo-matcher](https://crates.io/crates/nucleo-matcher) | Fuzzy matching |
 | [color-eyre](https://crates.io/crates/color-eyre) | Error reporting |
 | [insta](https://crates.io/crates/insta) | Snapshot testing (dev) |
 

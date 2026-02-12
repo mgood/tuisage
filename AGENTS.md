@@ -74,11 +74,14 @@ Only add dependencies when they provide clear value. Current key dependencies:
 
 | Crate | Purpose |
 |---|---|
+| `clap` | CLI argument parsing (derive mode) |
+| `clap_usage` | Generate usage specs from clap definitions |
 | `usage-lib` | Parse usage specs (KDL format), no default features |
 | `ratatui` | TUI framework |
 | `crossterm` | Terminal backend and events |
 | `ratatui-interact` | UI components (Breadcrumb, Input, focus management) |
 | `ratatui-themes` | Consistent color theming |
+| `nucleo-matcher` | Fuzzy matching (scored, ranked) |
 | `color-eyre` | Error reporting |
 | `insta` | Snapshot testing (dev) |
 | `pretty_assertions` | Better test diffs (dev) |

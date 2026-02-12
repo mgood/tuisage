@@ -21,16 +21,23 @@ These are the preferred libraries for implementing TuiSage features, as specifie
 
 ### CLI Arguments
 
-TuiSage accepts a single positional argument specifying the source of the usage spec:
+TuiSage uses `clap` (derive mode) for argument parsing and `clap_usage` for generating its own usage spec. The CLI accepts the following flags:
 
-| Invocation | Behavior |
+| Flag | Description |
 |---|---|
-| `tuisage <path>` | Parse the file at `<path>` as a usage spec (`.usage.kdl` or a script with embedded `USAGE` block) |
-| `tuisage -` | Read the usage spec from stdin (explicit) |
-| `tuisage` (stdin piped) | Detect non-TTY stdin and read the spec from it |
-| `tuisage` (no stdin) | Print usage help to stderr and exit with code 1 |
+| `--spec-cmd <CMD>` | Run a shell command and parse its stdout as a usage spec (e.g., `--spec-cmd "mise tasks ls --usage"`) |
+| `--spec-file <FILE>` | Read a usage spec from a file path (`.usage.kdl` or a script with embedded `USAGE` block) |
+| `--cmd <CMD>` | Override the base command being built (e.g., `--cmd "mise run"`), replacing the spec's binary name |
+| `--usage` | Output TuiSage's own usage spec (in `.usage.kdl` format via `clap_usage`) and exit |
+| `-h, --help` | Print help (provided by clap) |
+| `-V, --version` | Print version (provided by clap) |
 
-Parsing errors produce a descriptive error message via `color-eyre` and exit non-zero.
+**Rules:**
+- Exactly one of `--spec-cmd` or `--spec-file` must be provided (mutually exclusive, both required without the other).
+- `--cmd` is optional; when omitted the spec's `bin` field is used as the base command.
+- `--usage` short-circuits before any spec loading and prints the usage spec to stdout.
+
+Parsing errors and spec command failures produce descriptive error messages via `color-eyre` and exit non-zero. When `--spec-cmd` is used, the command is executed via `sh -c` (or `cmd /C` on Windows) and its stdout is parsed as a usage spec; a non-zero exit status from the command is reported as an error.
 
 ### Spec Parsing
 
@@ -343,7 +350,7 @@ Themes can be cycled at runtime with `]` and `[` keys. The current theme name is
 
 ## Terminal Lifecycle
 
-1. **Startup**: Parse CLI args → load spec → enable mouse capture → initialize terminal → create `App` state → enter event loop.
+1. **Startup**: Parse CLI args (clap) → handle `--usage` if present → load spec (from `--spec-cmd` or `--spec-file`) → apply `--cmd` override if present → enable mouse capture → initialize terminal → create `App` state → enter event loop.
 2. **Event loop**: Draw frame → wait for event → handle key/mouse/resize → repeat. The application remains running indefinitely until the user quits.
 3. **Execute**: User presses Enter on preview → execute the built command → show output/status → return to the TUI for building the next command.
 4. **Quit**: User presses `q`/`Ctrl-C`/`Esc` at root → restore terminal → disable mouse capture → exit 0 (no output).
