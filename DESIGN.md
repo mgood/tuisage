@@ -37,3 +37,5 @@ We'll use https://crates.io/crates/ratatui-themes to help ensure the colors foll
 ## UI Components
 We should use components from here to handle mouse and focus management, and a number of good basic UI components:
 https://crates.io/crates/ratatui-interact
+Use `TreeView` to display the command hierarchy. Use the fuzzy matcher to quickly find an entry. We can leave the full tree visible, but highlight matching items with the matching letters colored.
+The command tree should remain visible after a command is selected. The right pane should update to show the flags and arguments available for it.
