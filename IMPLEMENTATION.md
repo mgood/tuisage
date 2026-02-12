@@ -214,6 +214,8 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 | `ListPickerState` from ratatui-interact | Provides selection index + scroll offset tracking for flags and args panels. |
 | `FocusManager` from ratatui-interact | Handles Tab/Shift-Tab cycling with dynamic panel availability, reducing boilerplate. |
 | Finishing edits on focus change | Prevents a class of bugs where the edit input text leaks into the wrong field when clicking elsewhere. |
+| Commands tree always visible | The tree shows the entire command hierarchy, not just subcommands of the current selection. It remains visible even when navigating to leaf commands with no children. |
+| Arguments panel visibility based on spec | The arguments panel is shown whenever the current command defines arguments in the spec, ensuring consistent visibility regardless of whether arg values are populated. |
 
 ## Development Status
 
