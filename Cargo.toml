@@ -11,8 +11,9 @@ path = "src/main.rs"
 
 [dependencies]
 color-eyre = "0.6"
-crossterm = { version = "0.28", features = ["event-stream"] }
-ratatui = "0.29"
+crossterm = { version = "0.29", features = ["event-stream"] }
+ratatui = "0.30"
+ratatui-interact = "0.4"
 usage-lib = { version = "2.16", default-features = false }
 
 [dev-dependencies]
