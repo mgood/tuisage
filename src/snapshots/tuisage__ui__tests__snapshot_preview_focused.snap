@@ -2,22 +2,22 @@
 source: src/ui.rs
 expression: output
 ---
-┌ Commands (7) ────────────────────────┐┌ Flags (6) ───────────────────────────────────────────────┐
+┌ Commands (15) ───────────────────────┐┌ Flags (6) ───────────────────────────────────────────────┐
 │  init — Initialize a new project     ││   [·] -e, --env = <dev|staging|prod> — Environment to ru │
-│  ▶ config — Manage configuration     ││   [•] -j, --jobs = 4 (default) — Number of parallel jobs │
-│▶ run — Run a task                    ││   ○ --dry-run — Show what would be run without executing │
-│  deploy — Deploy the application     ││   ○ -w, --watch — Watch for changes and re-run           │
-│  ▶ plugin — Manage plugins           ││   [0] -v, --verbose [G] — Enable verbose logging         │
-│  version — Print the CLI version     ││   ○ -q, --quiet [G] — Enable quiet mode                  │
+│  config — Manage configuration       ││   [•] -j, --jobs = 4 (default) — Number of parallel jobs │
+│▶ │   ├── set (add) — Set a config val││   ○ --dry-run — Show what would be run without executing │
+│  │   ├── get — Get a config value    ││   ○ -w, --watch — Watch for changes and re-run           │
+│  │   ├── list (ls) — List all config ││   [0] -v, --verbose [G] — Enable verbose logging         │
+│  │   └── remove (rm) — Remove a confi││   ○ -q, --quiet [G] — Enable quiet mode                  │
+│  run — Run a task                    ││                                                          │
+│  deploy — Deploy the application     ││                                                          │
+│  plugin — Manage plugins             ││                                                          │
+│  │   ├── install (i) — Install a plug│└──────────────────────────────────────────────────────────┘
+│  │   ├── uninstall (rm) — Uninstall a│┌ Arguments (2) ───────────────────────────────────────────┐
+│  │   ├── list (ls) — List installed p││   ● <task> = lint                                        │
+│  │   └── update — Update plugins     ││   ○ [args] = (empty)                                     │
+│  version — Print the CLI version     ││                                                          │
 │  help — Print help information       ││                                                          │
-│                                      ││                                                          │
-│                                      ││                                                          │
-│                                      │└──────────────────────────────────────────────────────────┘
-│                                      │┌ Arguments (2) ───────────────────────────────────────────┐
-│                                      ││   ● <task> = lint                                        │
-│                                      ││   ○ [args] = (empty)                                     │
-│                                      ││                                                          │
-│                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘

@@ -5,13 +5,12 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Padding, Paragraph, Wrap},
     Frame,
 };
-use ratatui_interact::components::{TreeStyle, TreeView};
 use ratatui_themes::ThemePalette;
 
 #[cfg(test)]
 extern crate insta;
 
-use crate::app::{App, FlagValue, Focus};
+use crate::app::{flatten_command_tree, App, FlagValue, Focus};
 
 /// Derive a semantic color palette for our UI elements from the theme palette.
 /// This maps semantic theme colors to our specific UI roles.
@@ -244,78 +243,154 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
         colors.inactive_border
     };
 
-    // Compute counts for title
-    let total = app.total_visible_commands();
-    let command_index = app.command_index();
+    // Flatten the tree for display
+    let flat_commands = flatten_command_tree(&app.command_tree_nodes);
+    let total = flat_commands.len();
+    let current = app.command_index() + 1;
 
-    let title = if app.filtering && !app.filter().is_empty() && app.focus() == Focus::Commands {
+    let title = if app.filtering && !app.filter().is_empty() {
         let matching = app.matching_commands_count();
         format!(
             " Commands (/{}) [{}/{} matched] ",
             app.filter(),
-            command_index + 1,
-            matching
+            matching,
+            total
         )
-    } else if total > 0 && is_focused {
-        format!(" Commands [{}/{}] ", command_index + 1, total)
+    } else if is_focused {
+        format!(" Commands [{}/{}] ", current, total)
     } else {
         format!(" Commands ({}) ", total)
     };
 
     let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color))
         .title(title)
-        .title_style(Style::default().fg(border_color).bold());
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color));
 
     // Calculate inner height for scroll offset (area minus borders)
     let inner_height = area.height.saturating_sub(2) as usize;
     app.ensure_visible(Focus::Commands, inner_height);
 
-    // Build the TreeStyle from theme colors
-    let tree_style = TreeStyle {
-        selected_style: Style::default()
-            .fg(colors.command)
-            .add_modifier(Modifier::BOLD),
-        normal_style: Style::default().fg(colors.command),
-        connector_style: Style::default().fg(colors.help),
-        icon_style: Style::default().fg(colors.active_border),
-        collapsed_icon: "▶ ",
-        expanded_icon: "▼ ",
-        connector_branch: "├── ",
-        connector_last: "└── ",
-        connector_vertical: "│   ",
-        connector_space: "    ",
-        cursor_selected: "▶ ",
-        cursor_normal: "  ",
-    };
+    // Compute match scores if filtering
+    let match_scores =
+        if app.filtering && !app.filter().is_empty() && app.focus() == Focus::Commands {
+            app.compute_tree_match_scores()
+        } else {
+            std::collections::HashMap::new()
+        };
 
-    // Always use the full tree
-    // Note: TreeView doesn't support per-item styling, so we can't dim non-matches here
-    // For now, commands remain visible with normal styling during filtering
-    let tree = TreeView::new(&app.command_tree_nodes, &app.command_tree_state)
-        .style(tree_style)
-        .render_item(move |node, _is_selected| {
-            let mut text = node.data.name.clone();
+    // Get selected index
+    let selected_index = app.command_index();
 
-            // Aliases
-            if !node.data.aliases.is_empty() {
-                let aliases = node.data.aliases.join(", ");
-                text.push_str(&format!(" ({})", aliases));
+    // Build list items with indentation markers
+    let items: Vec<ListItem> = flat_commands
+        .iter()
+        .enumerate()
+        .map(|(i, cmd)| {
+            let is_selected = i == selected_index;
+            let is_match = match_scores.get(&cmd.id).copied().unwrap_or(0) > 0;
+
+            let mut spans = Vec::new();
+
+            // Selection cursor
+            if is_selected {
+                spans.push(Span::styled(
+                    "▶ ",
+                    Style::default()
+                        .fg(colors.active_border)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            } else {
+                spans.push(Span::raw("  "));
             }
 
-            // Help text
-            if let Some(help) = &node.data.help {
+            // Indentation markers
+            for &is_last in &cmd.parent_lasts {
+                if is_last {
+                    spans.push(Span::styled("    ", Style::default().fg(colors.help)));
+                } else {
+                    spans.push(Span::styled("│   ", Style::default().fg(colors.help)));
+                }
+            }
+
+            // Branch marker for children
+            if cmd.depth > 0 {
+                let marker = if cmd.is_last_child {
+                    "└── "
+                } else {
+                    "├── "
+                };
+                spans.push(Span::styled(marker, Style::default().fg(colors.help)));
+            }
+
+            // Command name and details
+            let mut text = cmd.name.clone();
+            if !cmd.aliases.is_empty() {
+                text.push_str(&format!(" ({})", cmd.aliases.join(", ")));
+            }
+            if let Some(help) = &cmd.help {
                 text.push_str(&format!(" — {}", help));
             }
 
-            text
-        });
+            // Apply styling based on selection and match
+            if is_selected {
+                // Selected - apply highlighting if filtering
+                if !match_scores.is_empty() {
+                    let pattern = app.filter();
+                    let normal_style = Style::default()
+                        .fg(colors.command)
+                        .add_modifier(Modifier::BOLD);
+                    let highlight_style = Style::default()
+                        .fg(colors.bg)
+                        .bg(colors.command)
+                        .add_modifier(Modifier::BOLD);
+                    let highlighted =
+                        build_highlighted_text(&text, pattern, normal_style, highlight_style);
+                    spans.extend(highlighted);
+                } else {
+                    spans.push(Span::styled(
+                        text,
+                        Style::default()
+                            .fg(colors.command)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
+            } else if !is_match && !match_scores.is_empty() {
+                // Non-matching when filtering - dim
+                spans.push(Span::styled(
+                    text,
+                    Style::default().fg(colors.help).add_modifier(Modifier::DIM),
+                ));
+            } else if !match_scores.is_empty() {
+                // Matching - highlight characters
+                let pattern = app.filter();
+                let normal_style = Style::default().fg(colors.command);
+                let highlight_style = Style::default()
+                    .fg(colors.command)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+                let highlighted =
+                    build_highlighted_text(&text, pattern, normal_style, highlight_style);
+                spans.extend(highlighted);
+            } else {
+                // Normal display
+                spans.push(Span::styled(text, Style::default().fg(colors.command)));
+            }
 
-    // Render the block first, then the tree inside
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    frame.render_widget(tree, inner);
+            ListItem::new(Line::from(spans))
+        })
+        .collect();
+
+    let selected_index = app.command_index();
+    let mut state = ListState::default()
+        .with_selected(if is_focused {
+            Some(selected_index)
+        } else {
+            None
+        })
+        .with_offset(app.command_scroll());
+
+    let list = List::new(items).block(block);
+    frame.render_stateful_widget(list, area, &mut state);
 }
 
 /// Render the flag list panel.
@@ -1486,13 +1561,13 @@ flag "-q --quiet" help="Quiet mode"
     fn test_focused_panel_shows_position() {
         let mut app = App::new(sample_spec());
         app.set_focus(Focus::Commands);
-        // In tree view: 7 top-level commands (no root)
-        // set_command_index(2) selects the 3rd visible node
+        // In flat list: 15 total commands (7 top-level + 8 nested subcommands)
+        // set_command_index(2) selects the 3rd item in the flat list
         app.command_tree_state.selected_index = 2;
         app.sync_command_path_from_tree();
         let output = render_to_string(&mut app, 100, 24);
-        // Focused panel shows [position/total]
-        assert!(output.contains("[3/7]"));
+        // Focused panel shows [position/total] for flat list
+        assert!(output.contains("[3/15]"));
     }
 
     #[test]

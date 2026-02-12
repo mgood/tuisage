@@ -2,22 +2,22 @@
 source: src/ui.rs
 expression: output
 ---
-┌ Commands (/pl) [4/8 matched] ────────┐┌ Flags (6) ───────────────────────────────────────────────┐
+┌ Commands (/pl) [8/15 matched] ───────┐┌ Flags (6) ───────────────────────────────────────────────┐
 │  init — Initialize a new project     ││   [·] --tag = <tag> — Docker image tag                   │
-│  ▶ config — Manage configuration     ││   ○ --rollback — Rollback to previous version            │
-│  run — Run a task                    ││   ○ --skip-tests — Skip running tests before deploy      │
-│▶ deploy — Deploy the application     ││   ○ -y, --yes — Skip confirmation prompt                 │
-│  ▶ plugin — Manage plugins           ││   [0] -v, --verbose [G] — Enable verbose logging         │
-│  version — Print the CLI version     ││   ○ -q, --quiet [G] — Enable quiet mode                  │
+│  config — Manage configuration       ││   ○ --rollback — Rollback to previous version            │
+│  │   ├── set (add) — Set a config val││   ○ --skip-tests — Skip running tests before deploy      │
+│▶ │   ├── get — Get a config value    ││   ○ -y, --yes — Skip confirmation prompt                 │
+│  │   ├── list (ls) — List all config ││   [0] -v, --verbose [G] — Enable verbose logging         │
+│  │   └── remove (rm) — Remove a confi││   ○ -q, --quiet [G] — Enable quiet mode                  │
+│  run — Run a task                    ││                                                          │
+│  deploy — Deploy the application     ││                                                          │
+│  plugin — Manage plugins             ││                                                          │
+│  │   ├── install (i) — Install a plug│└──────────────────────────────────────────────────────────┘
+│  │   ├── uninstall (rm) — Uninstall a│┌ Arguments (1) ───────────────────────────────────────────┐
+│  │   ├── list (ls) — List installed p││   ● <environment> = <dev|staging|prod>                   │
+│  │   └── update — Update plugins     ││                                                          │
+│  version — Print the CLI version     ││                                                          │
 │  help — Print help information       ││                                                          │
-│                                      ││                                                          │
-│                                      ││                                                          │
-│                                      │└──────────────────────────────────────────────────────────┘
-│                                      │┌ Arguments (1) ───────────────────────────────────────────┐
-│                                      ││   ● <environment> = <dev|staging|prod>                   │
-│                                      ││                                                          │
-│                                      ││                                                          │
-│                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘

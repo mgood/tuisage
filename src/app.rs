@@ -52,6 +52,18 @@ pub struct CmdData {
     pub aliases: Vec<String>,
 }
 
+/// A flattened command for display in a flat list with indentation markers.
+#[derive(Debug, Clone)]
+pub struct FlatCommand {
+    pub id: String,
+    pub name: String,
+    pub help: Option<String>,
+    pub aliases: Vec<String>,
+    pub depth: usize,
+    pub is_last_child: bool,
+    pub parent_lasts: Vec<bool>, // Track which ancestors are last children
+}
+
 /// Main application state.
 pub struct App {
     pub spec: Spec,
@@ -1485,6 +1497,41 @@ fn parent_id(id: &str) -> Option<String> {
     } else {
         Some(String::new()) // parent is root
     }
+}
+
+/// Flatten the tree structure into a list of commands with indentation info.
+pub fn flatten_command_tree(nodes: &[TreeNode<CmdData>]) -> Vec<FlatCommand> {
+    fn flatten_recursive(
+        nodes: &[TreeNode<CmdData>],
+        depth: usize,
+        parent_lasts: Vec<bool>,
+        result: &mut Vec<FlatCommand>,
+    ) {
+        for (i, node) in nodes.iter().enumerate() {
+            let is_last = i == nodes.len() - 1;
+
+            result.push(FlatCommand {
+                id: node.id.clone(),
+                name: node.data.name.clone(),
+                help: node.data.help.clone(),
+                aliases: node.data.aliases.clone(),
+                depth,
+                is_last_child: is_last,
+                parent_lasts: parent_lasts.clone(),
+            });
+
+            // Recurse into children
+            if !node.children.is_empty() {
+                let mut child_parent_lasts = parent_lasts.clone();
+                child_parent_lasts.push(is_last);
+                flatten_recursive(&node.children, depth + 1, child_parent_lasts, result);
+            }
+        }
+    }
+
+    let mut result = Vec::new();
+    flatten_recursive(nodes, 0, Vec::new(), &mut result);
+    result
 }
 
 /// Fuzzy match using nucleo-matcher Pattern, returns score (0 if no match).

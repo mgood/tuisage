@@ -2,22 +2,22 @@
 source: src/ui.rs
 expression: output
 ---
-┌ Commands [2/11] ─────────────────────┐┌ Flags (2) ───────────────────────────────────────────────┐
+┌ Commands [2/15] ─────────────────────┐┌ Flags (2) ───────────────────────────────────────────────┐
 │  init — Initialize a new project     ││   [0] -v, --verbose [G] — Enable verbose logging         │
-│▶ ▼ config — Manage configuration     ││   ○ -q, --quiet [G] — Enable quiet mode                  │
-│  │   ├── set (add) — Set a config    ││                                                          │
-│value                                 ││                                                          │
+│▶ config — Manage configuration       ││   ○ -q, --quiet [G] — Enable quiet mode                  │
+│  │   ├── set (add) — Set a config val││                                                          │
 │  │   ├── get — Get a config value    ││                                                          │
 │  │   ├── list (ls) — List all config ││                                                          │
-│values                                ││                                                          │
-│  │   └── remove (rm) — Remove a      ││                                                          │
-│config value                          ││                                                          │
+│  │   └── remove (rm) — Remove a confi││                                                          │
 │  run — Run a task                    ││                                                          │
 │  deploy — Deploy the application     ││                                                          │
-│  ▶ plugin — Manage plugins           ││                                                          │
+│  plugin — Manage plugins             ││                                                          │
+│  │   ├── install (i) — Install a plug││                                                          │
+│  │   ├── uninstall (rm) — Uninstall a││                                                          │
+│  │   ├── list (ls) — List installed p││                                                          │
+│  │   └── update — Update plugins     ││                                                          │
 │  version — Print the CLI version     ││                                                          │
 │  help — Print help information       ││                                                          │
-│                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘

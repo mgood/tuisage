@@ -2,22 +2,22 @@
 source: src/ui.rs
 expression: output
 ---
-┌ Commands (7) ────────────────────────┐┌ Flags (4) ───────────────────────────────────────────────┐
+┌ Commands (15) ───────────────────────┐┌ Flags (4) ───────────────────────────────────────────────┐
 │▶ init — Initialize a new project     ││   [·] -t, --template = <basic|full|minimal> — Template t │
-│  ▶ config — Manage configuration     ││   ○ -f, --force — Overwrite existing files               │
-│  run — Run a task                    ││   [0] -v, --verbose [G] — Enable verbose logging         │
-│  deploy — Deploy the application     ││   ○ -q, --quiet [G] — Enable quiet mode                  │
-│  ▶ plugin — Manage plugins           ││                                                          │
+│  config — Manage configuration       ││   ○ -f, --force — Overwrite existing files               │
+│  │   ├── set (add) — Set a config val││   [0] -v, --verbose [G] — Enable verbose logging         │
+│  │   ├── get — Get a config value    ││   ○ -q, --quiet [G] — Enable quiet mode                  │
+│  │   ├── list (ls) — List all config ││                                                          │
+│  │   └── remove (rm) — Remove a confi││                                                          │
+│  run — Run a task                    ││                                                          │
+│  deploy — Deploy the application     ││                                                          │
+│  plugin — Manage plugins             ││                                                          │
+│  │   ├── install (i) — Install a plug│└──────────────────────────────────────────────────────────┘
+│  │   ├── uninstall (rm) — Uninstall a│┌ Arguments [1/1] ─────────────────────────────────────────┐
+│  │   ├── list (ls) — List installed p││ ▶ ● <name> = my-project▎                                 │
+│  │   └── update — Update plugins     ││                                                          │
 │  version — Print the CLI version     ││                                                          │
 │  help — Print help information       ││                                                          │
-│                                      ││                                                          │
-│                                      ││                                                          │
-│                                      │└──────────────────────────────────────────────────────────┘
-│                                      │┌ Arguments [1/1] ─────────────────────────────────────────┐
-│                                      ││ ▶ ● <name> = my-project▎                                 │
-│                                      ││                                                          │
-│                                      ││                                                          │
-│                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
