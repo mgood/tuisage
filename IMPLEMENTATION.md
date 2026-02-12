@@ -24,7 +24,7 @@ This document describes how TuiSage is built — its architecture, code structur
 │  - Key event handling → Action dispatch         │
 │  - Mouse event handling → Action dispatch       │
 │  - Command string builder                       │
-│  - Fuzzy matching                               │
+│  - Fuzzy matching (nucleo-matcher)              │
 └─────────────────────────────────────────────────┘
           │
           ▼
@@ -97,7 +97,8 @@ The core state and logic module (~2050 lines including ~960 lines of tests).
 - **`handle_key()`** — top-level key dispatcher. Routes to `handle_editing_key()`, `handle_filter_key()`, or direct navigation/action based on current mode.
 - **`handle_mouse()`** — maps mouse events to panel focus, item selection, scroll, and activation. Finishes any active edit before switching targets.
 - **`build_command()`** — assembles the complete command string from the current state.
-- **`fuzzy_match()`** — standalone function for case-insensitive subsequence matching.
+- **`fuzzy_match_score()`** — scored fuzzy matching using `nucleo-matcher`, returns match quality score.
+- **`filter_tree_nodes()`** — recursively filters tree nodes preserving ancestors, sorted by relevance score.
 - **`tree_toggle_selected()`** — toggles expand/collapse of the selected tree node (Enter key on Commands).
 - **`tree_expand_or_enter()`** — expands a collapsed node or moves to its first child (Right/l key).
 - **`tree_collapse_or_parent()`** — collapses an expanded node or moves to its parent (Left/h key).
@@ -160,6 +161,7 @@ During rendering, each panel's `Rect` is stored in `app.click_regions` as a `(Re
 | `crossterm` | 0.29 | Terminal backend + events | `event-stream` feature enabled |
 | `ratatui-interact` | 0.4 | UI components | `TreeView`, `TreeNode`, `FocusManager`, `ListPickerState` |
 | `ratatui-themes` | 0.1 | Color theming | Provides `ThemePalette` with named themes |
+| `nucleo-matcher` | 0.3 | Fuzzy matching | Provides scored matching with smart case and normalization |
 | `color-eyre` | 0.6 | Error reporting | Pretty error messages with backtraces |
 | `insta` | 1 | Snapshot testing (dev) | Full terminal output comparison |
 | `pretty_assertions` | 1 | Test diffs (dev) | Better assertion failure output |
@@ -224,7 +226,7 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - Core app state: navigation, flag values, arg values, command building
 - Full TUI rendering: 3-panel layout, preview, help bar
 - Keyboard navigation: vim keys, Tab cycling, Enter/Space/Backspace actions
-- Fuzzy filtering for commands and flags
+- Fuzzy filtering for commands and flags with scored ranking (nucleo-matcher)
 - Mouse support: click, scroll, right-click, click-to-activate
 - Visual polish: theming, scrolling, default indicators, accessible symbols
 - Stdin support for piped specs
@@ -234,7 +236,6 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 
 ### Remaining Work
 
-- **Improved fuzzy matching** — integrate `nucleo-matcher` for scored/ranked results (fzf-style)
 - **Inline aliases** — show command aliases with dimmed styling in the command list
 - **Command execution** — execute built commands directly within the TUI, remain open for building next command
 - **Print-only mode** — optional keybinding to output command to stdout for shell integration

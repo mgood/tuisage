@@ -10,7 +10,7 @@ Point TuiSage at a `.usage.kdl` file and it presents an interactive interface fo
 - **Toggle flags** — boolean flags, count flags (`-vvv`), and flags with values
 - **Fill arguments** — positional args with free-text input or choice cycling
 - **Live preview** — see the assembled command update in real time
-- **Fuzzy filter** — press `/` to filter commands or flags by name
+- **Fuzzy filter** — press `/` to filter commands or flags with scored, ranked matching (powered by `nucleo-matcher`)
 - **Mouse support** — click to select, scroll wheel to navigate, click-to-activate
 - **Scrolling** — long lists scroll automatically to keep the selection visible
 - **Default indicators** — flags with default values are clearly marked
