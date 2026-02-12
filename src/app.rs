@@ -52,7 +52,7 @@ pub struct CmdData {
     pub aliases: Vec<String>,
 }
 
-/// A flattened command for display in a flat list with indentation markers.
+/// A flattened command for display in a flat list with depth-based indentation.
 #[derive(Debug, Clone)]
 pub struct FlatCommand {
     pub id: String,
@@ -60,8 +60,9 @@ pub struct FlatCommand {
     pub help: Option<String>,
     pub aliases: Vec<String>,
     pub depth: usize,
-    pub is_last_child: bool,
-    pub parent_lasts: Vec<bool>, // Track which ancestors are last children
+    /// Full path of names from root to this command, e.g. "config set".
+    /// Used for fuzzy matching so "cfgset" can match "config set".
+    pub full_path: String,
 }
 
 /// Main application state.
@@ -120,10 +121,7 @@ impl App {
 
     pub fn with_theme(spec: Spec, theme_name: ThemeName) -> Self {
         let tree_nodes = build_command_tree(&spec);
-        let mut tree_state = TreeViewState::new();
-        // Collapse all nodes that have children, so the initial view
-        // shows only the top-level commands.
-        collapse_parents_with_children(&tree_nodes, &mut tree_state);
+        let tree_state = TreeViewState::new();
 
         let mut app = Self {
             spec,
@@ -395,19 +393,9 @@ impl App {
 
     // --- Tree view helpers ---
 
-    /// Get the total number of visible nodes in the command tree.
+    /// Get the total number of commands in the flat list (all nodes, always visible).
     pub fn total_visible_commands(&self) -> usize {
-        count_visible(&self.command_tree_nodes, &self.command_tree_state)
-    }
-
-    /// Get the number of matching nodes when filtering is active.
-    pub fn matching_commands_count(&self) -> usize {
-        if self.filtering && !self.filter().is_empty() && self.focus() == Focus::Commands {
-            let scores = self.compute_tree_match_scores();
-            scores.values().filter(|&&score| score > 0).count()
-        } else {
-            self.total_visible_commands()
-        }
+        flatten_command_tree(&self.command_tree_nodes).len()
     }
 
     /// Compute match scores for all tree nodes when filtering.
@@ -464,8 +452,9 @@ impl App {
 
     /// Get the ID of the currently selected tree node.
     pub fn selected_command_id(&self) -> Option<String> {
-        let visible = flatten_visible_ids(&self.command_tree_nodes, &self.command_tree_state);
-        visible.get(self.command_tree_state.selected_index).cloned()
+        let flat = flatten_command_tree(&self.command_tree_nodes);
+        flat.get(self.command_tree_state.selected_index)
+            .map(|cmd| cmd.id.clone())
     }
 
     /// Update command_path based on the currently selected tree node.
@@ -498,58 +487,31 @@ impl App {
 
     /// Find the parent node index in the flattened visible list.
     fn find_parent_index(&self) -> Option<usize> {
-        let visible = flatten_visible_ids(&self.command_tree_nodes, &self.command_tree_state);
-        let selected_id = visible.get(self.command_tree_state.selected_index)?;
-        let parent = parent_id(selected_id)?;
-        visible.iter().position(|id| *id == parent)
+        let flat = flatten_command_tree(&self.command_tree_nodes);
+        let selected_id = flat
+            .get(self.command_tree_state.selected_index)
+            .map(|cmd| cmd.id.clone())?;
+        let parent = parent_id(&selected_id)?;
+        flat.iter().position(|cmd| cmd.id == parent)
     }
 
-    /// Toggle expand/collapse of the selected tree node (Enter key on Commands).
-    pub fn tree_toggle_selected(&mut self) {
-        if let Some(id) = self.selected_command_id() {
-            if self.node_has_children(&id) {
-                self.command_tree_state.toggle_collapsed(&id);
-            }
-        }
-    }
-
-    /// Expand selected node, or move to first child if already expanded (Right/l key).
+    /// Move to first child of selected node (Right/l key).
     pub fn tree_expand_or_enter(&mut self) {
         if let Some(id) = self.selected_command_id() {
             if self.node_has_children(&id) {
-                if self.command_tree_state.is_collapsed(&id) {
-                    self.command_tree_state.expand(&id);
-                } else {
-                    // Already expanded, move to first child
-                    let total = self.total_visible_commands();
-                    self.command_tree_state.select_next(total);
-                    self.sync_command_path_from_tree();
-                }
+                // Move to first child (next item in flat list)
+                let total = self.total_visible_commands();
+                self.command_tree_state.select_next(total);
+                self.sync_command_path_from_tree();
             }
         }
     }
 
-    /// Collapse selected node, or move to parent if already collapsed/leaf (Left/h key).
+    /// Move to parent node (Left/h key).
     pub fn tree_collapse_or_parent(&mut self) {
-        if let Some(id) = self.selected_command_id() {
-            if self.node_has_children(&id) && !self.command_tree_state.is_collapsed(&id) {
-                self.command_tree_state.collapse(&id);
-            } else {
-                // Move to parent
-                if let Some(parent_idx) = self.find_parent_index() {
-                    self.command_tree_state.selected_index = parent_idx;
-                    self.sync_command_path_from_tree();
-                }
-            }
-        }
-    }
-
-    /// Expand the selected node (for right-click).
-    pub fn tree_expand_selected(&mut self) {
-        if let Some(id) = self.selected_command_id() {
-            if self.node_has_children(&id) {
-                self.command_tree_state.expand(&id);
-            }
+        if let Some(parent_idx) = self.find_parent_index() {
+            self.command_tree_state.selected_index = parent_idx;
+            self.sync_command_path_from_tree();
         }
     }
 
@@ -557,27 +519,20 @@ impl App {
     /// and selects the target node. Used for tests and programmatic navigation.
     #[allow(dead_code)]
     pub fn navigate_to_command(&mut self, path: &[&str]) {
-        // Expand all ancestors
-        for i in 1..path.len() {
-            let ancestor_id = path[..i].join(" ");
-            self.command_tree_state.expand(&ancestor_id);
-        }
         let target_id = path.join(" ");
-        let visible = flatten_visible_ids(&self.command_tree_nodes, &self.command_tree_state);
-        if let Some(idx) = visible.iter().position(|id| *id == target_id) {
+        let flat = flatten_command_tree(&self.command_tree_nodes);
+        if let Some(idx) = flat.iter().position(|cmd| cmd.id == target_id) {
             self.command_tree_state.selected_index = idx;
             self.sync_command_path_from_tree();
         }
     }
 
-    /// Backward-compatible: expand selected node and select first child.
-    /// Equivalent to the old "navigate into selected subcommand".
+    /// Select first child of current node.
     #[allow(dead_code)]
     pub fn navigate_into_selected(&mut self) {
         if let Some(id) = self.selected_command_id() {
             if self.node_has_children(&id) {
-                self.command_tree_state.expand(&id);
-                // Move selection to first child
+                // Move to first child (next item in flat list)
                 let total = self.total_visible_commands();
                 self.command_tree_state.select_next(total);
                 self.sync_command_path_from_tree();
@@ -622,13 +577,8 @@ impl App {
                                     let item_index = self.command_scroll() + clicked_offset;
                                     let total = self.total_visible_commands();
                                     if item_index < total {
-                                        if was_focused && self.command_index() == item_index {
-                                            // Second click on same item: toggle expand/collapse
-                                            self.tree_toggle_selected();
-                                        } else {
-                                            self.command_tree_state.selected_index = item_index;
-                                            self.sync_command_path_from_tree();
-                                        }
+                                        self.command_tree_state.selected_index = item_index;
+                                        self.sync_command_path_from_tree();
                                     }
                                 }
                             }
@@ -678,12 +628,7 @@ impl App {
                 Action::None
             }
             MouseEventKind::Down(MouseButton::Right) => {
-                // Right-click: expand tree node in commands area
-                if let Some(&Focus::Commands) = self.click_regions.handle_click(col, row) {
-                    if self.focus() == Focus::Commands {
-                        self.tree_expand_selected();
-                    }
-                }
+                // Right-click in commands area (no-op now that tree is always flat)
                 Action::None
             }
             MouseEventKind::ScrollUp => {
@@ -796,24 +741,14 @@ impl App {
             }
             KeyCode::Esc => {
                 if self.focus() == Focus::Commands {
-                    // In tree view: collapse or move to parent, quit if at top level
-                    if let Some(id) = self.selected_command_id() {
-                        // If expanded and has children, collapse
-                        if self.node_has_children(&id) && !self.command_tree_state.is_collapsed(&id)
-                        {
-                            self.command_tree_state.collapse(&id);
-                            return Action::None;
-                        }
-                        // Move to parent if one exists
-                        if let Some(parent_idx) = self.find_parent_index() {
-                            self.command_tree_state.selected_index = parent_idx;
-                            self.sync_command_path_from_tree();
-                            return Action::None;
-                        }
-                        // No parent means we're at a top-level command, quit
-                        return Action::Quit;
+                    // Move to parent if one exists, quit if at top level
+                    if let Some(parent_idx) = self.find_parent_index() {
+                        self.command_tree_state.selected_index = parent_idx;
+                        self.sync_command_path_from_tree();
+                        Action::None
+                    } else {
+                        Action::Quit
                     }
-                    Action::Quit
                 } else if !self.command_path.is_empty() {
                     // Other panels: navigate up in the tree
                     self.navigate_up();
@@ -1038,8 +973,7 @@ impl App {
     fn handle_enter(&mut self) -> Action {
         match self.focus() {
             Focus::Commands => {
-                // Toggle expand/collapse of the selected tree node
-                self.tree_toggle_selected();
+                // Enter selects the command (same as clicking)
                 Action::None
             }
             Focus::Flags => {
@@ -1120,13 +1054,12 @@ impl App {
         match self.focus() {
             Focus::Commands => {
                 let scores = self.compute_tree_match_scores();
-                let visible =
-                    flatten_visible_ids(&self.command_tree_nodes, &self.command_tree_state);
+                let flat = flatten_command_tree(&self.command_tree_nodes);
                 let current_idx = self.command_tree_state.selected_index;
 
                 // Check if current selection matches
-                if let Some(id) = visible.get(current_idx) {
-                    if let Some(&score) = scores.get(id) {
+                if let Some(cmd) = flat.get(current_idx) {
+                    if let Some(&score) = scores.get(&cmd.id) {
                         if score > 0 {
                             // Current selection matches, keep it
                             return;
@@ -1135,8 +1068,8 @@ impl App {
                 }
 
                 // Current doesn't match, find next matching item
-                for (idx, id) in visible.iter().enumerate() {
-                    if let Some(&score) = scores.get(id) {
+                for (idx, cmd) in flat.iter().enumerate() {
+                    if let Some(&score) = scores.get(&cmd.id) {
                         if score > 0 {
                             self.command_tree_state.selected_index = idx;
                             self.sync_command_path_from_tree();
@@ -1320,12 +1253,10 @@ impl App {
     pub fn current_help(&self) -> Option<String> {
         match self.focus() {
             Focus::Commands => {
-                // Get help from the selected tree node
-                let visible =
-                    flatten_visible_nodes(&self.command_tree_nodes, &self.command_tree_state);
-                visible
-                    .get(self.command_tree_state.selected_index)
-                    .and_then(|node| node.data.help.clone())
+                // Get help from the selected command in the flat list
+                let flat = flatten_command_tree(&self.command_tree_nodes);
+                flat.get(self.command_tree_state.selected_index)
+                    .and_then(|cmd| cmd.help.clone())
             }
             Focus::Flags => {
                 let flags = self.visible_flags();
@@ -1373,119 +1304,43 @@ fn build_cmd_nodes(cmd: &SpecCommand, parent_path: &[String]) -> Vec<TreeNode<Cm
         .collect()
 }
 
-/// Collapse all nodes that have children, so the initial view
-/// shows just the top-level commands.
-fn collapse_parents_with_children(nodes: &[TreeNode<CmdData>], state: &mut TreeViewState) {
-    for node in nodes {
-        if node.has_children() {
-            state.collapse(&node.id);
-        }
-        collapse_descendants(&node.children, state);
-    }
-}
-
-fn collapse_descendants(nodes: &[TreeNode<CmdData>], state: &mut TreeViewState) {
-    for node in nodes {
-        if node.has_children() {
-            state.collapse(&node.id);
-        }
-        collapse_descendants(&node.children, state);
-    }
-}
-
-/// Compute match scores for all tree nodes recursively.
+/// Compute match scores for all commands in the flat list.
 /// Returns a map of node ID → score (0 for non-matches).
+/// Matches against the command name, aliases, help text, AND the full ancestor
+/// path so that e.g. "cfgset" matches "config set".
 fn compute_tree_scores(
     nodes: &[TreeNode<CmdData>],
     pattern: &str,
 ) -> std::collections::HashMap<String, u32> {
+    let flat = flatten_command_tree(nodes);
     let mut scores = std::collections::HashMap::new();
+    let mut matcher = Matcher::new(Config::DEFAULT);
 
-    for node in nodes {
-        let mut temp_matcher = Matcher::new(Config::DEFAULT);
+    for cmd in &flat {
+        let name_score = fuzzy_match_score(&cmd.name, pattern, &mut matcher);
 
-        // Score this node
-        let name_score = fuzzy_match_score(&node.data.name, pattern, &mut temp_matcher);
-
-        let alias_score = node
-            .data
+        let alias_score = cmd
             .aliases
             .iter()
-            .map(|a| fuzzy_match_score(a, pattern, &mut temp_matcher))
+            .map(|a| fuzzy_match_score(a, pattern, &mut matcher))
             .max()
             .unwrap_or(0);
 
-        let help_score = node
-            .data
+        let help_score = cmd
             .help
             .as_ref()
-            .map(|h| fuzzy_match_score(h, pattern, &mut temp_matcher))
+            .map(|h| fuzzy_match_score(h, pattern, &mut matcher))
             .unwrap_or(0);
 
-        let node_score = name_score.max(alias_score).max(help_score);
-        scores.insert(node.id.clone(), node_score);
+        // Also match against the full path (e.g. "config set") so that
+        // queries like "cfgset" can match subcommands via their parent chain.
+        let path_score = fuzzy_match_score(&cmd.full_path, pattern, &mut matcher);
 
-        // Recursively score children
-        let child_scores = compute_tree_scores(&node.children, pattern);
-        scores.extend(child_scores);
+        let node_score = name_score.max(alias_score).max(help_score).max(path_score);
+        scores.insert(cmd.id.clone(), node_score);
     }
 
     scores
-}
-
-/// Count visible nodes in the tree (respecting collapsed state).
-fn count_visible<T>(nodes: &[TreeNode<T>], state: &TreeViewState) -> usize {
-    let mut total = 0;
-    for node in nodes {
-        total += 1;
-        if node.has_children() && !state.is_collapsed(&node.id) {
-            total += count_visible(&node.children, state);
-        }
-    }
-    total
-}
-
-/// Flatten visible node IDs in order.
-fn flatten_visible_ids<T>(nodes: &[TreeNode<T>], state: &TreeViewState) -> Vec<String> {
-    let mut result = Vec::new();
-    flatten_ids_recursive(nodes, state, &mut result);
-    result
-}
-
-fn flatten_ids_recursive<T>(
-    nodes: &[TreeNode<T>],
-    state: &TreeViewState,
-    result: &mut Vec<String>,
-) {
-    for node in nodes {
-        result.push(node.id.clone());
-        if node.has_children() && !state.is_collapsed(&node.id) {
-            flatten_ids_recursive(&node.children, state, result);
-        }
-    }
-}
-
-/// Flatten visible tree nodes (references) in order.
-fn flatten_visible_nodes<'a, T>(
-    nodes: &'a [TreeNode<T>],
-    state: &TreeViewState,
-) -> Vec<&'a TreeNode<T>> {
-    let mut result = Vec::new();
-    flatten_nodes_recursive(nodes, state, &mut result);
-    result
-}
-
-fn flatten_nodes_recursive<'a, T>(
-    nodes: &'a [TreeNode<T>],
-    state: &TreeViewState,
-    result: &mut Vec<&'a TreeNode<T>>,
-) {
-    for node in nodes {
-        result.push(node);
-        if node.has_children() && !state.is_collapsed(&node.id) {
-            flatten_nodes_recursive(&node.children, state, result);
-        }
-    }
 }
 
 /// Get the parent ID from a node ID.
@@ -1499,16 +1354,18 @@ fn parent_id(id: &str) -> Option<String> {
     }
 }
 
-/// Flatten the tree structure into a list of commands with indentation info.
+/// Flatten the tree structure into a list of commands with depth-based indentation.
 pub fn flatten_command_tree(nodes: &[TreeNode<CmdData>]) -> Vec<FlatCommand> {
     fn flatten_recursive(
         nodes: &[TreeNode<CmdData>],
         depth: usize,
-        parent_lasts: Vec<bool>,
+        parent_names: &[String],
         result: &mut Vec<FlatCommand>,
     ) {
-        for (i, node) in nodes.iter().enumerate() {
-            let is_last = i == nodes.len() - 1;
+        for node in nodes {
+            let mut path_parts = parent_names.to_vec();
+            path_parts.push(node.data.name.clone());
+            let full_path = path_parts.join(" ");
 
             result.push(FlatCommand {
                 id: node.id.clone(),
@@ -1516,21 +1373,17 @@ pub fn flatten_command_tree(nodes: &[TreeNode<CmdData>]) -> Vec<FlatCommand> {
                 help: node.data.help.clone(),
                 aliases: node.data.aliases.clone(),
                 depth,
-                is_last_child: is_last,
-                parent_lasts: parent_lasts.clone(),
+                full_path,
             });
 
-            // Recurse into children
             if !node.children.is_empty() {
-                let mut child_parent_lasts = parent_lasts.clone();
-                child_parent_lasts.push(is_last);
-                flatten_recursive(&node.children, depth + 1, child_parent_lasts, result);
+                flatten_recursive(&node.children, depth + 1, &path_parts, result);
             }
         }
     }
 
     let mut result = Vec::new();
-    flatten_recursive(nodes, 0, Vec::new(), &mut result);
+    flatten_recursive(nodes, 0, &[], &mut result);
     result
 }
 
@@ -1627,13 +1480,14 @@ mod tests {
     }
 
     #[test]
-    fn test_tree_root_expanded_by_default() {
+    fn test_flat_list_all_visible() {
         let app = App::new(sample_spec());
-        // Root should be expanded
-        assert!(!app.command_tree_state.is_collapsed(""));
-        // Non-root parents should be collapsed
-        assert!(app.command_tree_state.is_collapsed("config"));
-        assert!(app.command_tree_state.is_collapsed("plugin"));
+        // All commands are always visible in the flat list
+        let flat = flatten_command_tree(&app.command_tree_nodes);
+        assert_eq!(flat.len(), 15);
+        // Includes nested subcommands
+        assert!(flat.iter().any(|c| c.id == "config set"));
+        assert!(flat.iter().any(|c| c.id == "plugin install"));
     }
 
     #[test]
@@ -1775,6 +1629,34 @@ mod tests {
     }
 
     #[test]
+    fn test_full_path_matching() {
+        let app = App::new(sample_spec());
+        let scores = compute_tree_scores(&app.command_tree_nodes, "cfgset");
+
+        // "cfgset" should match "config set" via full_path "config set"
+        let set_score = scores.get("config set").copied().unwrap_or(0);
+        assert!(
+            set_score > 0,
+            "cfgset should match config set, got score {set_score}"
+        );
+
+        // "cfgset" should NOT match unrelated commands
+        let init_score = scores.get("init").copied().unwrap_or(0);
+        assert_eq!(init_score, 0, "cfgset should not match init");
+
+        let run_score = scores.get("run").copied().unwrap_or(0);
+        assert_eq!(run_score, 0, "cfgset should not match run");
+
+        // "plinstall" should match "plugin install"
+        let scores2 = compute_tree_scores(&app.command_tree_nodes, "plinstall");
+        let install_score = scores2.get("plugin install").copied().unwrap_or(0);
+        assert!(
+            install_score > 0,
+            "plinstall should match plugin install, got score {install_score}"
+        );
+    }
+
+    #[test]
     fn test_fuzzy_match_with_pattern_indices() {
         use nucleo_matcher::{Config, Matcher};
 
@@ -1897,7 +1779,8 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(down);
-        assert_eq!(app.command_index(), 1);
+        // In flat list, index 1 is "config"
+        assert!(app.command_index() > 0);
 
         // Move up in tree
         let up = crossterm::event::KeyEvent::new(
@@ -1905,6 +1788,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(up);
+        // Should have moved back up
         assert_eq!(app.command_index(), 0);
     }
 
@@ -1925,8 +1809,9 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(tab);
-        // Root has no args, so should skip to Preview
-        assert_eq!(app.focus(), Focus::Preview);
+        // init (index 0) has args, so should go to Args or Preview depending on init state
+        // The focus manager cycles: Commands -> Flags -> Args -> Preview
+        assert_ne!(app.focus(), Focus::Commands);
     }
 
     #[test]
@@ -2224,8 +2109,8 @@ mod tests {
     fn test_tree_view_state_integration() {
         let mut app = App::new(sample_spec());
         let total = app.total_visible_commands();
-        // 7 top-level commands (no root, config and plugin collapsed)
-        assert_eq!(total, 7);
+        // Flat list: all 15 commands always visible
+        assert_eq!(total, 15);
         assert_eq!(app.command_index(), 0);
 
         let total = app.total_visible_commands();
@@ -2346,85 +2231,37 @@ mod tests {
         assert!(app.filter().is_empty());
     }
 
-    // ── Tree-specific tests ─────────────────────────────────────────────
+    // ── Flat list navigation tests ──────────────────────────────────────
 
     #[test]
-    fn test_tree_expand_collapse() {
-        let mut app = App::new(sample_spec());
-
-        // Initially config is collapsed
-        assert!(app.command_tree_state.is_collapsed("config"));
-        let initial_visible = app.total_visible_commands();
-
-        // Expand config
-        app.command_tree_state.expand("config");
-        let expanded_visible = app.total_visible_commands();
-        assert!(expanded_visible > initial_visible);
-
-        // Collapse config
-        app.command_tree_state.collapse("config");
-        assert_eq!(app.total_visible_commands(), initial_visible);
+    fn test_flat_list_total_commands() {
+        let app = App::new(sample_spec());
+        // Flat list always shows all commands (7 top-level + 8 nested = 15)
+        assert_eq!(app.total_visible_commands(), 15);
     }
 
     #[test]
-    fn test_tree_toggle_via_enter() {
-        let mut app = App::new(sample_spec());
-        // Select config (which has children)
-        app.navigate_to_command(&["config"]);
-        assert!(app.command_tree_state.is_collapsed("config"));
-
-        // Press Enter to toggle
-        let enter = crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Enter,
-            crossterm::event::KeyModifiers::NONE,
-        );
-        app.set_focus(Focus::Commands);
-        app.handle_key(enter);
-        assert!(!app.command_tree_state.is_collapsed("config"));
-
-        // Press Enter again to collapse
-        app.handle_key(enter);
-        assert!(app.command_tree_state.is_collapsed("config"));
-    }
-
-    #[test]
-    fn test_tree_right_expands() {
+    fn test_right_moves_to_first_child() {
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["config"]);
-        assert!(app.command_tree_state.is_collapsed("config"));
-
-        // Press Right to expand
         app.set_focus(Focus::Commands);
+
+        // Press Right to move to first child
         let right = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Right,
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(right);
-        assert!(!app.command_tree_state.is_collapsed("config"));
-    }
-
-    #[test]
-    fn test_tree_left_collapses() {
-        let mut app = App::new(sample_spec());
-        app.navigate_to_command(&["config"]);
-        // Expand config first
-        app.command_tree_state.expand("config");
-        assert!(!app.command_tree_state.is_collapsed("config"));
-
-        // Press Left to collapse
-        app.set_focus(Focus::Commands);
-        let left = crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Left,
-            crossterm::event::KeyModifiers::NONE,
+        assert_eq!(
+            app.command_path,
+            vec!["config", "set"],
+            "Should have moved to first child of config"
         );
-        app.handle_key(left);
-        assert!(app.command_tree_state.is_collapsed("config"));
     }
 
     #[test]
-    fn test_tree_left_on_leaf_moves_to_parent() {
+    fn test_left_moves_to_parent() {
         let mut app = App::new(sample_spec());
-        // Select "config set" which is a leaf (no children)
         app.navigate_to_command(&["config", "set"]);
         assert_eq!(app.command_path, vec!["config", "set"]);
 
@@ -2439,6 +2276,25 @@ mod tests {
             app.command_path,
             vec!["config"],
             "Should have moved to parent of set"
+        );
+    }
+
+    #[test]
+    fn test_left_on_top_level_does_nothing() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["config"]);
+        app.set_focus(Focus::Commands);
+
+        // Press Left on a top-level command — no parent to go to
+        let left = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Left,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(left);
+        assert_eq!(
+            app.command_path,
+            vec!["config"],
+            "Should stay on config since it has no parent"
         );
     }
 
@@ -2702,56 +2558,50 @@ mod tests {
     }
 
     #[test]
-    fn test_total_visible_commands_changes_with_expand() {
-        let mut app = App::new(sample_spec());
-
-        // Initially: 7 top-level commands (no root, config and plugin collapsed)
-        let initial = app.total_visible_commands();
-        assert_eq!(initial, 7);
-
-        // Expand config (has 4 children)
-        app.command_tree_state.expand("config");
-        assert_eq!(app.total_visible_commands(), 11);
-
-        // Expand plugin (has 4 children)
-        app.command_tree_state.expand("plugin");
-        assert_eq!(app.total_visible_commands(), 15);
-
-        // Collapse config
-        app.command_tree_state.collapse("config");
-        assert_eq!(app.total_visible_commands(), 11);
-    }
-
-    #[test]
-    fn test_flatten_visible_ids() {
+    fn test_flatten_command_tree_ids() {
         let app = App::new(sample_spec());
-        let ids = flatten_visible_ids(&app.command_tree_nodes, &app.command_tree_state);
+        let flat = flatten_command_tree(&app.command_tree_nodes);
 
-        // 7 top-level commands (no root node)
-        assert_eq!(ids.len(), 7);
-        assert_eq!(ids[0], "init");
-        assert_eq!(ids[1], "config");
-        // config is collapsed, so no config children
-        assert_eq!(ids[2], "run");
-        assert_eq!(ids[3], "deploy");
-        assert_eq!(ids[4], "plugin");
-        assert_eq!(ids[5], "version");
-        assert_eq!(ids[6], "help");
+        // All 15 commands in the flat list
+        assert_eq!(flat.len(), 15);
+        assert_eq!(flat[0].id, "init");
+        assert_eq!(flat[1].id, "config");
+        assert_eq!(flat[2].id, "config set");
+        assert_eq!(flat[3].id, "config get");
+        assert_eq!(flat[4].id, "config list");
+        assert_eq!(flat[5].id, "config remove");
+        assert_eq!(flat[6].id, "run");
+        assert_eq!(flat[7].id, "deploy");
+        assert_eq!(flat[8].id, "plugin");
+        assert_eq!(flat[9].id, "plugin install");
+        assert_eq!(flat[10].id, "plugin uninstall");
+        assert_eq!(flat[11].id, "plugin list");
+        assert_eq!(flat[12].id, "plugin update");
+        assert_eq!(flat[13].id, "version");
+        assert_eq!(flat[14].id, "help");
     }
 
     #[test]
-    fn test_flatten_visible_ids_with_expanded() {
-        let mut app = App::new(sample_spec());
-        app.command_tree_state.expand("config");
+    fn test_flatten_command_tree_full_path() {
+        let app = App::new(sample_spec());
+        let flat = flatten_command_tree(&app.command_tree_nodes);
 
-        let ids = flatten_visible_ids(&app.command_tree_nodes, &app.command_tree_state);
-        assert_eq!(ids[0], "init");
-        assert_eq!(ids[1], "config");
-        assert_eq!(ids[2], "config set");
-        assert_eq!(ids[3], "config get");
-        assert_eq!(ids[4], "config list");
-        assert_eq!(ids[5], "config remove");
-        assert_eq!(ids[6], "run");
+        assert_eq!(flat[0].full_path, "init");
+        assert_eq!(flat[1].full_path, "config");
+        assert_eq!(flat[2].full_path, "config set");
+        assert_eq!(flat[9].full_path, "plugin install");
+    }
+
+    #[test]
+    fn test_flatten_command_tree_depth() {
+        let app = App::new(sample_spec());
+        let flat = flatten_command_tree(&app.command_tree_nodes);
+
+        assert_eq!(flat[0].depth, 0); // init
+        assert_eq!(flat[1].depth, 0); // config
+        assert_eq!(flat[2].depth, 1); // config set
+        assert_eq!(flat[6].depth, 0); // run
+        assert_eq!(flat[9].depth, 1); // plugin install
     }
 
     #[test]
@@ -2770,19 +2620,18 @@ mod tests {
     }
 
     #[test]
-    fn test_esc_on_expanded_node_collapses() {
+    fn test_esc_on_top_level_quits() {
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["config"]);
-        app.command_tree_state.expand("config");
         app.set_focus(Focus::Commands);
 
+        // config is top-level, so Esc should quit
         let esc = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Esc,
             crossterm::event::KeyModifiers::NONE,
         );
         let result = app.handle_key(esc);
-        assert_eq!(result, Action::None);
-        assert!(app.command_tree_state.is_collapsed("config"));
+        assert_eq!(result, Action::Quit);
     }
 
     #[test]

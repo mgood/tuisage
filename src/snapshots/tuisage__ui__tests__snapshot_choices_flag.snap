@@ -2,8 +2,8 @@
 source: src/ui.rs
 expression: output
 ---
-┌ Commands [1/1] ──────────────┐┌ Flags (1) ───────────────────────────────────┐
-│▶ format — Format code        ││   [·] --style = <compact|expanded|default> — │
+┌ Commands ────────────────────┐┌ Flags ───────────────────────────────────────┐
+│▶format — Format code         ││   [·] --style = <compact|expanded|default> — │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
@@ -11,7 +11,7 @@ expression: output
 │                              ││                                              │
 │                              ││                                              │
 │                              │└──────────────────────────────────────────────┘
-│                              │┌ Arguments (1) ───────────────────────────────┐
+│                              │┌ Arguments ───────────────────────────────────┐
 │                              ││   ● <file> = (empty)                         │
 │                              ││                                              │
 │                              ││                                              │

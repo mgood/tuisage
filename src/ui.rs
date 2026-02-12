@@ -245,21 +245,11 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
 
     // Flatten the tree for display
     let flat_commands = flatten_command_tree(&app.command_tree_nodes);
-    let total = flat_commands.len();
-    let current = app.command_index() + 1;
 
     let title = if app.filtering && !app.filter().is_empty() {
-        let matching = app.matching_commands_count();
-        format!(
-            " Commands (/{}) [{}/{} matched] ",
-            app.filter(),
-            matching,
-            total
-        )
-    } else if is_focused {
-        format!(" Commands [{}/{}] ", current, total)
+        format!(" Commands (/{})", app.filter())
     } else {
-        format!(" Commands ({}) ", total)
+        " Commands ".to_string()
     };
 
     let block = Block::default()
@@ -295,35 +285,22 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
             // Selection cursor
             if is_selected {
                 spans.push(Span::styled(
-                    "▶ ",
+                    "▶",
                     Style::default()
                         .fg(colors.active_border)
                         .add_modifier(Modifier::BOLD),
                 ));
             } else {
-                spans.push(Span::raw("  "));
+                spans.push(Span::raw(" "));
             }
 
-            // Indentation markers
-            for &is_last in &cmd.parent_lasts {
-                if is_last {
-                    spans.push(Span::styled("    ", Style::default().fg(colors.help)));
-                } else {
-                    spans.push(Span::styled("│   ", Style::default().fg(colors.help)));
-                }
-            }
-
-            // Branch marker for children
+            // Depth-based indentation (2 spaces per level)
             if cmd.depth > 0 {
-                let marker = if cmd.is_last_child {
-                    "└── "
-                } else {
-                    "├── "
-                };
-                spans.push(Span::styled(marker, Style::default().fg(colors.help)));
+                let indent = "  ".repeat(cmd.depth);
+                spans.push(Span::styled(indent, Style::default().fg(colors.help)));
             }
 
-            // Command name and details
+            // Command name and details — match highlighting uses full_path
             let mut text = cmd.name.clone();
             if !cmd.aliases.is_empty() {
                 text.push_str(&format!(" ({})", cmd.aliases.join(", ")));
@@ -405,9 +382,8 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
         colors.inactive_border
     };
 
-    // Compute counts for title before mutable borrow
+    // Compute index for scroll visibility
     let flag_index = app.flag_index();
-    let total_count = app.current_flag_values().len();
 
     // Compute match scores for filtering
     let match_scores = if app.filtering && !app.filter().is_empty() && app.focus() == Focus::Flags {
@@ -417,17 +393,9 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
     };
 
     let title = if app.filtering && !app.filter().is_empty() && app.focus() == Focus::Flags {
-        let matching = match_scores.values().filter(|&&score| score > 0).count();
-        format!(
-            " Flags (/{}) [{}/{} matched] ",
-            app.filter(),
-            flag_index + 1,
-            matching
-        )
-    } else if total_count > 0 && is_focused {
-        format!(" Flags [{}/{}] ", flag_index + 1, total_count)
+        format!(" Flags (/{}) ", app.filter())
     } else {
-        format!(" Flags ({}) ", total_count)
+        " Flags ".to_string()
     };
 
     let block = Block::default()
@@ -664,14 +632,9 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
         colors.inactive_border
     };
 
-    let arg_total = app.arg_values.len();
     let arg_index = app.arg_index();
 
-    let title = if arg_total > 0 && is_focused {
-        format!(" Arguments [{}/{}] ", arg_index + 1, arg_total)
-    } else {
-        format!(" Arguments ({}) ", arg_total)
-    };
+    let title = " Arguments ".to_string();
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -1558,25 +1521,28 @@ flag "-q --quiet" help="Quiet mode"
     // ── Panel count display tests ───────────────────────────────────────
 
     #[test]
-    fn test_focused_panel_shows_position() {
+    fn test_focused_panel_shows_title() {
         let mut app = App::new(sample_spec());
         app.set_focus(Focus::Commands);
-        // In flat list: 15 total commands (7 top-level + 8 nested subcommands)
-        // set_command_index(2) selects the 3rd item in the flat list
         app.command_tree_state.selected_index = 2;
         app.sync_command_path_from_tree();
         let output = render_to_string(&mut app, 100, 24);
-        // Focused panel shows [position/total] for flat list
-        assert!(output.contains("[3/15]"));
+        // Panel headers no longer show counts
+        assert!(output.contains("Commands"));
     }
 
     #[test]
-    fn test_unfocused_panel_shows_count() {
+    fn test_unfocused_panel_shows_title() {
         let mut app = App::new(sample_spec());
         app.set_focus(Focus::Commands);
         let output = render_to_string(&mut app, 100, 24);
-        // Unfocused flags panel shows (count)
-        assert!(output.contains("Flags (3)"));
+        // Unfocused panels just show their name, no counts
+        assert!(output.contains("Flags"));
+        // Arguments panel only shown when the selected command has args
+        // Navigate to init which has args
+        app.navigate_to_command(&["init"]);
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(output.contains("Arguments"));
     }
 
     #[test]
@@ -1589,7 +1555,7 @@ flag "-q --quiet" help="Quiet mode"
     }
 
     #[test]
-    fn test_filter_shows_filtered_count() {
+    fn test_filter_shows_query_in_title() {
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["deploy"]);
 
@@ -1598,8 +1564,8 @@ flag "-q --quiet" help="Quiet mode"
         app.filter_input.set_text("roll");
 
         let output = render_to_string(&mut app, 100, 24);
-        // Should show matched count [1/1 matched], not total count
-        assert!(output.contains("[1/1 matched]"));
+        // Should show filter query in title, no counts
+        assert!(output.contains("Flags (/roll)"));
     }
 
     // ── Unicode checkbox tests ──────────────────────────────────────────
