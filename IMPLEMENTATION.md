@@ -98,9 +98,10 @@ The core state and logic module (~2050 lines including ~960 lines of tests).
 - **`handle_mouse()`** — maps mouse events to panel focus, item selection, scroll, and activation. Finishes any active edit before switching targets.
 - **`build_command()`** — assembles the complete command string from the current state.
 - **`fuzzy_match_score()`** — scored fuzzy matching using `nucleo-matcher`, returns match quality score (0 for no match).
+- **`fuzzy_match_indices()`** — returns both score and match indices for character-level highlighting.
 - **`compute_tree_match_scores()`** — computes match scores for all tree nodes when filtering is active; returns map of node ID → score.
 - **`compute_flag_match_scores()`** — computes match scores for all flags when filtering is active; returns map of flag name → score.
-- **`should_auto_select_next_match()`** — checks if the current selection doesn't match the filter and returns the next matching item index.
+- **`auto_select_next_match()`** — automatically moves selection to next matching item when current selection doesn't match filter.
 - **`tree_toggle_selected()`** — toggles expand/collapse of the selected tree node (Enter key on Commands).
 - **`tree_expand_or_enter()`** — expands a collapsed node or moves to its first child (Right/l key).
 - **`tree_collapse_or_parent()`** — collapses an expanded node or moves to its parent (Left/h key).
@@ -153,6 +154,18 @@ A semantic color palette derived from the active `ThemePalette`. Maps abstract r
 #### Click Region Registration
 
 During rendering, each panel's `Rect` is stored in `app.click_regions` as a `(Rect, Focus)` tuple. The mouse handler uses these to determine which panel was clicked and translates the click coordinates to an item index.
+
+#### Filtering and Match Highlighting
+
+When filtering is active (`app.filtering == true`):
+
+1. **Match Score Computation** — `compute_tree_match_scores()` and `compute_flag_match_scores()` use `nucleo-matcher` to score all items against the filter pattern.
+2. **Visual Styling** — Items with score = 0 (non-matches) are rendered with `Modifier::DIM` to subdue them without shifting the layout.
+3. **Character Highlighting** — For flags, `fuzzy_match_indices()` returns the positions of matched characters, and `build_highlighted_text()` in `ui.rs` creates styled spans with matching characters bold+underlined.
+4. **Auto-Selection** — When the filter changes, `auto_select_next_match()` moves the cursor to the first matching item if the current selection doesn't match.
+5. **Panel Switching** — `set_focus()` clears the filter when changing panels (via Tab or mouse) to prevent confusion.
+
+**Note**: TreeView from `ratatui-interact` doesn't support per-item styling, so command tree items can't be dimmed individually. Flags use manual rendering with styled spans, enabling full highlighting support.
 
 ## Dependencies
 
@@ -228,7 +241,7 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - Core app state: navigation, flag values, arg values, command building
 - Full TUI rendering: 3-panel layout, preview, help bar
 - Keyboard navigation: vim keys, Tab cycling, Enter/Space/Backspace actions
-- Fuzzy filtering for commands and flags with scored ranking and subdued non-matches (nucleo-matcher)
+- Fuzzy filtering with scored ranking, subdued non-matches, and character-level match highlighting (nucleo-matcher)
 - Mouse support: click, scroll, right-click, click-to-activate
 - Visual polish: theming, scrolling, default indicators, accessible symbols
 - Stdin support for piped specs
