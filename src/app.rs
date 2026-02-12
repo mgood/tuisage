@@ -2,6 +2,7 @@ use ratatui::layout::Rect;
 use ratatui_interact::components::{InputState, ListPickerState};
 use ratatui_interact::state::FocusManager;
 use ratatui_interact::traits::ClickRegionRegistry;
+use ratatui_themes::{ThemeName, ThemePalette};
 use usage::{Spec, SpecCommand, SpecFlag};
 
 /// Actions that the event loop should take after handling a key.
@@ -45,6 +46,9 @@ pub struct ArgValue {
 pub struct App {
     pub spec: Spec,
 
+    /// Current color theme.
+    pub theme_name: ThemeName,
+
     /// Breadcrumb path of subcommand names the user has navigated into.
     /// Empty means we're at the root command.
     pub command_path: Vec<String>,
@@ -86,8 +90,13 @@ pub struct App {
 
 impl App {
     pub fn new(spec: Spec) -> Self {
+        Self::with_theme(spec, ThemeName::default())
+    }
+
+    pub fn with_theme(spec: Spec, theme_name: ThemeName) -> Self {
         let mut app = Self {
             spec,
+            theme_name,
             command_path: Vec::new(),
             flag_values: std::collections::HashMap::new(),
             arg_values: Vec::new(),
@@ -125,6 +134,22 @@ impl App {
         if had_focus {
             self.focus_manager.set(current);
         }
+    }
+
+    /// Get the current theme palette.
+    pub fn palette(&self) -> ThemePalette {
+        self.theme_name.palette()
+    }
+
+    /// Cycle to the next theme.
+    pub fn next_theme(&mut self) {
+        self.theme_name = self.theme_name.next();
+    }
+
+    /// Cycle to the previous theme.
+    #[allow(dead_code)]
+    pub fn prev_theme(&mut self) {
+        self.theme_name = self.theme_name.prev();
     }
 
     /// Get the current focus panel.
@@ -516,6 +541,10 @@ impl App {
 
         match key.code {
             KeyCode::Char('q') => Action::Quit,
+            KeyCode::Char('T') => {
+                self.next_theme();
+                Action::None
+            }
             KeyCode::Char('/') => {
                 self.filtering = true;
                 self.filter_input.clear();

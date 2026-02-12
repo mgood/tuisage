@@ -5,32 +5,88 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Padding, Paragraph, Wrap},
     Frame,
 };
+use ratatui_interact::components::{
+    Breadcrumb, BreadcrumbItem, BreadcrumbState, BreadcrumbStyle, Input, InputStyle,
+};
+use ratatui_themes::ThemePalette;
 
 #[cfg(test)]
 extern crate insta;
 
 use crate::app::{App, FlagValue, Focus};
 
-/// Color palette for the TUI.
-mod colors {
-    use ratatui::style::Color;
+/// Derive a semantic color palette for our UI elements from the theme palette.
+/// This maps semantic theme colors to our specific UI roles.
+struct UiColors {
+    command: Color,
+    flag: Color,
+    arg: Color,
+    value: Color,
+    required: Color,
+    help: Color,
+    active_border: Color,
+    inactive_border: Color,
+    selected_bg: Color,
+    editing_bg: Color,
+    preview_cmd: Color,
+    breadcrumb: Color,
+    filter: Color,
+    choice: Color,
+    default_val: Color,
+    count: Color,
+    bg: Color,
+    bar_bg: Color,
+}
 
-    pub const COMMAND: Color = Color::Cyan;
-    pub const FLAG: Color = Color::Yellow;
-    pub const ARG: Color = Color::Green;
-    pub const VALUE: Color = Color::Magenta;
-    pub const REQUIRED: Color = Color::Red;
-    pub const HELP: Color = Color::DarkGray;
-    pub const ACTIVE_BORDER: Color = Color::Cyan;
-    pub const INACTIVE_BORDER: Color = Color::DarkGray;
-    pub const SELECTED_BG: Color = Color::Rgb(40, 40, 60);
-    pub const EDITING_BG: Color = Color::Rgb(50, 30, 30);
-    pub const PREVIEW_CMD: Color = Color::White;
-    pub const BREADCRUMB: Color = Color::Cyan;
-    pub const FILTER: Color = Color::Yellow;
-    pub const CHOICE: Color = Color::Blue;
-    pub const DEFAULT_VAL: Color = Color::DarkGray;
-    pub const COUNT: Color = Color::Magenta;
+impl UiColors {
+    fn from_palette(p: &ThemePalette) -> Self {
+        // Derive a slightly lighter/darker shade for bar backgrounds
+        let bar_bg = match p.bg {
+            Color::Rgb(r, g, b) => Color::Rgb(
+                r.saturating_add(10),
+                g.saturating_add(10),
+                b.saturating_add(15),
+            ),
+            _ => Color::Rgb(30, 30, 40),
+        };
+
+        // Derive selection background from the theme selection color
+        let selected_bg = match p.selection {
+            Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+            _ => Color::Rgb(40, 40, 60),
+        };
+
+        // Derive editing background: a warm-tinted version of selection
+        let editing_bg = match p.selection {
+            Color::Rgb(r, g, b) => Color::Rgb(
+                r.saturating_add(15),
+                g.saturating_sub(5),
+                b.saturating_sub(10),
+            ),
+            _ => Color::Rgb(50, 30, 30),
+        };
+
+        Self {
+            command: p.info,   // Commands are informational navigation targets
+            flag: p.warning,   // Flags draw attention like warnings
+            arg: p.success,    // Arguments are green/positive inputs
+            value: p.accent,   // Values are the primary highlighted data
+            required: p.error, // Required indicators are critical/red
+            help: p.muted,     // Help text is secondary/muted
+            active_border: p.accent,
+            inactive_border: p.muted,
+            selected_bg,
+            editing_bg,
+            preview_cmd: p.fg,
+            breadcrumb: p.accent,
+            filter: p.warning,
+            choice: p.info,
+            default_val: p.muted,
+            count: p.secondary,
+            bg: p.bg,
+            bar_bg,
+        }
+    }
 }
 
 /// Main render function called from the event loop.
@@ -55,66 +111,95 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Clear click regions each frame so they're rebuilt from current layout
     app.click_regions.clear();
 
-    render_breadcrumb(frame, app, outer[0]);
-    render_main_content(frame, app, outer[1]);
-    render_help_bar(frame, app, outer[2]);
-    render_preview(frame, app, outer[3]);
+    let palette = app.palette();
+    let colors = UiColors::from_palette(&palette);
+
+    render_breadcrumb(frame, app, outer[0], &colors);
+    render_main_content(frame, app, outer[1], &colors);
+    render_help_bar(frame, app, outer[2], &colors);
+    render_preview(frame, app, outer[3], &colors);
 
     // Register preview area for click hit-testing
     app.click_regions.register(outer[3], Focus::Preview);
 }
 
-/// Render the breadcrumb bar showing the current command path.
-fn render_breadcrumb(frame: &mut Frame, app: &App, area: Rect) {
-    let mut spans = vec![Span::styled(" ", Style::default())];
-
+/// Render the breadcrumb bar using the ratatui-interact Breadcrumb widget.
+fn render_breadcrumb(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) {
     let bin = if app.spec.bin.is_empty() {
         &app.spec.name
     } else {
         &app.spec.bin
     };
 
-    spans.push(Span::styled(
-        bin,
-        Style::default()
-            .fg(colors::BREADCRUMB)
-            .add_modifier(Modifier::BOLD),
-    ));
-
+    // Build breadcrumb items: root binary + command path
+    let mut items = vec![BreadcrumbItem::new("root", bin)];
     for name in &app.command_path {
-        spans.push(Span::styled(" > ", Style::default().fg(colors::HELP)));
-        spans.push(Span::styled(
-            name.as_str(),
-            Style::default()
-                .fg(colors::BREADCRUMB)
-                .add_modifier(Modifier::BOLD),
-        ));
+        items.push(BreadcrumbItem::new(name.as_str(), name.as_str()));
     }
 
-    // Show filter if active
+    let bc_state = BreadcrumbState::new(items);
+
+    // Style the breadcrumb with theme colors
+    let bc_style = BreadcrumbStyle::chevron()
+        .item_style(
+            Style::default()
+                .fg(colors.breadcrumb)
+                .add_modifier(Modifier::BOLD),
+        )
+        .last_item_style(
+            Style::default()
+                .fg(colors.breadcrumb)
+                .add_modifier(Modifier::BOLD),
+        )
+        .separator_style(Style::default().fg(colors.help))
+        .padding(1, 0);
+
+    let breadcrumb = Breadcrumb::new(&bc_state).style(bc_style);
+
+    // If filtering is active, we split the breadcrumb area to show filter input
     if app.filtering {
-        spans.push(Span::styled("  /", Style::default().fg(colors::FILTER)));
-        spans.push(Span::styled(
-            app.filter(),
-            Style::default()
-                .fg(colors::FILTER)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled(
-            "▎",
-            Style::default()
-                .fg(colors::FILTER)
-                .add_modifier(Modifier::SLOW_BLINK),
-        ));
-    }
+        let bc_width = breadcrumb
+            .calculate_width()
+            .min(area.width.saturating_sub(20));
+        let filter_width = area.width.saturating_sub(bc_width).saturating_sub(3);
 
-    let line = Line::from(spans);
-    let paragraph = Paragraph::new(line).style(Style::default().bg(Color::Rgb(30, 30, 40)));
-    frame.render_widget(paragraph, area);
+        let bc_area = Rect::new(area.x, area.y, bc_width, area.height);
+        let separator_area = Rect::new(area.x + bc_width, area.y, 3, area.height);
+        let filter_area = Rect::new(area.x + bc_width + 3, area.y, filter_width, area.height);
+
+        // Render background
+        let bg = Paragraph::new("").style(Style::default().bg(colors.bar_bg));
+        frame.render_widget(bg, area);
+
+        // Render breadcrumb
+        breadcrumb.render_stateful(bc_area, frame.buffer_mut());
+
+        // Render filter separator
+        let sep = Paragraph::new(Span::styled("  /", Style::default().fg(colors.filter)));
+        frame.render_widget(sep, separator_area);
+
+        // Render filter input using ratatui-interact Input widget
+        let input_style = InputStyle::default()
+            .text_fg(colors.filter)
+            .cursor_fg(colors.filter)
+            .placeholder_fg(colors.help);
+        let input = Input::new(&app.filter_input)
+            .style(input_style)
+            .with_border(false)
+            .placeholder("type to filter...");
+        input.render_stateful(frame, filter_area);
+    } else {
+        // Render background
+        let bg = Paragraph::new("").style(Style::default().bg(colors.bar_bg));
+        frame.render_widget(bg, area);
+
+        // Render breadcrumb only
+        breadcrumb.render_stateful(area, frame.buffer_mut());
+    }
 }
 
 /// Render the main content area with panels for commands, flags, and args.
-fn render_main_content(frame: &mut Frame, app: &mut App, area: Rect) {
+fn render_main_content(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
     let has_commands = !app.visible_subcommands().is_empty();
     let has_flags = !app.visible_flags().is_empty();
     let has_args = !app.arg_values.is_empty();
@@ -128,23 +213,23 @@ fn render_main_content(frame: &mut Frame, app: &mut App, area: Rect) {
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
                 .split(area);
 
-            render_command_list(frame, app, h_split[0]);
+            render_command_list(frame, app, h_split[0], colors);
 
             if has_flags && has_args {
                 let v_split = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
                     .split(h_split[1]);
-                render_flag_list(frame, app, v_split[0]);
-                render_arg_list(frame, app, v_split[1]);
+                render_flag_list(frame, app, v_split[0], colors);
+                render_arg_list(frame, app, v_split[1], colors);
             } else if has_flags {
-                render_flag_list(frame, app, h_split[1]);
+                render_flag_list(frame, app, h_split[1], colors);
             } else {
-                render_arg_list(frame, app, h_split[1]);
+                render_arg_list(frame, app, h_split[1], colors);
             }
         }
         (true, false) => {
-            render_command_list(frame, app, area);
+            render_command_list(frame, app, area, colors);
         }
         (false, true) => {
             if has_flags && has_args {
@@ -152,22 +237,22 @@ fn render_main_content(frame: &mut Frame, app: &mut App, area: Rect) {
                     .direction(Direction::Vertical)
                     .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
                     .split(area);
-                render_flag_list(frame, app, v_split[0]);
-                render_arg_list(frame, app, v_split[1]);
+                render_flag_list(frame, app, v_split[0], colors);
+                render_arg_list(frame, app, v_split[1], colors);
             } else if has_flags {
-                render_flag_list(frame, app, area);
+                render_flag_list(frame, app, area, colors);
             } else {
-                render_arg_list(frame, app, area);
+                render_arg_list(frame, app, area, colors);
             }
         }
         (false, false) => {
             let block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(colors::INACTIVE_BORDER))
+                .border_style(Style::default().fg(colors.inactive_border))
                 .title(" No options ")
                 .padding(Padding::horizontal(1));
             let inner = Paragraph::new("This command has no subcommands, flags, or arguments.")
-                .style(Style::default().fg(colors::HELP))
+                .style(Style::default().fg(colors.help).bg(colors.bg))
                 .wrap(Wrap { trim: true })
                 .block(block);
             frame.render_widget(inner, area);
@@ -176,15 +261,15 @@ fn render_main_content(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 /// Render the subcommand list panel.
-fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect) {
+fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
     // Register area for click hit-testing
     app.click_regions.register(area, Focus::Commands);
 
     let is_focused = app.focus() == Focus::Commands;
     let border_color = if is_focused {
-        colors::ACTIVE_BORDER
+        colors.active_border
     } else {
-        colors::INACTIVE_BORDER
+        colors.inactive_border
     };
 
     let title = if app.filtering && app.focus() == Focus::Commands {
@@ -218,16 +303,16 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect) {
             // Command name
             let name_style = if is_selected {
                 Style::default()
-                    .fg(colors::COMMAND)
+                    .fg(colors.command)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(colors::COMMAND)
+                Style::default().fg(colors.command)
             };
             spans.push(Span::styled(name.as_str(), name_style));
 
             // Subcommand indicator
             if has_children {
-                spans.push(Span::styled(" ▸", Style::default().fg(colors::HELP)));
+                spans.push(Span::styled(" ▸", Style::default().fg(colors.help)));
             }
 
             // Aliases
@@ -235,23 +320,23 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect) {
                 let aliases = cmd.aliases.join(", ");
                 spans.push(Span::styled(
                     format!(" ({})", aliases),
-                    Style::default().fg(colors::HELP),
+                    Style::default().fg(colors.help),
                 ));
             }
 
             // Help text (truncated to fit)
             if let Some(help) = &cmd.help {
-                spans.push(Span::styled(" — ", Style::default().fg(colors::HELP)));
+                spans.push(Span::styled(" — ", Style::default().fg(colors.help)));
                 spans.push(Span::styled(
                     help.as_str(),
-                    Style::default().fg(colors::HELP),
+                    Style::default().fg(colors.help),
                 ));
             }
 
             let line = Line::from(spans);
             let mut item = ListItem::new(line);
             if is_selected {
-                item = item.style(Style::default().bg(colors::SELECTED_BG));
+                item = item.style(Style::default().bg(colors.selected_bg));
             }
             item
         })
@@ -269,15 +354,15 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 /// Render the flag list panel.
-fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
+fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
     // Register area for click hit-testing
     app.click_regions.register(area, Focus::Flags);
 
     let is_focused = app.focus() == Focus::Flags;
     let border_color = if is_focused {
-        colors::ACTIVE_BORDER
+        colors.active_border
     } else {
-        colors::INACTIVE_BORDER
+        colors.inactive_border
     };
 
     let title = if app.filtering && app.focus() == Focus::Flags {
@@ -316,29 +401,27 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
 
             let mut spans = Vec::new();
 
-            // Checkbox / toggle indicator
+            // Checkbox / toggle indicator using Unicode checkboxes
             let indicator = match value.map(|(_, v)| v) {
-                Some(FlagValue::Bool(true)) => {
-                    Span::styled("[✓] ", Style::default().fg(Color::Green))
-                }
+                Some(FlagValue::Bool(true)) => Span::styled("☑ ", Style::default().fg(colors.arg)),
                 Some(FlagValue::Bool(false)) => {
-                    Span::styled("[ ] ", Style::default().fg(colors::HELP))
+                    Span::styled("☐ ", Style::default().fg(colors.help))
                 }
                 Some(FlagValue::Count(n)) => {
                     if *n > 0 {
-                        Span::styled(format!("[{}] ", n), Style::default().fg(colors::COUNT))
+                        Span::styled(format!("[{}] ", n), Style::default().fg(colors.count))
                     } else {
-                        Span::styled("[0] ", Style::default().fg(colors::HELP))
+                        Span::styled("[0] ", Style::default().fg(colors.help))
                     }
                 }
                 Some(FlagValue::String(s)) => {
                     if s.is_empty() {
-                        Span::styled("[·] ", Style::default().fg(colors::HELP))
+                        Span::styled("[·] ", Style::default().fg(colors.help))
                     } else {
-                        Span::styled("[•] ", Style::default().fg(Color::Green))
+                        Span::styled("[•] ", Style::default().fg(colors.arg))
                     }
                 }
-                None => Span::styled("[ ] ", Style::default().fg(colors::HELP)),
+                None => Span::styled("☐ ", Style::default().fg(colors.help)),
             };
             spans.push(indicator);
 
@@ -346,26 +429,26 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
             let flag_display = flag_display_string(flag);
             let flag_style = if is_selected {
                 Style::default()
-                    .fg(colors::FLAG)
+                    .fg(colors.flag)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(colors::FLAG)
+                Style::default().fg(colors.flag)
             };
             spans.push(Span::styled(flag_display, flag_style));
 
             // Global indicator
             if flag.global {
-                spans.push(Span::styled(" [G]", Style::default().fg(colors::HELP)));
+                spans.push(Span::styled(" [G]", Style::default().fg(colors.help)));
             }
 
             // Required indicator
             if flag.required {
-                spans.push(Span::styled(" *", Style::default().fg(colors::REQUIRED)));
+                spans.push(Span::styled(" *", Style::default().fg(colors.required)));
             }
 
             // Value display for string flags
             if let Some((_, FlagValue::String(s))) = value {
-                spans.push(Span::styled(" = ", Style::default().fg(colors::HELP)));
+                spans.push(Span::styled(" = ", Style::default().fg(colors.help)));
 
                 if is_editing {
                     // Show the edit_input text with cursor
@@ -373,13 +456,13 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
                     spans.push(Span::styled(
                         edit_text,
                         Style::default()
-                            .fg(colors::VALUE)
+                            .fg(colors.value)
                             .add_modifier(Modifier::UNDERLINED),
                     ));
                     spans.push(Span::styled(
                         "▎",
                         Style::default()
-                            .fg(colors::VALUE)
+                            .fg(colors.value)
                             .add_modifier(Modifier::SLOW_BLINK),
                     ));
                 } else if s.is_empty() {
@@ -389,23 +472,23 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
                             let hint = choices.choices.join("|");
                             spans.push(Span::styled(
                                 format!("<{}>", hint),
-                                Style::default().fg(colors::CHOICE),
+                                Style::default().fg(colors.choice),
                             ));
                         } else {
                             spans.push(Span::styled(
                                 format!("<{}>", arg.name),
-                                Style::default().fg(colors::DEFAULT_VAL),
+                                Style::default().fg(colors.default_val),
                             ));
                         }
                     }
                 } else {
-                    spans.push(Span::styled(s.as_str(), Style::default().fg(colors::VALUE)));
+                    spans.push(Span::styled(s.as_str(), Style::default().fg(colors.value)));
                     // Show "(default)" if value matches the spec default
                     if let Some(def) = default_val {
                         if s == def {
                             spans.push(Span::styled(
                                 " (default)",
-                                Style::default().fg(colors::DEFAULT_VAL).italic(),
+                                Style::default().fg(colors.default_val).italic(),
                             ));
                         }
                     }
@@ -414,10 +497,10 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
 
             // Help text
             if let Some(help) = &flag.help {
-                spans.push(Span::styled(" — ", Style::default().fg(colors::HELP)));
+                spans.push(Span::styled(" — ", Style::default().fg(colors.help)));
                 spans.push(Span::styled(
                     help.as_str(),
-                    Style::default().fg(colors::HELP),
+                    Style::default().fg(colors.help),
                 ));
             }
 
@@ -425,9 +508,9 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
             let mut item = ListItem::new(line);
             if is_selected {
                 let bg = if is_editing {
-                    colors::EDITING_BG
+                    colors.editing_bg
                 } else {
-                    colors::SELECTED_BG
+                    colors.selected_bg
                 };
                 item = item.style(Style::default().bg(bg));
             }
@@ -442,15 +525,15 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect) {
+fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
     // Register area for click hit-testing
     app.click_regions.register(area, Focus::Args);
 
     let is_focused = app.focus() == Focus::Args;
     let border_color = if is_focused {
-        colors::ACTIVE_BORDER
+        colors.active_border
     } else {
-        colors::INACTIVE_BORDER
+        colors.inactive_border
     };
 
     let block = Block::default()
@@ -477,18 +560,16 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect) {
 
             // Required/optional indicator
             if arg_val.required {
-                spans.push(Span::styled("● ", Style::default().fg(colors::REQUIRED)));
+                spans.push(Span::styled("● ", Style::default().fg(colors.required)));
             } else {
-                spans.push(Span::styled("○ ", Style::default().fg(colors::HELP)));
+                spans.push(Span::styled("○ ", Style::default().fg(colors.help)));
             }
 
             // Arg name
             let name_style = if is_selected {
-                Style::default()
-                    .fg(colors::ARG)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(colors.arg).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(colors::ARG)
+                Style::default().fg(colors.arg)
             };
             let bracket = if arg_val.required { "<>" } else { "[]" };
             spans.push(Span::styled(
@@ -497,7 +578,7 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect) {
             ));
 
             // Value display
-            spans.push(Span::styled(" = ", Style::default().fg(colors::HELP)));
+            spans.push(Span::styled(" = ", Style::default().fg(colors.help)));
 
             if is_editing {
                 // Show edit_input text with cursor
@@ -505,13 +586,13 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect) {
                 spans.push(Span::styled(
                     edit_text,
                     Style::default()
-                        .fg(colors::VALUE)
+                        .fg(colors.value)
                         .add_modifier(Modifier::UNDERLINED),
                 ));
                 spans.push(Span::styled(
                     "▎",
                     Style::default()
-                        .fg(colors::VALUE)
+                        .fg(colors.value)
                         .add_modifier(Modifier::SLOW_BLINK),
                 ));
             } else if arg_val.value.is_empty() {
@@ -519,18 +600,18 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect) {
                     let hint = arg_val.choices.join("|");
                     spans.push(Span::styled(
                         format!("<{}>", hint),
-                        Style::default().fg(colors::CHOICE),
+                        Style::default().fg(colors.choice),
                     ));
                 } else {
                     spans.push(Span::styled(
                         "(empty)",
-                        Style::default().fg(colors::DEFAULT_VAL),
+                        Style::default().fg(colors.default_val),
                     ));
                 }
             } else {
                 spans.push(Span::styled(
                     &arg_val.value,
-                    Style::default().fg(colors::VALUE),
+                    Style::default().fg(colors.value),
                 ));
             }
 
@@ -538,7 +619,7 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect) {
             if !arg_val.choices.is_empty() && !arg_val.value.is_empty() && !is_editing {
                 spans.push(Span::styled(
                     format!(" [{}]", arg_val.choices.join("|")),
-                    Style::default().fg(colors::CHOICE),
+                    Style::default().fg(colors.choice),
                 ));
             }
 
@@ -546,9 +627,9 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect) {
             let mut item = ListItem::new(line);
             if is_selected {
                 let bg = if is_editing {
-                    colors::EDITING_BG
+                    colors.editing_bg
                 } else {
-                    colors::SELECTED_BG
+                    colors.selected_bg
                 };
                 item = item.style(Style::default().bg(bg));
             }
@@ -563,7 +644,7 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
+fn render_help_bar(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) {
     let help_text = app.current_help().unwrap_or_default();
 
     let keybinds = if app.editing {
@@ -573,13 +654,13 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         match app.focus() {
             Focus::Commands => {
-                "Enter/→: select  ↑↓: navigate  Tab: next panel  /: filter  Esc: back  q: quit"
+                "Enter/→: select  ↑↓: navigate  Tab: next  /: filter  T: theme  Esc: back  q: quit"
             }
             Focus::Flags => {
-                "Enter/Space: toggle  ↑↓: navigate  Tab: next panel  /: filter  Esc: back  q: quit"
+                "Enter/Space: toggle  ↑↓: navigate  Tab: next  /: filter  T: theme  q: quit"
             }
-            Focus::Args => "Enter: edit  ↑↓: navigate  Tab: next panel  Esc: back  q: quit",
-            Focus::Preview => "Enter: accept command  Tab: next panel  Esc: back  q: quit",
+            Focus::Args => "Enter: edit  ↑↓: navigate  Tab: next  T: theme  Esc: back  q: quit",
+            Focus::Preview => "Enter: accept  Tab: next  T: theme  Esc: back  q: quit",
         }
     };
 
@@ -591,26 +672,30 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
     // Help text for current item
     let help = Paragraph::new(Line::from(vec![
         Span::styled(" 💡 ", Style::default()),
-        Span::styled(help_text, Style::default().fg(colors::HELP).italic()),
+        Span::styled(help_text, Style::default().fg(colors.help).italic()),
     ]));
     frame.render_widget(help, layout[0]);
 
-    // Keybinding hints
-    let hints = Paragraph::new(Line::from(vec![Span::styled(
-        format!(" {keybinds}"),
-        Style::default().fg(Color::DarkGray),
-    )]))
-    .style(Style::default().bg(Color::Rgb(25, 25, 35)));
+    // Keybinding hints with theme name
+    let theme_indicator = format!(" [{}]", app.theme_name.display_name());
+    let hints = Paragraph::new(Line::from(vec![
+        Span::styled(format!(" {keybinds}"), Style::default().fg(colors.help)),
+        Span::styled(
+            theme_indicator,
+            Style::default().fg(colors.active_border).italic(),
+        ),
+    ]))
+    .style(Style::default().bg(colors.bar_bg));
     frame.render_widget(hints, layout[1]);
 }
 
 /// Render the command preview bar at the bottom.
-fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
+fn render_preview(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) {
     let is_focused = app.focus() == Focus::Preview;
     let border_color = if is_focused {
-        colors::ACTIVE_BORDER
+        colors.active_border
     } else {
-        colors::INACTIVE_BORDER
+        colors.inactive_border
     };
 
     let command = app.build_command();
@@ -624,16 +709,16 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
 
     let style = if is_focused {
         Style::default()
-            .fg(colors::PREVIEW_CMD)
+            .fg(colors.preview_cmd)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(colors::PREVIEW_CMD)
+        Style::default().fg(colors.preview_cmd)
     };
 
     let prefix = if is_focused { "▶ " } else { "$ " };
 
     let paragraph = Paragraph::new(Line::from(vec![
-        Span::styled(prefix, Style::default().fg(colors::COMMAND)),
+        Span::styled(prefix, Style::default().fg(colors.command)),
         Span::styled(command, style),
     ]))
     .block(block)
@@ -664,6 +749,7 @@ mod tests {
     use crate::app::FlagValue;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{backend::TestBackend, Terminal};
+    use ratatui_themes::ThemeName;
 
     fn sample_spec() -> usage::Spec {
         let input = include_str!("../fixtures/sample.usage.kdl");
@@ -980,6 +1066,36 @@ flag "-q --quiet" help="Quiet mode"
         insta::assert_snapshot!(output);
     }
 
+    // ── Theme-specific snapshot tests ───────────────────────────────────
+
+    #[test]
+    fn snapshot_nord_theme() {
+        let mut app = App::with_theme(sample_spec(), ThemeName::Nord);
+        let output = render_to_string(&mut app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_catppuccin_mocha_theme() {
+        let mut app = App::with_theme(sample_spec(), ThemeName::CatppuccinMocha);
+        let output = render_to_string(&mut app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_tokyo_night_theme() {
+        let mut app = App::with_theme(sample_spec(), ThemeName::TokyoNight);
+        let output = render_to_string(&mut app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_gruvbox_dark_theme() {
+        let mut app = App::with_theme(sample_spec(), ThemeName::GruvboxDark);
+        let output = render_to_string(&mut app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
     // ── Assertion-based rendering tests ─────────────────────────────────
 
     #[test]
@@ -1154,8 +1270,8 @@ flag "-q --quiet" help="Quiet mode"
         app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
 
         let output = render_to_string(&mut app, 100, 24);
-        // After toggling, should show checkmark
-        assert!(output.contains("[✓]"));
+        // After toggling, should show checkbox checked indicator
+        assert!(output.contains("☑"));
         // Preview should include --yes
         assert!(output.contains("--yes"));
     }
@@ -1167,5 +1283,74 @@ flag "-q --quiet" help="Quiet mode"
         // Should still render without panicking
         assert!(output.contains("mycli"));
         assert!(output.contains("Commands"));
+    }
+
+    // ── Theme cycling tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_theme_cycling() {
+        let mut app = App::new(sample_spec());
+        assert_eq!(app.theme_name, ThemeName::Dracula);
+
+        app.next_theme();
+        assert_eq!(app.theme_name, ThemeName::OneDarkPro);
+
+        app.next_theme();
+        assert_eq!(app.theme_name, ThemeName::Nord);
+
+        app.prev_theme();
+        assert_eq!(app.theme_name, ThemeName::OneDarkPro);
+    }
+
+    #[test]
+    fn test_theme_key_binding() {
+        let mut app = App::new(sample_spec());
+        assert_eq!(app.theme_name, ThemeName::Dracula);
+
+        // Shift+T cycles the theme
+        let key = KeyEvent::new(KeyCode::Char('T'), KeyModifiers::NONE);
+        app.handle_key(key);
+        assert_eq!(app.theme_name, ThemeName::OneDarkPro);
+    }
+
+    #[test]
+    fn test_theme_name_displayed_in_status_bar() {
+        let mut app = App::new(sample_spec());
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(output.contains("Dracula"));
+    }
+
+    #[test]
+    fn test_with_theme_constructor() {
+        let app = App::with_theme(sample_spec(), ThemeName::Nord);
+        assert_eq!(app.theme_name, ThemeName::Nord);
+        assert_eq!(app.palette().accent, ThemeName::Nord.palette().accent);
+    }
+
+    // ── Breadcrumb widget tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_breadcrumb_shows_binary_name() {
+        let mut app = App::new(sample_spec());
+        let output = render_to_string(&mut app, 100, 24);
+        // The breadcrumb should display the binary name
+        assert!(output.contains("mycli"));
+    }
+
+    #[test]
+    fn test_breadcrumb_shows_path() {
+        let mut app = App::new(sample_spec());
+        let subs = app.visible_subcommands();
+        let idx = subs
+            .iter()
+            .position(|(n, _)| n.as_str() == "config")
+            .unwrap();
+        app.set_command_index(idx);
+        app.navigate_into_selected();
+
+        let output = render_to_string(&mut app, 100, 24);
+        // Should show both mycli and config in the breadcrumb
+        assert!(output.contains("mycli"));
+        assert!(output.contains("config"));
     }
 }
