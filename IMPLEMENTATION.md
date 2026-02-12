@@ -1,0 +1,222 @@
+# Implementation
+
+This document describes how TuiSage is built — its architecture, code structure, key design decisions, and current development state. It complements the behavioral specification in SPECIFICATION.md with concrete implementation details.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│                   main.rs                       │
+│  - CLI arg parsing (file path or stdin)         │
+│  - Parse usage spec via usage-lib               │
+│  - Terminal setup (ratatui + mouse capture)      │
+│  - Event loop (key, mouse, resize)              │
+│  - Terminal teardown and command output          │
+└─────────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────┐
+│                   app.rs                        │
+│  - App struct (holds Spec + all runtime state)  │
+│  - Command path navigation (Vec<String>)        │
+│  - Flag/arg value storage (HashMaps)            │
+│  - Focus management (via ratatui-interact)      │
+│  - Key event handling → Action dispatch         │
+│  - Mouse event handling → Action dispatch       │
+│  - Command string builder                       │
+│  - Fuzzy matching                               │
+└─────────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────┐
+│                   ui.rs                         │
+│  - Layout computation (breadcrumb, panels,      │
+│    preview, help bar)                           │
+│  - Semantic color derivation from theme palette │
+│  - Component rendering (commands, flags, args)  │
+│  - Command preview colorization                 │
+│  - Click region registration                    │
+└─────────────────────────────────────────────────┘
+```
+
+## Source Files
+
+### `src/main.rs`
+
+The entry point. Responsibilities:
+
+- Parse CLI arguments to determine the spec source (file path, stdin, or piped input).
+- Use `usage::Spec::parse_file()` or `String::parse::<usage::Spec>()` to load the spec.
+- Enable mouse capture via `crossterm::event::EnableMouseCapture`.
+- Initialize the ratatui `DefaultTerminal`.
+- Run the event loop (`run_event_loop`), which draws frames and dispatches events.
+- On exit, restore the terminal, disable mouse capture, and optionally print the accepted command to stdout.
+
+The event loop is intentionally thin — it reads crossterm events and delegates to `app.handle_key()` or `app.handle_mouse()`, which return an `Action` enum (`None`, `Quit`, or `Accept`).
+
+### `src/app.rs`
+
+The core state and logic module (~2050 lines including ~960 lines of tests).
+
+#### Key Types
+
+- **`Action`** — return value from event handlers: `None`, `Quit`, `Accept`.
+- **`Focus`** — enum of focusable panels: `Commands`, `Flags`, `Args`, `Preview`.
+- **`FlagValue`** — discriminated union: `Bool(bool)`, `String(String)`, `Count(u32)`.
+- **`ArgValue`** — struct with `name`, `value`, `required`, `choices` fields.
+- **`App`** — the main application state struct.
+
+#### `App` Struct Fields
+
+| Field | Type | Purpose |
+|---|---|---|
+| `spec` | `usage::Spec` | The parsed usage specification |
+| `theme_name` | `String` | Current color theme name |
+| `command_path` | `Vec<String>` | Current position in the command tree |
+| `flag_values` | `HashMap<String, HashMap<String, FlagValue>>` | Flag state keyed by command path |
+| `arg_values` | `HashMap<String, Vec<ArgValue>>` | Arg state keyed by command path |
+| `focus_manager` | `FocusManager<Focus>` | Focus cycling logic (from ratatui-interact) |
+| `editing` | `bool` | Whether a text input is currently active |
+| `filter_input` | `InputState` | State for the fuzzy filter text input |
+| `filtering` | `bool` | Whether filter mode is active |
+| `command_list_state` | `ListPickerState` | Selection + scroll state for commands |
+| `flag_list_state` | `ListPickerState` | Selection + scroll state for flags |
+| `arg_list_state` | `ListPickerState` | Selection + scroll state for args |
+| `edit_input` | `InputState` | State for the value editing text input |
+| `click_regions` | `Vec<(Rect, Focus)>` | Registered click targets for mouse mapping |
+
+#### Key Methods
+
+- **`current_command()`** — resolves the `command_path` to the current `SpecCommand` in the spec tree.
+- **`visible_subcommands()`** — returns subcommands at the current level, filtered if filter mode is active.
+- **`visible_flags()`** — returns flags for the current command plus inherited global flags, filtered if active.
+- **`sync_state()`** — initializes or restores flag/arg values when navigating to a new command. Handles defaults.
+- **`handle_key()`** — top-level key dispatcher. Routes to `handle_editing_key()`, `handle_filter_key()`, or direct navigation/action based on current mode.
+- **`handle_mouse()`** — maps mouse events to panel focus, item selection, scroll, and activation. Finishes any active edit before switching targets.
+- **`build_command()`** — assembles the complete command string from the current state.
+- **`fuzzy_match()`** — standalone function for case-insensitive subsequence matching.
+- **`navigate_into_selected()`** / **`navigate_up()`** — push/pop the command path and re-sync state.
+- **`ensure_visible()`** — adjusts scroll offset so the selected item is within the visible viewport.
+
+#### State Synchronization Flow
+
+When `sync_state()` is called (on navigation):
+
+1. Look up the current command in the spec.
+2. For each flag: if a stored value exists, preserve it; otherwise initialize from the flag's default (or `false`/empty/`0`).
+3. For each argument: if a stored value exists, preserve it; otherwise initialize with an empty value and metadata.
+4. Reset list indices to 0 and scroll offsets to 0.
+5. Rebuild the focus manager, skipping panels that have no items.
+
+### `src/ui.rs`
+
+The rendering module (~1955 lines including ~1065 lines of tests).
+
+#### `UiColors` Struct
+
+A semantic color palette derived from the active `ThemePalette`. Maps abstract roles (command, flag, arg, value, active border, etc.) to concrete `Color` values. Constructed via `UiColors::from_palette()`.
+
+#### Rendering Functions
+
+- **`render()`** — top-level entry point called by the event loop. Computes layout, derives colors, and delegates to sub-renderers.
+- **`render_breadcrumb()`** — renders the navigation breadcrumb using `ratatui-interact`'s `Breadcrumb` widget.
+- **`render_main_content()`** — splits the middle area into up to 3 columns (commands, flags, args). Hides panels with no content and redistributes space.
+- **`render_command_list()`** — renders the subcommand list with selection caret, aliases, help text, and filter bar.
+- **`render_flag_list()`** — renders flags with checkbox indicators (✓/○), values, defaults, global tags, and count badges.
+- **`render_arg_list()`** — renders arguments with required indicators, current values, choices, and inline editing.
+- **`render_preview()`** — renders the colorized command preview with `▶ RUN` or `$` prefix based on focus.
+- **`render_help_bar()`** — renders contextual help and key hints at the bottom.
+- **`colorize_command()`** — parses the built command string and applies per-token coloring.
+- **`flag_display_string()`** — formats a single flag's display text for the list.
+
+#### Click Region Registration
+
+During rendering, each panel's `Rect` is stored in `app.click_regions` as a `(Rect, Focus)` tuple. The mouse handler uses these to determine which panel was clicked and translates the click coordinates to an item index.
+
+## Dependencies
+
+| Crate | Version | Purpose | Notes |
+|---|---|---|---|
+| `usage-lib` | 2.16 | Parse `.usage.kdl` specs | `default-features = false` (skip docs/tera/roff) |
+| `ratatui` | 0.30 | TUI framework | Provides `Frame`, `Terminal`, widgets, layout |
+| `crossterm` | 0.29 | Terminal backend + events | `event-stream` feature enabled |
+| `ratatui-interact` | 0.4 | UI components | `Breadcrumb`, `Input`, `FocusManager`, `ListPickerState` |
+| `ratatui-themes` | 0.1 | Color theming | Provides `ThemePalette` with named themes |
+| `color-eyre` | 0.6 | Error reporting | Pretty error messages with backtraces |
+| `insta` | 1 | Snapshot testing (dev) | Full terminal output comparison |
+| `pretty_assertions` | 1 | Test diffs (dev) | Better assertion failure output |
+
+### Why `usage-lib` With No Default Features
+
+The `usage-lib` crate includes optional features for generating documentation, man pages (roff), and templates (tera). TuiSage only needs spec parsing, so these are disabled to minimize compile time and binary size.
+
+## Test Infrastructure
+
+### Test Count
+
+94 tests total:
+- **42 tests** in `app.rs` — state logic, command building, navigation, key handling, mouse handling, filtering, editing
+- **52 tests** in `ui.rs` — 19 snapshot tests + 33 assertion-based rendering tests
+
+### Test Fixtures
+
+The primary test fixture is `fixtures/sample.usage.kdl`, which covers:
+
+- Nested subcommands (2–3 levels deep: `plugin > install/remove`)
+- Boolean flags (`--force`, `--verbose`, `--rollback`)
+- Flags with values (`--tag <tag>`, `--output <file>`)
+- Required and optional positional arguments
+- Flags with choices (`environment: dev|staging|prod`)
+- Global flags (`--verbose`, `--quiet`)
+- Aliases (`set`/`add`, `list`/`ls`, `remove`/`rm`)
+- Count flags (`--verbose` with `count=true`)
+
+Tests construct specs inline via `usage::Spec::parse_file()` on the fixture or by parsing spec strings directly.
+
+### Snapshot Testing
+
+Snapshot tests use `insta` to capture the full terminal output of a rendered frame at a fixed size (typically 80×24 or 60×20). This catches unintended visual regressions.
+
+Snapshots are stored in `src/snapshots/` and should be reviewed with `cargo insta review` when they change.
+
+Snapshot tests cover: root view, subcommand views, flag toggling, argument editing, filter mode, preview focus, deep navigation, theme variations, and edge cases (no subcommands, narrow terminal).
+
+## Key Design Decisions
+
+| Decision | Rationale |
+|---|---|
+| Single-file modules (`app.rs`, `ui.rs`) | Keeps things simple while the codebase is small. Split when complexity warrants it. |
+| `Vec<String>` for command path | Simple push/pop navigation through the command tree. Joined with `>` for hash map keys. |
+| State preserved across navigation | Flag/arg values are stored per command-path key, so navigating away and back retains previous selections. |
+| Rendering to stderr, output to stdout | Enables composability: `eval "$(tuisage spec.kdl)"` works because TUI output doesn't mix with the command string. |
+| Crossterm backend | Best cross-platform terminal support (macOS, Linux, Windows). |
+| Theme palette mapping | Instead of hardcoding colors, derive semantic colors from the active theme. This makes all themes work automatically. |
+| `ListPickerState` from ratatui-interact | Provides selection index + scroll offset tracking in one struct, avoiding manual state management. |
+| `FocusManager` from ratatui-interact | Handles Tab/Shift-Tab cycling with dynamic panel availability, reducing boilerplate. |
+| Finishing edits on focus change | Prevents a class of bugs where the edit input text leaks into the wrong field when clicking elsewhere. |
+
+## Development Status
+
+### Completed
+
+- Project setup and spec parsing
+- Core app state: navigation, flag values, arg values, command building
+- Full TUI rendering: breadcrumb, 3-panel layout, preview, help bar
+- Keyboard navigation: vim keys, Tab cycling, Enter/Space/Backspace actions
+- Fuzzy filtering for commands and flags
+- Mouse support: click, scroll, right-click, click-to-activate
+- Visual polish: theming, scrolling, default indicators, accessible symbols
+- Stdin support for piped specs
+- Comprehensive test suite (94 tests)
+- Zero clippy warnings
+
+### Remaining Work
+
+- **TreeView display** — use `ratatui-interact`'s `TreeView` for the command hierarchy instead of a flat list
+- **Improved fuzzy matching** — integrate `nucleo-matcher` for scored/ranked results (fzf-style)
+- **Inline aliases** — show command aliases with dimmed styling in the command list
+- **Clipboard copy** — copy the built command to the system clipboard from within the TUI
+- **Direct execution** — optionally execute the built command instead of just printing it
+- **Embedded USAGE blocks** — verify and test support for script files with heredoc USAGE blocks
+- **Module splitting** — break `app.rs` into `state`, `input`, `builder` sub-modules; break `ui.rs` into widget modules
+- **CI pipeline** — GitHub Actions for `cargo test`, `cargo clippy`, and `insta` snapshot checks

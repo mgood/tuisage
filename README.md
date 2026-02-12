@@ -14,6 +14,7 @@ Point TuiSage at a `.usage.kdl` file and it presents an interactive interface fo
 - **Mouse support** — click to select, scroll wheel to navigate, click-to-activate
 - **Scrolling** — long lists scroll automatically to keep the selection visible
 - **Default indicators** — flags with default values are clearly marked
+- **Color themes** — multiple built-in themes, switchable at runtime with `[` and `]`
 - **Stdin support** — pipe a usage spec directly into TuiSage
 
 ## Installation
@@ -77,6 +78,7 @@ eval "$(tuisage spec.kdl)"
 | `Backspace` | Decrement count flag (floor at 0) |
 | `/` | Start fuzzy filter (works in Commands and Flags panels) |
 | `Esc` | Cancel filter / stop editing / go back / quit |
+| `]` / `[` | Next / previous color theme |
 | `q` | Quit |
 | `Ctrl-C` | Quit |
 
@@ -120,15 +122,6 @@ cmd "deploy" help="Deploy the app" {
 
 See `fixtures/sample.usage.kdl` for a more comprehensive example.
 
-## Architecture
-
-```
-src/
-├── main.rs   CLI entry point, terminal setup, event loop
-├── app.rs    App state, navigation, key/mouse handling, command builder
-└── ui.rs     ratatui rendering (commands, flags, args, preview, help bar)
-```
-
 ## Testing
 
 ```sh
@@ -142,10 +135,15 @@ cargo insta review
 cargo insta test --accept
 ```
 
-Tests include:
-- **Unit tests** — app state logic, command building, fuzzy matching
-- **Rendering tests** — assertion-based checks for specific UI elements
-- **Snapshot tests** — full terminal output captured via `insta`
+## Documentation
+
+| Document | Purpose |
+|---|---|
+| **README.md** | User guide (this file) |
+| **REQUIREMENTS.md** | High-level goals, features, and user stories |
+| **SPECIFICATION.md** | Detailed behavioral specification (UI, interactions, data flow) |
+| **IMPLEMENTATION.md** | Architecture, code structure, and development state |
+| **AGENTS.md** | Development guidelines for contributors and AI agents |
 
 ## Dependencies
 
@@ -154,6 +152,8 @@ Tests include:
 | [usage-lib](https://crates.io/crates/usage-lib) | Parse usage specs (KDL format) |
 | [ratatui](https://crates.io/crates/ratatui) | TUI framework |
 | [crossterm](https://crates.io/crates/crossterm) | Terminal backend & events |
+| [ratatui-interact](https://crates.io/crates/ratatui-interact) | UI components (breadcrumb, input, focus management) |
+| [ratatui-themes](https://crates.io/crates/ratatui-themes) | Color theming |
 | [color-eyre](https://crates.io/crates/color-eyre) | Error reporting |
 | [insta](https://crates.io/crates/insta) | Snapshot testing (dev) |
 

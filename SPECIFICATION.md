@@ -1,0 +1,316 @@
+# Specification
+
+This document defines the detailed behavior of TuiSage — how features work, how the UI is structured, and how user interactions are handled. It bridges the high-level goals in REQUIREMENTS.md and the implementation details in IMPLEMENTATION.md.
+
+## Input Handling
+
+### CLI Arguments
+
+TuiSage accepts a single positional argument specifying the source of the usage spec:
+
+| Invocation | Behavior |
+|---|---|
+| `tuisage <path>` | Parse the file at `<path>` as a usage spec (`.usage.kdl` or a script with embedded `USAGE` block) |
+| `tuisage -` | Read the usage spec from stdin (explicit) |
+| `tuisage` (stdin piped) | Detect non-TTY stdin and read the spec from it |
+| `tuisage` (no stdin) | Print usage help to stderr and exit with code 1 |
+
+Parsing errors produce a descriptive error message via `color-eyre` and exit non-zero.
+
+### Spec Parsing
+
+The usage spec is parsed via `usage-lib` into a `Spec` struct that provides:
+
+- Binary name
+- Top-level flags and arguments
+- A tree of subcommands, each with their own flags and arguments
+- Flag metadata: long/short names, whether they take values, choices, defaults, aliases, count mode
+- Argument metadata: name, required/optional, choices
+
+## UI Layout
+
+The terminal is divided into the following regions, rendered top-to-bottom:
+
+```
+┌──────────────────────────────────────────────────┐
+│ Breadcrumb Bar                                   │
+├─────────────────┬────────────────┬───────────────┤
+│                 │                │               │
+│   Commands      │     Flags      │   Arguments   │
+│   Panel         │     Panel      │   Panel       │
+│                 │                │               │
+├─────────────────┴────────────────┴───────────────┤
+│ Command Preview                                  │
+├──────────────────────────────────────────────────┤
+│ Help / Status Bar                                │
+└──────────────────────────────────────────────────┘
+```
+
+### Breadcrumb Bar
+
+- Displays the current navigation path through the command tree.
+- Format: `binary > subcommand > nested-subcommand`
+- Always shows at least the binary name from the spec.
+- Uses the `Breadcrumb` component from `ratatui-interact`.
+
+### Commands Panel
+
+- Lists the subcommands available at the current navigation level.
+- Each item shows the command name and its `help` text (if available).
+- Aliases are shown alongside the command name (e.g., `remove (rm)`).
+- When filtering is active, only matching commands are shown with a count indicator.
+- The panel title shows position when focused (e.g., `Commands [2/5]`) or total count when unfocused (e.g., `Commands (5)`).
+- If there are no subcommands at the current level, this panel is hidden and the Flags panel takes its space.
+
+### Flags Panel
+
+- Lists all flags available for the currently selected command, including global (inherited) flags.
+- Each flag shows:
+  - A checkbox indicator: `✓` (enabled) or `○` (disabled) for boolean flags
+  - The flag name (long form preferred, short form shown alongside)
+  - Current value for value-bearing flags
+  - `(default: X)` indicator when a default value exists
+  - `[global]` indicator for inherited flags
+  - Count value for count flags (e.g., `(×3)`)
+- Flags with choices show the current selection.
+
+### Arguments Panel
+
+- Lists positional arguments for the currently selected command.
+- Each argument shows:
+  - The argument name
+  - `(required)` indicator for required arguments
+  - Current value or placeholder
+  - Available choices if defined
+- When editing, the argument field becomes an active text input.
+
+### Command Preview
+
+- Shows the fully assembled command string as it would be output.
+- Updates in real time as the user toggles flags, fills values, and navigates.
+- When focused: displays a `▶ RUN` indicator to signal that Enter will accept the command.
+- When unfocused: displays a `$` prompt prefix.
+- The command is colorized: binary name, subcommands, flags, and values each get distinct colors.
+
+### Help / Status Bar
+
+- Shows contextual help text for the currently hovered item.
+- Displays available keyboard shortcuts.
+- Shows the current theme name.
+
+## Focus System
+
+The UI has four focusable panels, cycled with Tab/Shift-Tab:
+
+1. **Commands** — subcommand list
+2. **Flags** — flag list
+3. **Args** — argument list
+4. **Preview** — command preview
+
+Focus determines which panel receives keyboard input. The focused panel has an active border style; unfocused panels have a dimmer border.
+
+Focus is managed via `ratatui-interact`'s `FocusManager`. The focus order is rebuilt when navigating to a new command (panels with no items are skipped).
+
+### Focus Rules
+
+- If a command has no subcommands, the Commands panel is skipped in the focus order.
+- If a command has no flags, the Flags panel is skipped.
+- If a command has no arguments, the Args panel is skipped.
+- Preview is always focusable.
+- On navigation (entering/leaving a subcommand), focus resets to the first available panel.
+
+## State Management
+
+### Command Path
+
+The current position in the command tree is tracked as a `Vec<String>` of subcommand names. Navigating into a subcommand pushes to this vector; navigating up pops from it. An empty vector means the user is at the root level.
+
+### Flag Values
+
+Flag values are stored in a `HashMap` keyed by a command-path string (e.g., `"deploy"` or `"plugin>install"`). Each command's flags are stored as a `HashMap<String, FlagValue>` where:
+
+- `FlagValue::Bool(bool)` — for boolean/toggle flags
+- `FlagValue::String(String)` — for flags that take a value
+- `FlagValue::Count(u32)` — for count flags (e.g., `-vvv`)
+
+### Argument Values
+
+Argument values are stored in a `Vec<ArgValue>` per command path, preserving positional order. Each `ArgValue` contains:
+
+- `name` — argument name
+- `value` — current value (empty string if unset)
+- `required` — whether the argument is required
+- `choices` — available choices (empty vec if free-text)
+
+### State Synchronization
+
+When the user navigates to a new command, the state is synchronized:
+
+- Flag values are initialized from defaults (or preserved if previously set).
+- Argument values are initialized (or preserved if previously set).
+- List indices are reset to 0.
+- Scroll offsets are reset.
+- The focus manager is rebuilt based on available panels.
+
+## Keyboard Interactions
+
+### Global Keys
+
+| Key | Action |
+|---|---|
+| `Ctrl-C` | Quit immediately (no output) |
+| `q` | Quit (when not editing or filtering) |
+| `Esc` | Context-dependent: cancel filter → cancel edit → navigate up → quit |
+
+### Navigation Keys
+
+| Key | Action |
+|---|---|
+| `↑` / `k` | Move selection up in the focused panel |
+| `↓` / `j` | Move selection down in the focused panel |
+| `←` / `h` | Navigate up (pop command path) |
+| `→` / `l` | Navigate into the selected subcommand |
+| `Tab` | Cycle focus to the next panel |
+| `Shift-Tab` | Cycle focus to the previous panel |
+
+### Action Keys
+
+| Key | Context | Action |
+|---|---|---|
+| `Enter` | Commands panel | Navigate into the selected subcommand |
+| `Enter` | Flags panel (boolean) | Toggle the flag |
+| `Enter` | Flags panel (value) | Start editing the flag value |
+| `Enter` | Flags panel (choices) | Cycle to the next choice |
+| `Enter` | Args panel | Start editing the argument / cycle choice |
+| `Enter` | Preview panel | Accept command: print to stdout and exit |
+| `Space` | Flags panel (boolean) | Toggle the flag |
+| `Space` | Flags panel (count) | Increment the count |
+| `Backspace` | Flags panel (count) | Decrement the count (floor at 0) |
+| `/` | Commands or Flags panel | Activate fuzzy filter mode |
+
+### Editing Mode Keys
+
+When editing a text value (flag value or argument):
+
+| Key | Action |
+|---|---|
+| Any character | Append to the input |
+| `Backspace` | Delete the last character |
+| `Enter` | Confirm the value and exit editing mode |
+| `Esc` | Cancel editing and exit editing mode |
+
+### Filter Mode Keys
+
+When the fuzzy filter is active:
+
+| Key | Action |
+|---|---|
+| Any character | Append to the filter query |
+| `Backspace` | Delete the last character from the query |
+| `Esc` | Clear the filter and exit filter mode |
+| `↑` / `↓` | Navigate within filtered results |
+| `Enter` | Select the highlighted result and exit filter mode |
+| `Tab` | Switch focus to the other panel and clear the filter |
+
+### Theme Keys
+
+| Key | Action |
+|---|---|
+| `]` | Switch to the next theme |
+| `[` | Switch to the previous theme |
+
+## Mouse Interactions
+
+Mouse support is enabled via crossterm's `EnableMouseCapture`.
+
+| Action | Effect |
+|---|---|
+| Left click on a panel | Focus that panel and select the clicked item |
+| Left click on an already-selected item | Activate it (same as Enter) |
+| Right click on a command | Navigate into that subcommand |
+| Scroll wheel up | Move selection up in the panel under the cursor |
+| Scroll wheel down | Move selection down in the panel under the cursor |
+
+### Click Region Tracking
+
+The UI registers click regions during rendering so that mouse coordinates can be mapped back to the correct panel and item index. Regions are stored as `(Rect, Focus)` tuples and cleared/rebuilt on each render.
+
+### Edit Finishing on Mouse
+
+If the user is currently editing a value and clicks on a different item or panel, the edit is finished (committed) before processing the new click. This prevents the edit input text from "bleeding" into a different field.
+
+## Fuzzy Filtering
+
+Filtering uses a subsequence-matching algorithm:
+
+1. The user presses `/` to activate filter mode in the Commands or Flags panel.
+2. A filter input bar appears at the top of the panel.
+3. As the user types, items are filtered to those whose names contain the typed characters as a subsequence (case-insensitive).
+4. The panel title updates to show filtered count vs. total (e.g., `Commands [1/5 filtered]`).
+5. Navigation keys (`↑`/`↓`, `Enter`) operate on the filtered list.
+6. `Esc` clears the filter and returns to the full list.
+7. `Tab` during filtering switches focus to the other panel and clears the filter.
+
+## Command Building
+
+The `build_command()` method assembles the final command string:
+
+1. Start with the binary name from the spec.
+2. Append each subcommand in the current command path.
+3. Append all active flags for the current command and its ancestors:
+   - Boolean flags: `--flag-name`
+   - Value flags: `--flag-name value` (or `--flag-name=value` for certain formats)
+   - Count flags: repeated short flag (e.g., `-vvv` for count 3)
+   - Flags with choices: `--flag-name selected-choice`
+4. Append all non-empty argument values in positional order.
+5. Include flags from parent commands (global flags) if they have been set.
+
+### Flag Formatting Rules
+
+- Long flags are preferred (`--verbose` over `-v`) except for count flags which use the short form repeated.
+- Flags with both long and short forms use the long form in the output.
+- Boolean flags that are `false` (off) are omitted.
+- Count flags with count 0 are omitted.
+- String flags with empty values are omitted.
+
+## Scrolling
+
+When a list is longer than the visible area, scrolling is handled automatically:
+
+- The selected item is always kept visible within the viewport.
+- `ensure_visible()` adjusts the scroll offset so the selected index is within the visible range.
+- Scroll state is tracked per panel (`command_scroll`, `flag_scroll`, `arg_scroll`).
+- Scroll offsets reset to 0 when navigating to a new command.
+
+## Theming
+
+TuiSage uses `ratatui-themes` for color theming. The theme provides a `ThemePalette` from which semantic UI colors are derived:
+
+| UI Element | Palette Mapping |
+|---|---|
+| Command names | `palette.blue` |
+| Flag names | `palette.yellow` |
+| Argument names | `palette.green` |
+| Values | `palette.cyan` |
+| Required indicators | `palette.red` |
+| Help text | `palette.overlay0` or dim |
+| Active border | `palette.blue` |
+| Inactive border | `palette.surface1` |
+| Selection background | `palette.surface1` |
+| Editing background | `palette.surface2` |
+| Filter text | `palette.mauve` |
+| Choice indicators | `palette.peach` |
+| Default value text | `palette.overlay0` |
+| Count indicators | `palette.peach` |
+
+Themes can be cycled at runtime with `]` and `[` keys. The current theme name is displayed in the status bar.
+
+## Terminal Lifecycle
+
+1. **Startup**: Parse CLI args → load spec → enable mouse capture → initialize ratatui terminal → create `App` state.
+2. **Event loop**: Draw frame → wait for event → handle key/mouse/resize → repeat.
+3. **Accept**: User presses Enter on preview → restore terminal → disable mouse capture → print command to stdout → exit 0.
+4. **Quit**: User presses `q`/`Ctrl-C`/`Esc` at root → restore terminal → disable mouse capture → exit 0 (no output).
+5. **Error**: Parsing or terminal errors → `color-eyre` reports the error → exit non-zero.
+
+Output goes to **stdout** for composability. All TUI rendering uses **stderr** so it doesn't interfere with piped output.
