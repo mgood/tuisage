@@ -1,4 +1,4 @@
-use nucleo_matcher::pattern::{Atom, AtomKind, CaseMatching};
+use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
 use ratatui::layout::Rect;
 use ratatui_interact::components::{InputState, ListPickerState, TreeNode, TreeViewState};
@@ -1487,50 +1487,43 @@ fn parent_id(id: &str) -> Option<String> {
     }
 }
 
-/// Simple fuzzy matching: checks if all characters in the pattern appear in order in the text.
-/// Fuzzy match using nucleo-matcher, returns score (0 if no match).
+/// Fuzzy match using nucleo-matcher Pattern, returns score (0 if no match).
+/// Uses Pattern instead of Atom to properly handle multi-word patterns and special characters.
 pub fn fuzzy_match_score(text: &str, pattern: &str, matcher: &mut Matcher) -> u32 {
-    use nucleo_matcher::pattern::Normalization;
     use nucleo_matcher::Utf32Str;
 
-    let atom = Atom::new(
-        pattern,
-        CaseMatching::Smart,
-        Normalization::Smart,
-        AtomKind::Fuzzy,
-        false, // append_dollar
-    );
+    let pattern = Pattern::parse(pattern, CaseMatching::Smart, Normalization::Smart);
 
     // Convert text to UTF-32 for matching
     let mut haystack_buf = Vec::new();
     let haystack = Utf32Str::new(text, &mut haystack_buf);
 
-    atom.score(haystack, matcher)
-        .map(|score| score as u32)
-        .unwrap_or(0)
+    pattern.score(haystack, matcher).unwrap_or(0)
 }
 
 /// Fuzzy match and return both score and match indices.
-/// Returns (score, Vec<byte_indices>) where indices are the positions of matched characters.
-pub fn fuzzy_match_indices(text: &str, pattern: &str, matcher: &mut Matcher) -> (u32, Vec<u32>) {
-    use nucleo_matcher::pattern::Normalization;
+/// Returns (score, Vec<char_indices>) where indices are the positions of matched characters.
+/// Uses Pattern instead of Atom to properly handle multi-word patterns and special characters.
+/// Indices are sorted and deduplicated as recommended by nucleo-matcher documentation.
+pub fn fuzzy_match_indices(
+    text: &str,
+    pattern_str: &str,
+    matcher: &mut Matcher,
+) -> (u32, Vec<u32>) {
     use nucleo_matcher::Utf32Str;
 
-    let atom = Atom::new(
-        pattern,
-        CaseMatching::Smart,
-        Normalization::Smart,
-        AtomKind::Fuzzy,
-        false, // append_dollar
-    );
+    let pattern = Pattern::parse(pattern_str, CaseMatching::Smart, Normalization::Smart);
 
     // Convert text to UTF-32 for matching
     let mut haystack_buf = Vec::new();
     let haystack = Utf32Str::new(text, &mut haystack_buf);
 
     let mut indices = Vec::new();
-    if let Some(score) = atom.indices(haystack, matcher, &mut indices) {
-        (score as u32, indices)
+    if let Some(score) = pattern.indices(haystack, matcher, &mut indices) {
+        // Sort and deduplicate indices as recommended by nucleo-matcher docs
+        indices.sort_unstable();
+        indices.dedup();
+        (score, indices)
     } else {
         (0, Vec::new())
     }
