@@ -201,9 +201,12 @@ fn render_breadcrumb(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors
 
 /// Render the main content area with panels for commands, flags, and args.
 fn render_main_content(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
-    let has_commands = !app.visible_subcommands().is_empty();
+    // Commands tree should always be visible (shows entire tree, not just subcommands)
+    let has_commands = !app.command_tree_nodes.is_empty();
     let has_flags = !app.visible_flags().is_empty();
-    let has_args = !app.arg_values.is_empty();
+    // Args should be visible if the current command defines any args
+    let cmd = app.current_command();
+    let has_args = cmd.args.iter().any(|a| !a.hide);
 
     // Decide layout based on what's available
     match (has_commands, has_flags || has_args) {

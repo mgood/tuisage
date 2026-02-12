@@ -248,6 +248,7 @@ impl App {
 
     /// Returns the visible (non-hidden) subcommands of the current command,
     /// optionally filtered by the current filter string when focus is Commands.
+    #[cfg(test)]
     pub fn visible_subcommands(&self) -> Vec<(&String, &SpecCommand)> {
         let cmd = self.current_command();
         let items: Vec<(&String, &SpecCommand)> =
