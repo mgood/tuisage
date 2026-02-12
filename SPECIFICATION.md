@@ -70,12 +70,14 @@ The terminal is divided into the following regions, rendered top-to-bottom:
 
 ### Commands Panel
 
-- Lists the subcommands available at the current navigation level.
-- Each item shows the command name and its `help` text (if available).
+- Displays the full command hierarchy as an expandable/collapsible tree view using `ratatui-interact`'s `TreeView` component.
+- Each node shows the command name and its `help` text (if available).
 - Aliases are shown alongside the command name (e.g., `remove (rm)`).
-- When filtering is active, only matching commands are shown with a count indicator.
-- The panel title shows position when focused (e.g., `Commands [2/5]`) or total count when unfocused (e.g., `Commands (5)`).
-- If there are no subcommands at the current level, this panel is hidden and the Flags panel takes its space.
+- Tree nodes can be expanded (→) or collapsed (←) to show/hide subcommands.
+- The selected command in the tree determines which flags and arguments are displayed in the other panels.
+- When filtering is active, only matching commands are shown with a count indicator, but the tree structure is preserved.
+- The panel title shows position when focused (e.g., `Commands [2/15]`) or total count when unfocused (e.g., `Commands (15)`).
+- The root command (binary name) is always visible at the top of the tree.
 
 ### Flags Panel
 
@@ -136,9 +138,15 @@ Focus is managed via `ratatui-interact`'s `FocusManager`. The focus order is reb
 
 ## State Management
 
-### Command Path
+### Command Selection
 
-The current position in the command tree is tracked as a `Vec<String>` of subcommand names. Navigating into a subcommand pushes to this vector; navigating up pops from it. An empty vector means the user is at the root level.
+The currently selected command in the tree view determines which flags and arguments are displayed. The tree view maintains its own state for:
+
+- Which node is currently selected (cursor position)
+- Which nodes are expanded (showing their children)
+- Scroll offset for long trees
+
+The selected command's full path (e.g., `["config", "set"]`) is computed from the tree structure to look up flag and argument values.
 
 ### Flag Values
 
@@ -183,8 +191,8 @@ When the user navigates to a new command, the state is synchronized:
 |---|---|
 | `↑` / `k` | Move selection up in the focused panel |
 | `↓` / `j` | Move selection down in the focused panel |
-| `←` / `h` | Navigate up (pop command path) |
-| `→` / `l` | Navigate into the selected subcommand |
+| `←` / `h` | Collapse the selected tree node (or move to parent if already collapsed) |
+| `→` / `l` | Expand the selected tree node (or move to first child if already expanded) |
 | `Tab` | Cycle focus to the next panel |
 | `Shift-Tab` | Cycle focus to the previous panel |
 
@@ -192,7 +200,7 @@ When the user navigates to a new command, the state is synchronized:
 
 | Key | Context | Action |
 |---|---|---|
-| `Enter` | Commands panel | Navigate into the selected subcommand |
+| `Enter` | Commands panel | Toggle expand/collapse of the selected tree node |
 | `Enter` | Flags panel (boolean) | Toggle the flag |
 | `Enter` | Flags panel (value) | Start editing the flag value |
 | `Enter` | Flags panel (choices) | Cycle to the next choice |
@@ -241,8 +249,8 @@ Mouse support is enabled via crossterm's `EnableMouseCapture`.
 | Action | Effect |
 |---|---|
 | Left click on a panel | Focus that panel and select the clicked item |
-| Left click on an already-selected item | Activate it (same as Enter) |
-| Right click on a command | Navigate into that subcommand |
+| Left click on an already-selected item | Activate it (toggle expand/collapse for tree nodes, same as Enter) |
+| Right click on a command | Expand the tree node |
 | Scroll wheel up | Move selection up in the panel under the cursor |
 | Scroll wheel down | Move selection down in the panel under the cursor |
 
@@ -261,10 +269,11 @@ Filtering uses a subsequence-matching algorithm:
 1. The user presses `/` to activate filter mode in the Commands or Flags panel.
 2. A filter input bar appears at the top of the panel.
 3. As the user types, items are filtered to those whose names contain the typed characters as a subsequence (case-insensitive).
-4. The panel title updates to show filtered count vs. total (e.g., `Commands [1/5 filtered]`).
-5. Navigation keys (`↑`/`↓`, `Enter`) operate on the filtered list.
-6. `Esc` clears the filter and returns to the full list.
-7. `Tab` during filtering switches focus to the other panel and clears the filter.
+4. In the Commands panel, the tree structure is preserved but only matching nodes (and their ancestors) are shown.
+5. The panel title updates to show filtered count vs. total (e.g., `Commands [1/15 filtered]`).
+6. Navigation keys (`↑`/`↓`, `Enter`) operate on the filtered list.
+7. `Esc` clears the filter and returns to the full tree.
+8. `Tab` during filtering switches focus to the other panel and clears the filter.
 
 ## Command Building
 

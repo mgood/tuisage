@@ -210,13 +210,17 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - Comprehensive test suite (94 tests)
 - Zero clippy warnings
 
+### In Progress
+
+- **TreeView display** — replacing flat command list with `ratatui-interact`'s `TreeView` to show the full command hierarchy with expand/collapse functionality
+
 ### Remaining Work
 
-- **TreeView display** — use `ratatui-interact`'s `TreeView` for the command hierarchy instead of a flat list
 - **Improved fuzzy matching** — integrate `nucleo-matcher` for scored/ranked results (fzf-style)
 - **Inline aliases** — show command aliases with dimmed styling in the command list
+- **Command execution** — execute built commands directly within the TUI, remain open for building next command
+- **Print-only mode** — optional keybinding to output command to stdout for shell integration
 - **Clipboard copy** — copy the built command to the system clipboard from within the TUI
-- **Direct execution** — optionally execute the built command instead of just printing it
 - **Embedded USAGE blocks** — verify and test support for script files with heredoc USAGE blocks
 - **Module splitting** — break `app.rs` into `state`, `input`, `builder` sub-modules; break `ui.rs` into widget modules
 - **CI pipeline** — GitHub Actions for `cargo test`, `cargo clippy`, and `insta` snapshot checks
