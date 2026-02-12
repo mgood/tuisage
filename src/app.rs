@@ -1728,6 +1728,35 @@ mod tests {
     }
 
     #[test]
+    fn test_fuzzy_match_with_pattern_indices() {
+        use nucleo_matcher::{Config, Matcher};
+
+        let mut matcher = Matcher::new(Config::DEFAULT);
+
+        // Test single word matching
+        let (score, indices) = fuzzy_match_indices("config", "cfg", &mut matcher);
+        assert!(score > 0, "Should match 'cfg' in 'config'");
+        assert_eq!(indices, vec![0, 3, 5], "Should match c, f, g");
+
+        // Test multi-word pattern (Pattern handles this properly)
+        let (score, indices) = fuzzy_match_indices("foo bar baz", "foo baz", &mut matcher);
+        assert!(score > 0, "Should match multi-word pattern");
+        // Indices should be sorted and deduplicated
+        assert!(indices.contains(&0)); // 'f' in foo
+        assert!(indices.len() >= 6); // At least 3 chars from 'foo' + 3 from 'baz'
+
+        // Test no match
+        let (score, indices) = fuzzy_match_indices("config", "xyz", &mut matcher);
+        assert_eq!(score, 0, "Should not match 'xyz'");
+        assert!(indices.is_empty(), "No indices for non-match");
+
+        // Test case-insensitive matching (CaseMatching::Smart)
+        let (score, indices) = fuzzy_match_indices("MyConfig", "myconf", &mut matcher);
+        assert!(score > 0, "Should match case-insensitively");
+        assert_eq!(indices.len(), 6, "Should match all 6 characters");
+    }
+
+    #[test]
     fn test_command_path_navigation() {
         let mut app = App::new(sample_spec());
         assert!(app.command_path.is_empty());
