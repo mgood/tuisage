@@ -30,8 +30,8 @@ This document describes how TuiSage is built — its architecture, code structur
           ▼
 ┌─────────────────────────────────────────────────┐
 │                   ui.rs                         │
-│  - Layout computation (breadcrumb, panels,      │
-│    preview, help bar)                           │
+│  - Layout computation (panels, preview, help    │
+│    bar)                                         │
 │  - Semantic color derivation from theme palette │
 │  - Component rendering (commands, flags, args)  │
 │  - Command preview colorization                 │
@@ -138,8 +138,7 @@ A semantic color palette derived from the active `ThemePalette`. Maps abstract r
 #### Rendering Functions
 
 - **`render()`** — top-level entry point called by the event loop. Computes layout, derives colors, and delegates to sub-renderers.
-- **`render_breadcrumb()`** — renders the navigation breadcrumb using `ratatui-interact`'s `Breadcrumb` widget.
-- **`render_main_content()`** — splits the middle area into up to 3 columns (commands, flags, args). Hides panels with no content and redistributes space.
+- **`render_main_content()`** — splits the area into up to 3 columns (commands, flags, args). Commands tree is always visible. Hides flags/args panels with no content and redistributes space.
 - **`render_command_list()`** — renders the command tree using ratatui-interact's `TreeView` widget with themed `TreeStyle`, showing expand/collapse icons, tree connectors, and aliases.
 - **`render_flag_list()`** — renders flags with checkbox indicators (✓/○), values, defaults, global tags, and count badges.
 - **`render_arg_list()`** — renders arguments with required indicators, current values, choices, and inline editing.
@@ -159,7 +158,7 @@ During rendering, each panel's `Rect` is stored in `app.click_regions` as a `(Re
 | `usage-lib` | 2.16 | Parse `.usage.kdl` specs | `default-features = false` (skip docs/tera/roff) |
 | `ratatui` | 0.30 | TUI framework | Provides `Frame`, `Terminal`, widgets, layout |
 | `crossterm` | 0.29 | Terminal backend + events | `event-stream` feature enabled |
-| `ratatui-interact` | 0.4 | UI components | `Breadcrumb`, `Input`, `FocusManager`, `ListPickerState` |
+| `ratatui-interact` | 0.4 | UI components | `TreeView`, `TreeNode`, `FocusManager`, `ListPickerState` |
 | `ratatui-themes` | 0.1 | Color theming | Provides `ThemePalette` with named themes |
 | `color-eyre` | 0.6 | Error reporting | Pretty error messages with backtraces |
 | `insta` | 1 | Snapshot testing (dev) | Full terminal output comparison |
@@ -223,13 +222,13 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 
 - Project setup and spec parsing
 - Core app state: navigation, flag values, arg values, command building
-- Full TUI rendering: breadcrumb, 3-panel layout, preview, help bar
+- Full TUI rendering: 3-panel layout, preview, help bar
 - Keyboard navigation: vim keys, Tab cycling, Enter/Space/Backspace actions
 - Fuzzy filtering for commands and flags
 - Mouse support: click, scroll, right-click, click-to-activate
 - Visual polish: theming, scrolling, default indicators, accessible symbols
 - Stdin support for piped specs
-- **TreeView display** — full command hierarchy shown as an expandable/collapsible tree using `ratatui-interact`'s `TreeView` widget, with tree connectors, expand/collapse icons, and keyboard/mouse navigation (Left/Right to collapse/expand, Enter to toggle)
+- **TreeView display** — full command hierarchy shown as an expandable/collapsible tree using `ratatui-interact`'s `TreeView` widget, with tree connectors, expand/collapse icons, and keyboard/mouse navigation (Left/Right to collapse/expand, Enter to toggle). Top-level commands are direct tree nodes (no root wrapper), maximizing screen space and simplifying navigation.
 - Comprehensive test suite (111 tests)
 - Zero clippy warnings
 
