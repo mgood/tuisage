@@ -6,7 +6,8 @@ use ratatui::{
     Frame,
 };
 use ratatui_interact::components::{
-    Breadcrumb, BreadcrumbItem, BreadcrumbState, BreadcrumbStyle, Input, InputStyle,
+    Breadcrumb, BreadcrumbItem, BreadcrumbState, BreadcrumbStyle, Input, InputStyle, TreeStyle,
+    TreeView,
 };
 use ratatui_themes::ThemePalette;
 
@@ -260,7 +261,7 @@ fn render_main_content(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
     }
 }
 
-/// Render the subcommand list panel.
+/// Render the command tree panel using the TreeView widget.
 fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
     // Register area for click hit-testing
     app.click_regions.register(area, Focus::Commands);
@@ -272,8 +273,8 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
         colors.inactive_border
     };
 
-    // Compute counts for title before mutable borrow
-    let total = app.visible_subcommands().len();
+    // Compute counts for title
+    let total = app.total_visible_commands();
     let command_index = app.command_index();
 
     let title = if app.filtering && app.focus() == Focus::Commands {
@@ -293,87 +294,53 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
         .title(title)
-        .title_style(Style::default().fg(border_color).bold())
-        .padding(Padding::horizontal(1));
+        .title_style(Style::default().fg(border_color).bold());
 
     // Calculate inner height for scroll offset (area minus borders)
     let inner_height = area.height.saturating_sub(2) as usize;
     app.ensure_visible(Focus::Commands, inner_height);
 
-    // Re-fetch subcommands after mutable borrow ends
-    let subs = app.visible_subcommands();
-    let items: Vec<ListItem> = subs
-        .iter()
-        .enumerate()
-        .map(|(i, (name, cmd))| {
-            let is_selected = is_focused && i == command_index;
-            let has_children = !cmd.subcommands.is_empty();
+    // Build the TreeStyle from theme colors
+    let tree_style = TreeStyle {
+        selected_style: Style::default()
+            .fg(colors.command)
+            .add_modifier(Modifier::BOLD),
+        normal_style: Style::default().fg(colors.command),
+        connector_style: Style::default().fg(colors.help),
+        icon_style: Style::default().fg(colors.active_border),
+        collapsed_icon: "▶ ",
+        expanded_icon: "▼ ",
+        connector_branch: "├── ",
+        connector_last: "└── ",
+        connector_vertical: "│   ",
+        connector_space: "    ",
+        cursor_selected: "▶ ",
+        cursor_normal: "  ",
+    };
 
-            let mut spans = Vec::new();
-
-            // Selection cursor indicator (prominent triangle)
-            if is_selected {
-                spans.push(Span::styled(
-                    "▶ ",
-                    Style::default()
-                        .fg(colors.active_border)
-                        .add_modifier(Modifier::BOLD),
-                ));
-            } else {
-                spans.push(Span::styled("  ", Style::default()));
-            }
-
-            // Command name
-            let name_style = if is_selected {
-                Style::default()
-                    .fg(colors.command)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(colors.command)
-            };
-            spans.push(Span::styled(name.as_str(), name_style));
-
-            // Subcommand indicator
-            if has_children {
-                spans.push(Span::styled(" ▸", Style::default().fg(colors.help)));
-            }
+    let tree = TreeView::new(&app.command_tree_nodes, &app.command_tree_state)
+        .style(tree_style)
+        .render_item(|node, _is_selected| {
+            let mut text = node.data.name.clone();
 
             // Aliases
-            if !cmd.aliases.is_empty() {
-                let aliases = cmd.aliases.join(", ");
-                spans.push(Span::styled(
-                    format!(" ({})", aliases),
-                    Style::default().fg(colors.help),
-                ));
+            if !node.data.aliases.is_empty() {
+                let aliases = node.data.aliases.join(", ");
+                text.push_str(&format!(" ({})", aliases));
             }
 
-            // Help text (truncated to fit)
-            if let Some(help) = &cmd.help {
-                spans.push(Span::styled(" — ", Style::default().fg(colors.help)));
-                spans.push(Span::styled(
-                    help.as_str(),
-                    Style::default().fg(colors.help),
-                ));
+            // Help text
+            if let Some(help) = &node.data.help {
+                text.push_str(&format!(" — {}", help));
             }
 
-            let line = Line::from(spans);
-            let mut item = ListItem::new(line);
-            if is_selected {
-                item = item.style(Style::default().bg(colors.selected_bg));
-            }
-            item
-        })
-        .collect();
+            text
+        });
 
-    let mut state = ListState::default()
-        .with_selected(if is_focused {
-            Some(command_index)
-        } else {
-            None
-        })
-        .with_offset(app.command_scroll());
-    let list = List::new(items).block(block);
-    frame.render_stateful_widget(list, area, &mut state);
+    // Render the block first, then the tree inside
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    frame.render_widget(tree, inner);
 }
 
 /// Render the flag list panel.
@@ -937,13 +904,9 @@ mod tests {
     #[test]
     fn snapshot_config_subcommands() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "config")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["config"]);
+        // Expand config to show its subcommands
+        app.command_tree_state.expand("config");
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
@@ -951,13 +914,7 @@ mod tests {
     #[test]
     fn snapshot_deploy_leaf() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "deploy")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["deploy"]);
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
@@ -965,10 +922,7 @@ mod tests {
     #[test]
     fn snapshot_run_command() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["run"]);
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
@@ -976,14 +930,7 @@ mod tests {
     #[test]
     fn snapshot_flags_toggled() {
         let mut app = App::new(sample_spec());
-        // Navigate to deploy
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "deploy")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["deploy"]);
 
         // Toggle --rollback (find its index)
         app.set_focus(Focus::Flags);
@@ -1023,10 +970,7 @@ mod tests {
     #[test]
     fn snapshot_editing_arg() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs.iter().position(|(n, _)| n.as_str() == "init").unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["init"]);
 
         // Focus on args and start editing
         app.set_focus(Focus::Args);
@@ -1051,10 +995,7 @@ mod tests {
     #[test]
     fn snapshot_preview_focused() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["run"]);
 
         app.arg_values[0].value = "lint".to_string();
         app.set_focus(Focus::Preview);
@@ -1066,24 +1007,7 @@ mod tests {
     #[test]
     fn snapshot_deep_navigation() {
         let mut app = App::new(sample_spec());
-
-        // Navigate to plugin > install
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "plugin")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
-
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "install")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
-
+        app.navigate_to_command(&["plugin", "install"]);
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
@@ -1123,8 +1047,7 @@ cmd "format" help="Format code" {
         "#,
         );
         let mut app = App::new(spec);
-        app.set_command_index(0);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["format"]);
         let output = render_to_string(&mut app, 80, 20);
         insta::assert_snapshot!(output);
     }
@@ -1170,14 +1093,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn snapshot_flag_filter_active() {
         let mut app = App::new(sample_spec());
-        // Navigate to deploy (has multiple flags)
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "deploy")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["deploy"]);
 
         // Focus on flags and start filtering
         app.set_focus(Focus::Flags);
@@ -1191,14 +1107,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn snapshot_flag_filter_verbose() {
         let mut app = App::new(sample_spec());
-        // Navigate to deploy
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "deploy")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["deploy"]);
 
         // Focus on flags and filter for "verb" (should match --verbose)
         app.set_focus(Focus::Flags);
@@ -1256,13 +1165,9 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_render_with_subcommand() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let config_idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "config")
-            .unwrap();
-        app.set_command_index(config_idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["config"]);
+        // Expand config to show children in the tree
+        app.command_tree_state.expand("config");
 
         let output = render_to_string(&mut app, 100, 30);
         assert!(output.contains("config"));
@@ -1275,13 +1180,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_render_leaf_command() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let deploy_idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "deploy")
-            .unwrap();
-        app.set_command_index(deploy_idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["deploy"]);
 
         let output = render_to_string(&mut app, 100, 30);
         assert!(output.contains("Flags"));
@@ -1319,10 +1218,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_render_command_preview_shows_built_command() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs.iter().position(|(n, _)| n.as_str() == "init").unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["init"]);
 
         app.arg_values[0].value = "hello".to_string();
 
@@ -1333,13 +1229,9 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_render_aliases_shown() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "config")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["config"]);
+        // Expand config to show children with aliases
+        app.command_tree_state.expand("config");
 
         let output = render_to_string(&mut app, 100, 30);
         // "set" has alias "add", "list" has alias "ls", "remove" has alias "rm"
@@ -1359,13 +1251,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_render_required_arg_indicator() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "deploy")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["deploy"]);
 
         let output = render_to_string(&mut app, 100, 24);
         // Required args should be shown with <> brackets
@@ -1375,13 +1261,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_render_choices_display() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "deploy")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["deploy"]);
 
         let output = render_to_string(&mut app, 100, 24);
         // Choices should be displayed
@@ -1395,13 +1275,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_render_after_flag_toggle() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "deploy")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["deploy"]);
 
         // Focus flags and toggle yes flag
         app.set_focus(Focus::Flags);
@@ -1483,13 +1357,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_breadcrumb_shows_path() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "config")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["config"]);
 
         let output = render_to_string(&mut app, 100, 24);
         // Should show both mycli and config in the breadcrumb
@@ -1502,13 +1370,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_preview_shows_flags_and_args() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "deploy")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["deploy"]);
 
         // Set flag and arg values
         let fidx = app
@@ -1556,10 +1418,13 @@ flag "-q --quiet" help="Quiet mode"
     fn test_focused_panel_shows_position() {
         let mut app = App::new(sample_spec());
         app.set_focus(Focus::Commands);
-        app.set_command_index(2);
+        // In tree view: root + 7 top-level = 8 total visible
+        // set_command_index(2) selects the 3rd visible node
+        app.command_tree_state.selected_index = 2;
+        app.sync_command_path_from_tree();
         let output = render_to_string(&mut app, 100, 24);
         // Focused panel shows [position/total]
-        assert!(output.contains("[3/7]"));
+        assert!(output.contains("[3/8]"));
     }
 
     #[test]
@@ -1583,14 +1448,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_filter_shows_filtered_count() {
         let mut app = App::new(sample_spec());
-        // Navigate to deploy (has 6 flags)
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "deploy")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["deploy"]);
 
         app.set_focus(Focus::Flags);
         app.filtering = true;
@@ -1606,13 +1464,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_checked_flag_shows_checked_box() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "deploy")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["deploy"]);
 
         // Toggle rollback flag on
         app.set_focus(Focus::Flags);
@@ -1634,13 +1486,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_unchecked_flag_shows_empty_box() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "deploy")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["deploy"]);
 
         let output = render_to_string(&mut app, 100, 24);
         // Unchecked boolean flags should show ○
@@ -1653,14 +1499,7 @@ flag "-q --quiet" help="Quiet mode"
     fn test_all_themes_render_without_panic() {
         for theme in ThemeName::all() {
             let mut app = App::with_theme(sample_spec(), *theme);
-            // Navigate into a command with flags + args for full rendering coverage
-            let subs = app.visible_subcommands();
-            let idx = subs
-                .iter()
-                .position(|(n, _)| n.as_str() == "deploy")
-                .unwrap();
-            app.set_command_index(idx);
-            app.navigate_into_selected();
+            app.navigate_to_command(&["deploy"]);
 
             // Should render without panicking for any theme
             let output = render_to_string(&mut app, 100, 24);
@@ -1718,13 +1557,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_checkmark_style_checked() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "deploy")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["deploy"]);
 
         // Toggle --rollback on
         app.set_focus(Focus::Flags);
@@ -1754,13 +1587,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_checkmark_style_unchecked() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "deploy")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["deploy"]);
 
         let output = render_to_string(&mut app, 100, 24);
         // Unchecked flags should use ○ (not ☐)
@@ -1791,13 +1618,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_prominent_caret_in_flags_panel() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "deploy")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["deploy"]);
         app.set_focus(Focus::Flags);
 
         let output = render_to_string(&mut app, 100, 24);
@@ -1810,10 +1631,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_prominent_caret_in_args_panel() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["run"]);
         app.set_focus(Focus::Args);
 
         let output = render_to_string(&mut app, 100, 24);
@@ -1873,12 +1691,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_editing_arg_then_switching_does_not_bleed() {
         let mut app = App::new(sample_spec());
-
-        // Navigate to "run" command
-        let subs = app.visible_subcommands();
-        let run_idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
-        app.set_command_index(run_idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["run"]);
 
         // Focus on args and edit <task>
         app.set_focus(Focus::Args);
@@ -1915,6 +1728,7 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_count_flag_preview_after_decrement() {
         let mut app = App::new(sample_spec());
+        // Stay at root where verbose flag is
         app.set_focus(Focus::Flags);
 
         let fidx = app

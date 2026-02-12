@@ -1,5 +1,5 @@
 use ratatui::layout::Rect;
-use ratatui_interact::components::{InputState, ListPickerState};
+use ratatui_interact::components::{InputState, ListPickerState, TreeNode, TreeViewState};
 use ratatui_interact::state::FocusManager;
 use ratatui_interact::traits::ClickRegionRegistry;
 use ratatui_themes::{ThemeName, ThemePalette};
@@ -42,6 +42,14 @@ pub struct ArgValue {
     pub choices: Vec<String>,
 }
 
+/// Data stored in each tree node for a command.
+#[derive(Debug, Clone)]
+pub struct CmdData {
+    pub name: String,
+    pub help: Option<String>,
+    pub aliases: Vec<String>,
+}
+
 /// Main application state.
 pub struct App {
     pub spec: Spec,
@@ -49,7 +57,7 @@ pub struct App {
     /// Current color theme.
     pub theme_name: ThemeName,
 
-    /// Breadcrumb path of subcommand names the user has navigated into.
+    /// Breadcrumb path of subcommand names derived from the tree selection.
     /// Empty means we're at the root command.
     pub command_path: Vec<String>,
 
@@ -72,8 +80,11 @@ pub struct App {
     /// Whether the filter input is active.
     pub filtering: bool,
 
-    /// ListPickerState for the command list.
-    pub command_list_state: ListPickerState,
+    /// Tree nodes representing the full command hierarchy.
+    pub command_tree_nodes: Vec<TreeNode<CmdData>>,
+
+    /// Tree view state (selection, collapsed set, scroll).
+    pub command_tree_state: TreeViewState,
 
     /// ListPickerState for the flag list.
     pub flag_list_state: ListPickerState,
@@ -94,6 +105,12 @@ impl App {
     }
 
     pub fn with_theme(spec: Spec, theme_name: ThemeName) -> Self {
+        let tree_nodes = build_command_tree(&spec);
+        let mut tree_state = TreeViewState::new();
+        // Collapse all non-root nodes that have children, so the initial view
+        // shows only the top-level subcommands (similar to the old flat list).
+        collapse_non_root_parents(&tree_nodes, &mut tree_state);
+
         let mut app = Self {
             spec,
             theme_name,
@@ -104,7 +121,8 @@ impl App {
             editing: false,
             filter_input: InputState::empty(),
             filtering: false,
-            command_list_state: ListPickerState::new(0),
+            command_tree_nodes: tree_nodes,
+            command_tree_state: tree_state,
             flag_list_state: ListPickerState::new(0),
             arg_list_state: ListPickerState::new(0),
             edit_input: InputState::empty(),
@@ -119,7 +137,7 @@ impl App {
         let had_focus = !self.focus_manager.is_empty();
         let current = self.focus();
         self.focus_manager.clear();
-        if !self.visible_subcommands().is_empty() {
+        if self.has_any_commands() {
             self.focus_manager.register(Focus::Commands);
         }
         if !self.visible_flags().is_empty() {
@@ -165,14 +183,16 @@ impl App {
         self.focus_manager.set(panel);
     }
 
-    // --- Convenience accessors for indices (delegating to ListPickerState) ---
+    // --- Convenience accessors for indices ---
 
     pub fn command_index(&self) -> usize {
-        self.command_list_state.selected_index
+        self.command_tree_state.selected_index
     }
 
+    #[allow(dead_code)]
     pub fn set_command_index(&mut self, idx: usize) {
-        self.command_list_state.select(idx);
+        self.command_tree_state.selected_index = idx;
+        self.sync_command_path_from_tree();
     }
 
     pub fn flag_index(&self) -> usize {
@@ -192,7 +212,7 @@ impl App {
     }
 
     pub fn command_scroll(&self) -> usize {
-        self.command_list_state.scroll as usize
+        self.command_tree_state.scroll as usize
     }
 
     pub fn flag_scroll(&self) -> usize {
@@ -219,6 +239,11 @@ impl App {
             }
         }
         cmd
+    }
+
+    /// Whether the spec has any subcommands at all (for focus manager).
+    fn has_any_commands(&self) -> bool {
+        !self.spec.cmd.subcommands.is_empty()
     }
 
     /// Returns the visible (non-hidden) subcommands of the current command,
@@ -336,8 +361,6 @@ impl App {
         }
 
         // Update list picker states with correct totals
-        self.command_list_state
-            .set_total(self.visible_subcommands().len());
         self.flag_list_state
             .set_total(self.current_flag_values().len());
         self.arg_list_state.set_total(self.arg_values.len());
@@ -371,6 +394,147 @@ impl App {
         self.flag_values.entry(key).or_default()
     }
 
+    // --- Tree view helpers ---
+
+    /// Get the total number of visible nodes in the command tree.
+    pub fn total_visible_commands(&self) -> usize {
+        count_visible(&self.command_tree_nodes, &self.command_tree_state)
+    }
+
+    /// Get the ID of the currently selected tree node.
+    pub fn selected_command_id(&self) -> Option<String> {
+        let visible = flatten_visible_ids(&self.command_tree_nodes, &self.command_tree_state);
+        visible.get(self.command_tree_state.selected_index).cloned()
+    }
+
+    /// Update command_path based on the currently selected tree node.
+    pub fn sync_command_path_from_tree(&mut self) {
+        if let Some(id) = self.selected_command_id() {
+            if id.is_empty() {
+                self.command_path = vec![];
+            } else {
+                self.command_path = id.split(' ').map(|s| s.to_string()).collect();
+            }
+        }
+        self.sync_state();
+    }
+
+    /// Find a tree node by ID and check if it has children.
+    fn node_has_children(&self, id: &str) -> bool {
+        fn find_in<T>(nodes: &[TreeNode<T>], id: &str) -> Option<bool> {
+            for node in nodes {
+                if node.id == id {
+                    return Some(node.has_children());
+                }
+                if let Some(result) = find_in(&node.children, id) {
+                    return Some(result);
+                }
+            }
+            None
+        }
+        find_in(&self.command_tree_nodes, id).unwrap_or(false)
+    }
+
+    /// Find the parent node index in the flattened visible list.
+    fn find_parent_index(&self) -> Option<usize> {
+        let visible = flatten_visible_ids(&self.command_tree_nodes, &self.command_tree_state);
+        let selected_id = visible.get(self.command_tree_state.selected_index)?;
+        let parent = parent_id(selected_id)?;
+        visible.iter().position(|id| *id == parent)
+    }
+
+    /// Toggle expand/collapse of the selected tree node (Enter key on Commands).
+    pub fn tree_toggle_selected(&mut self) {
+        if let Some(id) = self.selected_command_id() {
+            if self.node_has_children(&id) {
+                self.command_tree_state.toggle_collapsed(&id);
+            }
+        }
+    }
+
+    /// Expand selected node, or move to first child if already expanded (Right/l key).
+    pub fn tree_expand_or_enter(&mut self) {
+        if let Some(id) = self.selected_command_id() {
+            if self.node_has_children(&id) {
+                if self.command_tree_state.is_collapsed(&id) {
+                    self.command_tree_state.expand(&id);
+                } else {
+                    // Already expanded, move to first child
+                    let total = self.total_visible_commands();
+                    self.command_tree_state.select_next(total);
+                    self.sync_command_path_from_tree();
+                }
+            }
+        }
+    }
+
+    /// Collapse selected node, or move to parent if already collapsed/leaf (Left/h key).
+    pub fn tree_collapse_or_parent(&mut self) {
+        if let Some(id) = self.selected_command_id() {
+            if self.node_has_children(&id) && !self.command_tree_state.is_collapsed(&id) {
+                self.command_tree_state.collapse(&id);
+            } else {
+                // Move to parent
+                if let Some(parent_idx) = self.find_parent_index() {
+                    self.command_tree_state.selected_index = parent_idx;
+                    self.sync_command_path_from_tree();
+                }
+            }
+        }
+    }
+
+    /// Expand the selected node (for right-click).
+    pub fn tree_expand_selected(&mut self) {
+        if let Some(id) = self.selected_command_id() {
+            if self.node_has_children(&id) {
+                self.command_tree_state.expand(&id);
+            }
+        }
+    }
+
+    /// Navigate to a specific command path in the tree. Expands all ancestors
+    /// and selects the target node. Used for tests and programmatic navigation.
+    #[allow(dead_code)]
+    pub fn navigate_to_command(&mut self, path: &[&str]) {
+        // Ensure root is expanded
+        self.command_tree_state.expand("");
+        // Expand all ancestors
+        for i in 1..path.len() {
+            let ancestor_id = path[..i].join(" ");
+            self.command_tree_state.expand(&ancestor_id);
+        }
+        let target_id = path.join(" ");
+        let visible = flatten_visible_ids(&self.command_tree_nodes, &self.command_tree_state);
+        if let Some(idx) = visible.iter().position(|id| *id == target_id) {
+            self.command_tree_state.selected_index = idx;
+            self.sync_command_path_from_tree();
+        }
+    }
+
+    /// Backward-compatible: expand selected node and select first child.
+    /// Equivalent to the old "navigate into selected subcommand".
+    #[allow(dead_code)]
+    pub fn navigate_into_selected(&mut self) {
+        if let Some(id) = self.selected_command_id() {
+            if self.node_has_children(&id) {
+                self.command_tree_state.expand(&id);
+                // Move selection to first child
+                let total = self.total_visible_commands();
+                self.command_tree_state.select_next(total);
+                self.sync_command_path_from_tree();
+            }
+        }
+    }
+
+    /// Backward-compatible: move selection to parent node.
+    /// Equivalent to the old "navigate up".
+    pub fn navigate_up(&mut self) {
+        if let Some(parent_idx) = self.find_parent_index() {
+            self.command_tree_state.selected_index = parent_idx;
+            self.sync_command_path_from_tree();
+        }
+    }
+
     /// Handle a mouse event and return the resulting Action.
     pub fn handle_mouse(&mut self, event: crossterm::event::MouseEvent) -> Action {
         use crossterm::event::{MouseButton, MouseEventKind};
@@ -397,12 +561,14 @@ impl App {
                                 if row >= inner_top {
                                     let clicked_offset = (row - inner_top) as usize;
                                     let item_index = self.command_scroll() + clicked_offset;
-                                    let len = self.visible_subcommands().len();
-                                    if item_index < len {
+                                    let total = self.total_visible_commands();
+                                    if item_index < total {
                                         if was_focused && self.command_index() == item_index {
-                                            self.navigate_into_selected();
+                                            // Second click on same item: toggle expand/collapse
+                                            self.tree_toggle_selected();
                                         } else {
-                                            self.set_command_index(item_index);
+                                            self.command_tree_state.selected_index = item_index;
+                                            self.sync_command_path_from_tree();
                                         }
                                     }
                                 }
@@ -453,10 +619,10 @@ impl App {
                 Action::None
             }
             MouseEventKind::Down(MouseButton::Right) => {
-                // Right-click: check if in commands area
+                // Right-click: expand tree node in commands area
                 if let Some(&Focus::Commands) = self.click_regions.handle_click(col, row) {
                     if self.focus() == Focus::Commands {
-                        self.navigate_into_selected();
+                        self.tree_expand_selected();
                     }
                 }
                 Action::None
@@ -518,7 +684,7 @@ impl App {
         }
         match panel {
             Focus::Commands => {
-                self.command_list_state.ensure_visible(viewport_height);
+                self.command_tree_state.ensure_visible(viewport_height);
             }
             Focus::Flags => {
                 self.flag_list_state.ensure_visible(viewport_height);
@@ -570,7 +736,29 @@ impl App {
                 Action::None
             }
             KeyCode::Esc => {
-                if !self.command_path.is_empty() {
+                if self.focus() == Focus::Commands {
+                    // In tree view: collapse or move to parent, quit if at root
+                    if let Some(id) = self.selected_command_id() {
+                        if id.is_empty() {
+                            // At root, quit
+                            return Action::Quit;
+                        }
+                        // If expanded and has children, collapse
+                        if self.node_has_children(&id) && !self.command_tree_state.is_collapsed(&id)
+                        {
+                            self.command_tree_state.collapse(&id);
+                            return Action::None;
+                        }
+                        // Move to parent
+                        if let Some(parent_idx) = self.find_parent_index() {
+                            self.command_tree_state.selected_index = parent_idx;
+                            self.sync_command_path_from_tree();
+                            return Action::None;
+                        }
+                    }
+                    Action::Quit
+                } else if !self.command_path.is_empty() {
+                    // Other panels: navigate up in the tree
                     self.navigate_up();
                     Action::None
                 } else {
@@ -591,14 +779,14 @@ impl App {
                 Action::None
             }
             KeyCode::Left | KeyCode::Char('h') => {
-                if !self.command_path.is_empty() {
-                    self.navigate_up();
+                if self.focus() == Focus::Commands {
+                    self.tree_collapse_or_parent();
                 }
                 Action::None
             }
             KeyCode::Right | KeyCode::Char('l') => {
                 if self.focus() == Focus::Commands {
-                    self.navigate_into_selected();
+                    self.tree_expand_or_enter();
                 }
                 Action::None
             }
@@ -738,7 +926,9 @@ impl App {
                 // Reset selection index when filter changes
                 match self.focus() {
                     Focus::Commands => {
-                        self.command_list_state.select_first();
+                        // For tree view, reset to first visible node
+                        self.command_tree_state.selected_index = 0;
+                        self.sync_command_path_from_tree();
                     }
                     Focus::Flags => {
                         self.flag_list_state.select_first();
@@ -751,7 +941,8 @@ impl App {
                 self.filter_input.insert_char(c);
                 match self.focus() {
                     Focus::Commands => {
-                        self.command_list_state.select_first();
+                        self.command_tree_state.selected_index = 0;
+                        self.sync_command_path_from_tree();
                     }
                     Focus::Flags => {
                         self.flag_list_state.select_first();
@@ -775,7 +966,8 @@ impl App {
     fn move_up(&mut self) {
         match self.focus() {
             Focus::Commands => {
-                self.command_list_state.select_prev();
+                self.command_tree_state.select_prev();
+                self.sync_command_path_from_tree();
             }
             Focus::Flags => {
                 self.flag_list_state.select_prev();
@@ -790,7 +982,9 @@ impl App {
     fn move_down(&mut self) {
         match self.focus() {
             Focus::Commands => {
-                self.command_list_state.select_next();
+                let total = self.total_visible_commands();
+                self.command_tree_state.select_next(total);
+                self.sync_command_path_from_tree();
             }
             Focus::Flags => {
                 self.flag_list_state.select_next();
@@ -805,7 +999,8 @@ impl App {
     fn handle_enter(&mut self) -> Action {
         match self.focus() {
             Focus::Commands => {
-                self.navigate_into_selected();
+                // Toggle expand/collapse of the selected tree node
+                self.tree_toggle_selected();
                 Action::None
             }
             Focus::Flags => {
@@ -887,32 +1082,6 @@ impl App {
         let values = self.current_flag_values_mut();
         if let Some((_, FlagValue::Count(c))) = values.get_mut(flag_idx) {
             *c = c.saturating_sub(1);
-        }
-    }
-
-    pub fn navigate_into_selected(&mut self) {
-        let subs = self.visible_subcommands();
-        if let Some((name, _)) = subs.get(self.command_index()) {
-            let name = (*name).clone();
-            self.command_path.push(name);
-            self.command_list_state = ListPickerState::new(0);
-            self.flag_list_state = ListPickerState::new(0);
-            self.arg_list_state = ListPickerState::new(0);
-            self.filter_input.clear();
-            self.filtering = false;
-            self.sync_state();
-        }
-    }
-
-    pub fn navigate_up(&mut self) {
-        if !self.command_path.is_empty() {
-            self.command_path.pop();
-            self.command_list_state = ListPickerState::new(0);
-            self.flag_list_state = ListPickerState::new(0);
-            self.arg_list_state = ListPickerState::new(0);
-            self.filter_input.clear();
-            self.filtering = false;
-            self.sync_state();
         }
     }
 
@@ -1049,9 +1218,12 @@ impl App {
     pub fn current_help(&self) -> Option<String> {
         match self.focus() {
             Focus::Commands => {
-                let subs = self.visible_subcommands();
-                subs.get(self.command_index())
-                    .and_then(|(_, cmd)| cmd.help.clone())
+                // Get help from the selected tree node
+                let visible =
+                    flatten_visible_nodes(&self.command_tree_nodes, &self.command_tree_state);
+                visible
+                    .get(self.command_tree_state.selected_index)
+                    .and_then(|node| node.data.help.clone())
             }
             Focus::Flags => {
                 let flags = self.visible_flags();
@@ -1067,6 +1239,136 @@ impl App {
             }),
             Focus::Preview => Some("Press Enter to accept the command, Esc to go back".to_string()),
         }
+    }
+}
+
+// --- Tree building functions ---
+
+/// Build tree nodes from a usage spec.
+pub fn build_command_tree(spec: &Spec) -> Vec<TreeNode<CmdData>> {
+    let bin = if spec.bin.is_empty() {
+        &spec.name
+    } else {
+        &spec.bin
+    };
+    let root = TreeNode::new(
+        "",
+        CmdData {
+            name: bin.clone(),
+            help: spec.cmd.help.clone(),
+            aliases: vec![],
+        },
+    )
+    .with_children(build_cmd_children(&spec.cmd, &[]));
+    vec![root]
+}
+
+fn build_cmd_children(cmd: &SpecCommand, parent_path: &[String]) -> Vec<TreeNode<CmdData>> {
+    cmd.subcommands
+        .iter()
+        .filter(|(_, c)| !c.hide)
+        .map(|(name, c)| {
+            let mut path = parent_path.to_vec();
+            path.push(name.clone());
+            let id = path.join(" ");
+            TreeNode::new(
+                &id,
+                CmdData {
+                    name: name.clone(),
+                    help: c.help.clone(),
+                    aliases: c.aliases.clone(),
+                },
+            )
+            .with_children(build_cmd_children(c, &path))
+        })
+        .collect()
+}
+
+/// Collapse all non-root nodes that have children, so the initial view
+/// shows just the top-level subcommands.
+fn collapse_non_root_parents(nodes: &[TreeNode<CmdData>], state: &mut TreeViewState) {
+    for node in nodes {
+        for child in &node.children {
+            if child.has_children() {
+                state.collapse(&child.id);
+            }
+            collapse_descendants(&child.children, state);
+        }
+    }
+}
+
+fn collapse_descendants(nodes: &[TreeNode<CmdData>], state: &mut TreeViewState) {
+    for node in nodes {
+        if node.has_children() {
+            state.collapse(&node.id);
+        }
+        collapse_descendants(&node.children, state);
+    }
+}
+
+/// Count visible nodes in the tree (respecting collapsed state).
+fn count_visible<T>(nodes: &[TreeNode<T>], state: &TreeViewState) -> usize {
+    let mut total = 0;
+    for node in nodes {
+        total += 1;
+        if node.has_children() && !state.is_collapsed(&node.id) {
+            total += count_visible(&node.children, state);
+        }
+    }
+    total
+}
+
+/// Flatten visible node IDs in order.
+fn flatten_visible_ids<T>(nodes: &[TreeNode<T>], state: &TreeViewState) -> Vec<String> {
+    let mut result = Vec::new();
+    flatten_ids_recursive(nodes, state, &mut result);
+    result
+}
+
+fn flatten_ids_recursive<T>(
+    nodes: &[TreeNode<T>],
+    state: &TreeViewState,
+    result: &mut Vec<String>,
+) {
+    for node in nodes {
+        result.push(node.id.clone());
+        if node.has_children() && !state.is_collapsed(&node.id) {
+            flatten_ids_recursive(&node.children, state, result);
+        }
+    }
+}
+
+/// Flatten visible tree nodes (references) in order.
+fn flatten_visible_nodes<'a, T>(
+    nodes: &'a [TreeNode<T>],
+    state: &TreeViewState,
+) -> Vec<&'a TreeNode<T>> {
+    let mut result = Vec::new();
+    flatten_nodes_recursive(nodes, state, &mut result);
+    result
+}
+
+fn flatten_nodes_recursive<'a, T>(
+    nodes: &'a [TreeNode<T>],
+    state: &TreeViewState,
+    result: &mut Vec<&'a TreeNode<T>>,
+) {
+    for node in nodes {
+        result.push(node);
+        if node.has_children() && !state.is_collapsed(&node.id) {
+            flatten_nodes_recursive(&node.children, state, result);
+        }
+    }
+}
+
+/// Get the parent ID from a node ID.
+fn parent_id(id: &str) -> Option<String> {
+    if id.is_empty() {
+        None // root has no parent
+    } else if let Some(pos) = id.rfind(' ') {
+        Some(id[..pos].to_string())
+    } else {
+        Some(String::new()) // parent is root
     }
 }
 
@@ -1104,6 +1406,27 @@ mod tests {
     }
 
     #[test]
+    fn test_tree_built_from_spec() {
+        let app = App::new(sample_spec());
+        // The tree should have one root node
+        assert_eq!(app.command_tree_nodes.len(), 1);
+        assert_eq!(app.command_tree_nodes[0].id, "");
+        assert_eq!(app.command_tree_nodes[0].data.name, "mycli");
+        // Root should have children (the top-level subcommands)
+        assert!(!app.command_tree_nodes[0].children.is_empty());
+    }
+
+    #[test]
+    fn test_tree_root_expanded_by_default() {
+        let app = App::new(sample_spec());
+        // Root should be expanded
+        assert!(!app.command_tree_state.is_collapsed(""));
+        // Non-root parents should be collapsed
+        assert!(app.command_tree_state.is_collapsed("config"));
+        assert!(app.command_tree_state.is_collapsed("plugin"));
+    }
+
+    #[test]
     fn test_visible_subcommands_at_root() {
         let app = App::new(sample_spec());
         let subs = app.visible_subcommands();
@@ -1118,18 +1441,11 @@ mod tests {
     }
 
     #[test]
-    fn test_navigate_into_subcommand() {
+    fn test_navigate_to_command() {
         let mut app = App::new(sample_spec());
-        // Navigate into "config"
-        let subs = app.visible_subcommands();
-        let config_idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "config")
-            .unwrap();
-        app.set_command_index(config_idx);
-        app.navigate_into_selected();
-
+        app.navigate_to_command(&["config"]);
         assert_eq!(app.command_path, vec!["config"]);
+
         let subs = app.visible_subcommands();
         let names: Vec<&str> = subs.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"set"));
@@ -1139,15 +1455,38 @@ mod tests {
     }
 
     #[test]
+    fn test_navigate_to_deep_command() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["config", "set"]);
+        assert_eq!(app.command_path, vec!["config", "set"]);
+    }
+
+    #[test]
+    fn test_navigate_into_subcommand() {
+        let mut app = App::new(sample_spec());
+        // Select "config" in the tree (index 0 = root, so find config)
+        app.navigate_to_command(&["config"]);
+        assert_eq!(app.command_path, vec!["config"]);
+
+        // Now navigate into (expand + first child)
+        app.navigate_into_selected();
+        // config's first child should now be selected
+        assert!(!app.command_path.is_empty());
+        // We should be at one of config's subcommands
+        assert!(
+            app.command_path.len() == 2 && app.command_path[0] == "config",
+            "Should be in config's subtree: {:?}",
+            app.command_path
+        );
+    }
+
+    #[test]
     fn test_navigate_up() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let config_idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "config")
-            .unwrap();
-        app.set_command_index(config_idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["config", "set"]);
+        assert_eq!(app.command_path, vec!["config", "set"]);
+
+        app.navigate_up();
         assert_eq!(app.command_path, vec!["config"]);
 
         app.navigate_up();
@@ -1164,10 +1503,7 @@ mod tests {
     #[test]
     fn test_build_command_with_subcommand() {
         let mut app = App::new(sample_spec());
-        let subs = app.visible_subcommands();
-        let init_idx = subs.iter().position(|(n, _)| n.as_str() == "init").unwrap();
-        app.set_command_index(init_idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["init"]);
 
         let cmd = app.build_command();
         assert!(cmd.starts_with("mycli init"));
@@ -1176,12 +1512,7 @@ mod tests {
     #[test]
     fn test_build_command_with_flags_and_args() {
         let mut app = App::new(sample_spec());
-
-        // Navigate to "init"
-        let subs = app.visible_subcommands();
-        let init_idx = subs.iter().position(|(n, _)| n.as_str() == "init").unwrap();
-        app.set_command_index(init_idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["init"]);
 
         // Set the "name" arg
         if let Some(arg) = app.arg_values.get_mut(0) {
@@ -1237,19 +1568,10 @@ mod tests {
         let mut app = App::new(sample_spec());
         assert!(app.command_path.is_empty());
 
-        let subs = app.visible_subcommands();
-        let config_idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "config")
-            .unwrap();
-        app.set_command_index(config_idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["config"]);
         assert_eq!(app.command_path, vec!["config"]);
 
-        let subs = app.visible_subcommands();
-        let set_idx = subs.iter().position(|(n, _)| n.as_str() == "set").unwrap();
-        app.set_command_index(set_idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["config", "set"]);
         assert_eq!(app.command_path, vec!["config", "set"]);
 
         app.navigate_up();
@@ -1260,9 +1582,10 @@ mod tests {
     fn test_current_help() {
         let mut app = App::new(sample_spec());
         app.set_focus(Focus::Commands);
-        app.set_command_index(0);
+        // Select a command that has help text
+        app.navigate_to_command(&["init"]);
 
-        // Should return help for the first subcommand
+        // Should return help for the selected command
         let help = app.current_help();
         assert!(help.is_some());
     }
@@ -1279,12 +1602,7 @@ mod tests {
     #[test]
     fn test_arg_values_initialized() {
         let mut app = App::new(sample_spec());
-
-        // Navigate to "init" which has a required arg <name>
-        let subs = app.visible_subcommands();
-        let init_idx = subs.iter().position(|(n, _)| n.as_str() == "init").unwrap();
-        app.set_command_index(init_idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["init"]);
 
         assert!(!app.arg_values.is_empty());
         assert_eq!(app.arg_values[0].name, "name");
@@ -1294,14 +1612,7 @@ mod tests {
     #[test]
     fn test_deploy_has_choices() {
         let mut app = App::new(sample_spec());
-
-        let subs = app.visible_subcommands();
-        let deploy_idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "deploy")
-            .unwrap();
-        app.set_command_index(deploy_idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["deploy"]);
 
         // The <environment> arg should have choices
         assert!(!app.arg_values.is_empty());
@@ -1314,12 +1625,7 @@ mod tests {
     #[test]
     fn test_flag_with_default_value() {
         let mut app = App::new(sample_spec());
-
-        // Navigate to "run" which has --jobs with default "4"
-        let subs = app.visible_subcommands();
-        let run_idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
-        app.set_command_index(run_idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["run"]);
 
         let flag_values = app.current_flag_values();
         let jobs = flag_values.iter().find(|(n, _)| n == "jobs");
@@ -1345,7 +1651,7 @@ mod tests {
     fn test_key_handling_navigation() {
         let mut app = App::new(sample_spec());
 
-        // Move down
+        // Move down in tree
         let down = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Down,
             crossterm::event::KeyModifiers::NONE,
@@ -1353,7 +1659,7 @@ mod tests {
         app.handle_key(down);
         assert_eq!(app.command_index(), 1);
 
-        // Move up
+        // Move up in tree
         let up = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Up,
             crossterm::event::KeyModifiers::NONE,
@@ -1416,14 +1722,7 @@ mod tests {
     #[test]
     fn test_filter_flags() {
         let mut app = App::new(sample_spec());
-        // Navigate to deploy (has multiple flags)
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "deploy")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["deploy"]);
 
         // Focus on flags
         app.set_focus(Focus::Flags);
@@ -1491,21 +1790,21 @@ mod tests {
         let mut app = App::new(sample_spec());
         app.set_focus(Focus::Commands);
 
-        // Manually set command_index beyond a small viewport
-        app.command_list_state.selected_index = 5;
-        app.command_list_state.scroll = 0;
+        // Manually set selected index beyond a small viewport
+        app.command_tree_state.selected_index = 5;
+        app.command_tree_state.scroll = 0;
         app.ensure_visible(Focus::Commands, 3);
         // Index 5 should push scroll to at least 3 (5 - 3 + 1)
         assert_eq!(app.command_scroll(), 3);
 
         // Now move index back into view
-        app.command_list_state.selected_index = 2;
+        app.command_tree_state.selected_index = 2;
         app.ensure_visible(Focus::Commands, 3);
         // Index 2 < scroll 3, so scroll should snap to 2
         assert_eq!(app.command_scroll(), 2);
 
         // Already visible: no change
-        app.command_list_state.selected_index = 3;
+        app.command_tree_state.selected_index = 3;
         app.ensure_visible(Focus::Commands, 3);
         assert_eq!(app.command_scroll(), 2);
     }
@@ -1516,38 +1815,28 @@ mod tests {
         app.set_focus(Focus::Commands);
 
         // Set scroll and index so move_up triggers scroll adjustment
-        app.command_list_state.scroll = 2;
-        app.command_list_state.selected_index = 2;
+        app.command_tree_state.scroll = 2;
+        app.command_tree_state.selected_index = 2;
         app.move_up();
         assert_eq!(app.command_index(), 1);
-        // ListPickerState.select_prev() doesn't auto-adjust scroll,
+        // ListPickerState/TreeViewState.select_prev() doesn't auto-adjust scroll,
         // but our ensure_visible will handle it during render
     }
 
     #[test]
-    fn test_navigate_resets_scroll() {
+    fn test_navigate_resets_to_parent() {
         let mut app = App::new(sample_spec());
-        app.command_list_state.scroll = 5;
-        app.flag_list_state.scroll = 3;
 
-        // Navigate into a subcommand — all scroll offsets should reset
-        let subs = app.visible_subcommands();
-        let idx = subs
-            .iter()
-            .position(|(n, _)| n.as_str() == "config")
-            .unwrap();
-        app.set_command_index(idx);
-        app.navigate_into_selected();
-        assert_eq!(app.command_scroll(), 0);
-        assert_eq!(app.flag_scroll(), 0);
-        assert_eq!(app.arg_scroll(), 0);
+        // Navigate deep
+        app.navigate_to_command(&["config", "set"]);
+        assert_eq!(app.command_path, vec!["config", "set"]);
 
-        // Navigate up — all scroll offsets should reset
-        app.command_list_state.scroll = 2;
+        // Navigate up
         app.navigate_up();
-        assert_eq!(app.command_scroll(), 0);
-        assert_eq!(app.flag_scroll(), 0);
-        assert_eq!(app.arg_scroll(), 0);
+        assert_eq!(app.command_path, vec!["config"]);
+
+        app.navigate_up();
+        assert!(app.command_path.is_empty());
     }
 
     #[test]
@@ -1603,7 +1892,6 @@ mod tests {
 
         let mut app = App::new(sample_spec());
         app.set_focus(Focus::Commands);
-        app.set_command_index(0);
 
         // Set up click region — border at y=1, first item at y=2
         app.click_regions.clear();
@@ -1627,7 +1915,6 @@ mod tests {
 
         let mut app = App::new(sample_spec());
         app.set_focus(Focus::Commands);
-        app.set_command_index(0);
 
         // Scroll down
         let mouse = MouseEvent {
@@ -1674,32 +1961,29 @@ mod tests {
     }
 
     #[test]
-    fn test_list_picker_state_integration() {
+    fn test_tree_view_state_integration() {
         let mut app = App::new(sample_spec());
-        let total = app.visible_subcommands().len();
-        assert_eq!(app.command_list_state.total_items, total);
+        let total = app.total_visible_commands();
+        // Root + 7 top-level subcommands (config and plugin collapsed)
+        assert_eq!(total, 8);
         assert_eq!(app.command_index(), 0);
 
-        app.command_list_state.select_next();
+        let total = app.total_visible_commands();
+        app.command_tree_state.select_next(total);
         assert_eq!(app.command_index(), 1);
 
-        app.command_list_state.select_prev();
+        app.command_tree_state.select_prev();
         assert_eq!(app.command_index(), 0);
 
         // Can't go below 0
-        app.command_list_state.select_prev();
+        app.command_tree_state.select_prev();
         assert_eq!(app.command_index(), 0);
     }
 
     #[test]
     fn test_input_state_editing() {
         let mut app = App::new(sample_spec());
-
-        // Navigate to init
-        let subs = app.visible_subcommands();
-        let init_idx = subs.iter().position(|(n, _)| n.as_str() == "init").unwrap();
-        app.set_command_index(init_idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["init"]);
 
         // Focus on args and start editing
         app.set_focus(Focus::Args);
@@ -1802,7 +2086,128 @@ mod tests {
         assert!(app.filter().is_empty());
     }
 
-    // ── Phase 10: UX Bug Fix Tests ──────────────────────────────────────
+    // ── Tree-specific tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_tree_expand_collapse() {
+        let mut app = App::new(sample_spec());
+
+        // Initially config is collapsed
+        assert!(app.command_tree_state.is_collapsed("config"));
+        let initial_visible = app.total_visible_commands();
+
+        // Expand config
+        app.command_tree_state.expand("config");
+        let expanded_visible = app.total_visible_commands();
+        assert!(expanded_visible > initial_visible);
+
+        // Collapse config
+        app.command_tree_state.collapse("config");
+        assert_eq!(app.total_visible_commands(), initial_visible);
+    }
+
+    #[test]
+    fn test_tree_toggle_via_enter() {
+        let mut app = App::new(sample_spec());
+        // Select config (which has children)
+        app.navigate_to_command(&["config"]);
+        assert!(app.command_tree_state.is_collapsed("config"));
+
+        // Press Enter to toggle
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.set_focus(Focus::Commands);
+        app.handle_key(enter);
+        assert!(!app.command_tree_state.is_collapsed("config"));
+
+        // Press Enter again to collapse
+        app.handle_key(enter);
+        assert!(app.command_tree_state.is_collapsed("config"));
+    }
+
+    #[test]
+    fn test_tree_right_expands() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["config"]);
+        assert!(app.command_tree_state.is_collapsed("config"));
+
+        // Press Right to expand
+        app.set_focus(Focus::Commands);
+        let right = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Right,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(right);
+        assert!(!app.command_tree_state.is_collapsed("config"));
+    }
+
+    #[test]
+    fn test_tree_left_collapses() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["config"]);
+        // Expand config first
+        app.command_tree_state.expand("config");
+        assert!(!app.command_tree_state.is_collapsed("config"));
+
+        // Press Left to collapse
+        app.set_focus(Focus::Commands);
+        let left = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Left,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(left);
+        assert!(app.command_tree_state.is_collapsed("config"));
+    }
+
+    #[test]
+    fn test_tree_left_on_leaf_moves_to_parent() {
+        let mut app = App::new(sample_spec());
+        // Select "init" which has no children
+        app.navigate_to_command(&["init"]);
+        assert_eq!(app.command_path, vec!["init"]);
+
+        // Press Left should move to parent (root)
+        app.set_focus(Focus::Commands);
+        let left = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Left,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(left);
+        assert!(
+            app.command_path.is_empty(),
+            "Should have moved to root (parent of init)"
+        );
+    }
+
+    #[test]
+    fn test_tree_selected_command_determines_flags() {
+        let mut app = App::new(sample_spec());
+
+        // At root, should show root's flags
+        let root_flags = app.visible_flags();
+        let root_flag_names: Vec<&str> = root_flags.iter().map(|f| f.name.as_str()).collect();
+        assert!(root_flag_names.contains(&"verbose"));
+
+        // Navigate to deploy, should show deploy's flags
+        app.navigate_to_command(&["deploy"]);
+        let deploy_flags = app.visible_flags();
+        let deploy_flag_names: Vec<&str> = deploy_flags.iter().map(|f| f.name.as_str()).collect();
+        assert!(deploy_flag_names.contains(&"tag"));
+        assert!(deploy_flag_names.contains(&"rollback"));
+    }
+
+    #[test]
+    fn test_parent_id() {
+        assert_eq!(parent_id(""), None);
+        assert_eq!(parent_id("init"), Some("".to_string()));
+        assert_eq!(parent_id("config"), Some("".to_string()));
+        assert_eq!(parent_id("config set"), Some("config".to_string()));
+        assert_eq!(parent_id("plugin install"), Some("plugin".to_string()));
+    }
+
+    // ── Count flag / editing tests ──────────────────────────────────────
 
     #[test]
     fn test_count_flag_decrement_via_backspace() {
@@ -1888,12 +2293,7 @@ mod tests {
         use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
         let mut app = App::new(sample_spec());
-
-        // Navigate to "run" command which has <task> and [args...] arguments
-        let subs = app.visible_subcommands();
-        let run_idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
-        app.set_command_index(run_idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["run"]);
 
         // Focus on args panel
         app.set_focus(Focus::Args);
@@ -1946,12 +2346,7 @@ mod tests {
         use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
         let mut app = App::new(sample_spec());
-
-        // Navigate to "run" command
-        let subs = app.visible_subcommands();
-        let run_idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
-        app.set_command_index(run_idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["run"]);
 
         // Focus on args panel and start editing
         app.set_focus(Focus::Args);
@@ -1996,12 +2391,7 @@ mod tests {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
         let mut app = App::new(sample_spec());
-
-        // Navigate to "run" command
-        let subs = app.visible_subcommands();
-        let run_idx = subs.iter().position(|(n, _)| n.as_str() == "run").unwrap();
-        app.set_command_index(run_idx);
-        app.navigate_into_selected();
+        app.navigate_to_command(&["run"]);
 
         // Focus on args, edit <task>
         app.set_focus(Focus::Args);
@@ -2048,5 +2438,107 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         // Should not panic or change state
         assert_eq!(app.focus(), Focus::Commands);
+    }
+
+    #[test]
+    fn test_total_visible_commands_changes_with_expand() {
+        let mut app = App::new(sample_spec());
+
+        // Initially: root + 7 top-level commands = 8 (config and plugin collapsed)
+        let initial = app.total_visible_commands();
+        assert_eq!(initial, 8);
+
+        // Expand config (has 4 children)
+        app.command_tree_state.expand("config");
+        assert_eq!(app.total_visible_commands(), 12);
+
+        // Expand plugin (has 4 children)
+        app.command_tree_state.expand("plugin");
+        assert_eq!(app.total_visible_commands(), 16);
+
+        // Collapse config
+        app.command_tree_state.collapse("config");
+        assert_eq!(app.total_visible_commands(), 12);
+    }
+
+    #[test]
+    fn test_flatten_visible_ids() {
+        let app = App::new(sample_spec());
+        let ids = flatten_visible_ids(&app.command_tree_nodes, &app.command_tree_state);
+
+        // Root + 7 top-level commands
+        assert_eq!(ids.len(), 8);
+        assert_eq!(ids[0], ""); // root
+        assert_eq!(ids[1], "init");
+        assert_eq!(ids[2], "config");
+        // config is collapsed, so no config children
+        assert_eq!(ids[3], "run");
+        assert_eq!(ids[4], "deploy");
+        assert_eq!(ids[5], "plugin");
+        // plugin is collapsed, so no plugin children
+        assert_eq!(ids[6], "version");
+        assert_eq!(ids[7], "help");
+    }
+
+    #[test]
+    fn test_flatten_visible_ids_with_expanded() {
+        let mut app = App::new(sample_spec());
+        app.command_tree_state.expand("config");
+
+        let ids = flatten_visible_ids(&app.command_tree_nodes, &app.command_tree_state);
+        assert_eq!(ids[0], ""); // root
+        assert_eq!(ids[1], "init");
+        assert_eq!(ids[2], "config");
+        assert_eq!(ids[3], "config set");
+        assert_eq!(ids[4], "config get");
+        assert_eq!(ids[5], "config list");
+        assert_eq!(ids[6], "config remove");
+        assert_eq!(ids[7], "run");
+    }
+
+    #[test]
+    fn test_esc_at_root_quits() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Commands);
+        // Select root node (index 0)
+        app.command_tree_state.selected_index = 0;
+        app.sync_command_path_from_tree();
+
+        let esc = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        assert_eq!(app.handle_key(esc), Action::Quit);
+    }
+
+    #[test]
+    fn test_esc_on_expanded_node_collapses() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["config"]);
+        app.command_tree_state.expand("config");
+        app.set_focus(Focus::Commands);
+
+        let esc = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let result = app.handle_key(esc);
+        assert_eq!(result, Action::None);
+        assert!(app.command_tree_state.is_collapsed("config"));
+    }
+
+    #[test]
+    fn test_esc_on_leaf_moves_to_parent() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["init"]);
+        app.set_focus(Focus::Commands);
+
+        let esc = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let result = app.handle_key(esc);
+        assert_eq!(result, Action::None);
+        assert!(app.command_path.is_empty(), "Should have moved to root");
     }
 }
