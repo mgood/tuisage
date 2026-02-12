@@ -3,19 +3,19 @@ source: src/ui.rs
 expression: output
 ---
 mycli › init
-┌ Flags ───────────────────────────────────────────────────────────────────────────────────────────┐
-│ [·] -t, --template = <basic|full|minimal> — Template to use                                      │
-│ ☐ -f, --force — Overwrite existing files                                                         │
-│ [0] -v, --verbose [G] — Enable verbose logging                                                   │
-│ ☐ -q, --quiet [G] — Enable quiet mode                                                            │
+┌ Flags (4) ───────────────────────────────────────────────────────────────────────────────────────┐
+│   [·] -t, --template = <basic|full|minimal> — Template to use                                    │
+│   ☐ -f, --force — Overwrite existing files                                                       │
+│   [0] -v, --verbose [G] — Enable verbose logging                                                 │
+│   ☐ -q, --quiet [G] — Enable quiet mode                                                          │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ Arguments ───────────────────────────────────────────────────────────────────────────────────────┐
-│ ● <name> = my-project▎                                                                           │
+┌ Arguments [1/1] ─────────────────────────────────────────────────────────────────────────────────┐
+│ ▸ ● <name> = my-project▎                                                                         │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

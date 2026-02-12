@@ -3,11 +3,11 @@ source: src/ui.rs
 expression: output
 ---
 mycli   /pl
-┌ Commands (/pl) ──────────────────────┐┌ Flags ───────────────────────────────────────────────────┐
-│ deploy — Deploy the application      ││ [0] -v, --verbose [G] — Enable verbose logging           │
-│ plugin ▸ — Manage plugins            ││ ☐ -q, --quiet [G] — Enable quiet mode                    │
-│ version — Print the CLI version      ││ [·] -u, --user = <user> — User to run as                 │
-│ help — Print help information        ││                                                          │
+┌ Commands (/pl) [1/4] ────────────────┐┌ Flags (3) ───────────────────────────────────────────────┐
+│ ▸ deploy — Deploy the application    ││   [0] -v, --verbose [G] — Enable verbose logging         │
+│   plugin ▸ — Manage plugins          ││   ☐ -q, --quiet [G] — Enable quiet mode                  │
+│   version — Print the CLI version    ││   [·] -u, --user = <user> — User to run as               │
+│   help — Print help information      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │

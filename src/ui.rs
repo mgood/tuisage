@@ -272,10 +272,21 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
         colors.inactive_border
     };
 
+    // Compute counts for title before mutable borrow
+    let total = app.visible_subcommands().len();
+    let command_index = app.command_index();
+
     let title = if app.filtering && app.focus() == Focus::Commands {
-        format!(" Commands (/{}) ", app.filter())
+        format!(
+            " Commands (/{}) [{}/{}] ",
+            app.filter(),
+            command_index + 1,
+            total
+        )
+    } else if total > 0 && is_focused {
+        format!(" Commands [{}/{}] ", command_index + 1, total)
     } else {
-        " Commands ".to_string()
+        format!(" Commands ({}) ", total)
     };
 
     let block = Block::default()
@@ -289,8 +300,8 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
     let inner_height = area.height.saturating_sub(2) as usize;
     app.ensure_visible(Focus::Commands, inner_height);
 
+    // Re-fetch subcommands after mutable borrow ends
     let subs = app.visible_subcommands();
-    let command_index = app.command_index();
     let items: Vec<ListItem> = subs
         .iter()
         .enumerate()
@@ -299,6 +310,16 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
             let has_children = !cmd.subcommands.is_empty();
 
             let mut spans = Vec::new();
+
+            // Selection cursor indicator
+            if is_selected {
+                spans.push(Span::styled(
+                    "▸ ",
+                    Style::default().fg(colors.active_border),
+                ));
+            } else {
+                spans.push(Span::styled("  ", Style::default()));
+            }
 
             // Command name
             let name_style = if is_selected {
@@ -365,10 +386,21 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
         colors.inactive_border
     };
 
+    // Compute counts for title before mutable borrow
+    let flag_index = app.flag_index();
+    let flag_total = app.current_flag_values().len();
+
     let title = if app.filtering && app.focus() == Focus::Flags {
-        format!(" Flags (/{}) ", app.filter())
+        format!(
+            " Flags (/{}) [{}/{}] ",
+            app.filter(),
+            flag_index + 1,
+            flag_total
+        )
+    } else if flag_total > 0 && is_focused {
+        format!(" Flags [{}/{}] ", flag_index + 1, flag_total)
     } else {
-        " Flags ".to_string()
+        format!(" Flags ({}) ", flag_total)
     };
 
     let block = Block::default()
@@ -382,9 +414,9 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
     let inner_height = area.height.saturating_sub(2) as usize;
     app.ensure_visible(Focus::Flags, inner_height);
 
+    // Re-fetch data after mutable borrow ends
     let flags = app.visible_flags();
     let flag_values = app.current_flag_values();
-    let flag_index = app.flag_index();
 
     // Pre-compute default values for each flag so we can show "(default)" indicator
     let flag_defaults: Vec<Option<String>> =
@@ -400,6 +432,16 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
             let default_val = flag_defaults.get(i).and_then(|d| d.as_ref());
 
             let mut spans = Vec::new();
+
+            // Selection cursor indicator
+            if is_selected {
+                spans.push(Span::styled(
+                    "▸ ",
+                    Style::default().fg(colors.active_border),
+                ));
+            } else {
+                spans.push(Span::styled("  ", Style::default()));
+            }
 
             // Checkbox / toggle indicator using Unicode checkboxes
             let indicator = match value.map(|(_, v)| v) {
@@ -536,10 +578,19 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
         colors.inactive_border
     };
 
+    let arg_total = app.arg_values.len();
+    let arg_index = app.arg_index();
+
+    let title = if arg_total > 0 && is_focused {
+        format!(" Arguments [{}/{}] ", arg_index + 1, arg_total)
+    } else {
+        format!(" Arguments ({}) ", arg_total)
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
-        .title(" Arguments ")
+        .title(title)
         .title_style(Style::default().fg(border_color).bold())
         .padding(Padding::horizontal(1));
 
@@ -547,7 +598,6 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
     let inner_height = area.height.saturating_sub(2) as usize;
     app.ensure_visible(Focus::Args, inner_height);
 
-    let arg_index = app.arg_index();
     let items: Vec<ListItem> = app
         .arg_values
         .iter()
@@ -557,6 +607,16 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
             let is_editing = is_selected && app.editing;
 
             let mut spans = Vec::new();
+
+            // Selection cursor indicator
+            if is_selected {
+                spans.push(Span::styled(
+                    "▸ ",
+                    Style::default().fg(colors.active_border),
+                ));
+            } else {
+                spans.push(Span::styled("  ", Style::default()));
+            }
 
             // Required/optional indicator
             if arg_val.required {

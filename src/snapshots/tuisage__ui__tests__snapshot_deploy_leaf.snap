@@ -3,19 +3,19 @@ source: src/ui.rs
 expression: output
 ---
 mycli › deploy
-┌ Flags ───────────────────────────────────────────────────────────────────────────────────────────┐
-│ [·] --tag = <tag> — Docker image tag                                                             │
-│ ☐ --rollback — Rollback to previous version                                                      │
-│ ☐ --skip-tests — Skip running tests before deploy                                                │
-│ ☐ -y, --yes — Skip confirmation prompt                                                           │
-│ [0] -v, --verbose [G] — Enable verbose logging                                                   │
-│ ☐ -q, --quiet [G] — Enable quiet mode                                                            │
+┌ Flags [1/6] ─────────────────────────────────────────────────────────────────────────────────────┐
+│ ▸ [·] --tag = <tag> — Docker image tag                                                           │
+│   ☐ --rollback — Rollback to previous version                                                    │
+│   ☐ --skip-tests — Skip running tests before deploy                                              │
+│   ☐ -y, --yes — Skip confirmation prompt                                                         │
+│   [0] -v, --verbose [G] — Enable verbose logging                                                 │
+│   ☐ -q, --quiet [G] — Enable quiet mode                                                          │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ Arguments ───────────────────────────────────────────────────────────────────────────────────────┐
-│ ● <environment> = <dev|staging|prod>                                                             │
+┌ Arguments (1) ───────────────────────────────────────────────────────────────────────────────────┐
+│   ● <environment> = <dev|staging|prod>                                                           │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

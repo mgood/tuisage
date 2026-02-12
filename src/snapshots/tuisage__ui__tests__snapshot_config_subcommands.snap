@@ -3,11 +3,11 @@ source: src/ui.rs
 expression: output
 ---
 mycli › config
-┌ Commands ────────────────────────────┐┌ Flags ───────────────────────────────────────────────────┐
-│ set (add) — Set a config value       ││ [0] -v, --verbose [G] — Enable verbose logging           │
-│ get — Get a config value             ││ ☐ -q, --quiet [G] — Enable quiet mode                    │
-│ list (ls) — List all config values   ││                                                          │
-│ remove (rm) — Remove a config value  ││                                                          │
+┌ Commands [1/4] ──────────────────────┐┌ Flags (2) ───────────────────────────────────────────────┐
+│ ▸ set (add) — Set a config value     ││   [0] -v, --verbose [G] — Enable verbose logging         │
+│   get — Get a config value           ││   ☐ -q, --quiet [G] — Enable quiet mode                  │
+│   list (ls) — List all config values ││                                                          │
+│   remove (rm) — Remove a config valu ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │

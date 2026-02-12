@@ -3,20 +3,20 @@ source: src/ui.rs
 expression: output
 ---
 mycli › run
-┌ Flags ───────────────────────────────────────────────────────────────────────────────────────────┐
-│ [·] -e, --env = <dev|staging|prod> — Environment to run in                                       │
-│ [•] -j, --jobs = 4 (default) — Number of parallel jobs                                           │
-│ ☐ --dry-run — Show what would be run without executing                                           │
-│ ☐ -w, --watch — Watch for changes and re-run                                                     │
-│ [0] -v, --verbose [G] — Enable verbose logging                                                   │
-│ ☐ -q, --quiet [G] — Enable quiet mode                                                            │
+┌ Flags [1/6] ─────────────────────────────────────────────────────────────────────────────────────┐
+│ ▸ [·] -e, --env = <dev|staging|prod> — Environment to run in                                     │
+│   [•] -j, --jobs = 4 (default) — Number of parallel jobs                                         │
+│   ☐ --dry-run — Show what would be run without executing                                         │
+│   ☐ -w, --watch — Watch for changes and re-run                                                   │
+│   [0] -v, --verbose [G] — Enable verbose logging                                                 │
+│   ☐ -q, --quiet [G] — Enable quiet mode                                                          │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ Arguments ───────────────────────────────────────────────────────────────────────────────────────┐
-│ ● <task> = (empty)                                                                               │
-│ ○ [args] = (empty)                                                                               │
+┌ Arguments (2) ───────────────────────────────────────────────────────────────────────────────────┐
+│   ● <task> = (empty)                                                                             │
+│   ○ [args] = (empty)                                                                             │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
