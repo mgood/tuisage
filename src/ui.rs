@@ -5,10 +5,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Padding, Paragraph, Wrap},
     Frame,
 };
-use ratatui_interact::components::{
-    Breadcrumb, BreadcrumbItem, BreadcrumbState, BreadcrumbStyle, Input, InputStyle, TreeStyle,
-    TreeView,
-};
+use ratatui_interact::components::{TreeStyle, TreeView};
 use ratatui_themes::ThemePalette;
 
 #[cfg(test)]
@@ -30,8 +27,6 @@ struct UiColors {
     selected_bg: Color,
     editing_bg: Color,
     preview_cmd: Color,
-    breadcrumb: Color,
-    filter: Color,
     choice: Color,
     default_val: Color,
     count: Color,
@@ -79,8 +74,6 @@ impl UiColors {
             selected_bg,
             editing_bg,
             preview_cmd: p.fg,
-            breadcrumb: p.accent,
-            filter: p.warning,
             choice: p.info,
             default_val: p.muted,
             count: p.secondary,
@@ -95,14 +88,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
     // Top-level vertical layout:
-    //   [breadcrumb bar]
     //   [main content area]
     //   [help / status bar]
     //   [command preview]
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // breadcrumb
             Constraint::Min(6),    // main content
             Constraint::Length(2), // help text
             Constraint::Length(3), // command preview
@@ -115,88 +106,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let palette = app.palette();
     let colors = UiColors::from_palette(&palette);
 
-    render_breadcrumb(frame, app, outer[0], &colors);
-    render_main_content(frame, app, outer[1], &colors);
-    render_help_bar(frame, app, outer[2], &colors);
-    render_preview(frame, app, outer[3], &colors);
+    render_main_content(frame, app, outer[0], &colors);
+    render_help_bar(frame, app, outer[1], &colors);
+    render_preview(frame, app, outer[2], &colors);
 
     // Register preview area for click hit-testing
-    app.click_regions.register(outer[3], Focus::Preview);
-}
-
-/// Render the breadcrumb bar using the ratatui-interact Breadcrumb widget.
-fn render_breadcrumb(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) {
-    let bin = if app.spec.bin.is_empty() {
-        &app.spec.name
-    } else {
-        &app.spec.bin
-    };
-
-    // Build breadcrumb items: root binary + command path
-    let mut items = vec![BreadcrumbItem::new("root", bin)];
-    for name in &app.command_path {
-        items.push(BreadcrumbItem::new(name.as_str(), name.as_str()));
-    }
-
-    let bc_state = BreadcrumbState::new(items);
-
-    // Style the breadcrumb with theme colors
-    let bc_style = BreadcrumbStyle::chevron()
-        .item_style(
-            Style::default()
-                .fg(colors.breadcrumb)
-                .add_modifier(Modifier::BOLD),
-        )
-        .last_item_style(
-            Style::default()
-                .fg(colors.breadcrumb)
-                .add_modifier(Modifier::BOLD),
-        )
-        .separator_style(Style::default().fg(colors.help))
-        .padding(1, 0);
-
-    let breadcrumb = Breadcrumb::new(&bc_state).style(bc_style);
-
-    // If filtering is active, we split the breadcrumb area to show filter input
-    if app.filtering {
-        let bc_width = breadcrumb
-            .calculate_width()
-            .min(area.width.saturating_sub(20));
-        let filter_width = area.width.saturating_sub(bc_width).saturating_sub(3);
-
-        let bc_area = Rect::new(area.x, area.y, bc_width, area.height);
-        let separator_area = Rect::new(area.x + bc_width, area.y, 3, area.height);
-        let filter_area = Rect::new(area.x + bc_width + 3, area.y, filter_width, area.height);
-
-        // Render background
-        let bg = Paragraph::new("").style(Style::default().bg(colors.bar_bg));
-        frame.render_widget(bg, area);
-
-        // Render breadcrumb
-        breadcrumb.render_stateful(bc_area, frame.buffer_mut());
-
-        // Render filter separator
-        let sep = Paragraph::new(Span::styled("  /", Style::default().fg(colors.filter)));
-        frame.render_widget(sep, separator_area);
-
-        // Render filter input using ratatui-interact Input widget
-        let input_style = InputStyle::default()
-            .text_fg(colors.filter)
-            .cursor_fg(colors.filter)
-            .placeholder_fg(colors.help);
-        let input = Input::new(&app.filter_input)
-            .style(input_style)
-            .with_border(false)
-            .placeholder("type to filter...");
-        input.render_stateful(frame, filter_area);
-    } else {
-        // Render background
-        let bg = Paragraph::new("").style(Style::default().bg(colors.bar_bg));
-        frame.render_widget(bg, area);
-
-        // Render breadcrumb only
-        breadcrumb.render_stateful(area, frame.buffer_mut());
-    }
+    app.click_regions.register(outer[2], Focus::Preview);
 }
 
 /// Render the main content area with panels for commands, flags, and args.
@@ -1421,13 +1336,13 @@ flag "-q --quiet" help="Quiet mode"
     fn test_focused_panel_shows_position() {
         let mut app = App::new(sample_spec());
         app.set_focus(Focus::Commands);
-        // In tree view: root + 7 top-level = 8 total visible
+        // In tree view: 7 top-level commands (no root)
         // set_command_index(2) selects the 3rd visible node
         app.command_tree_state.selected_index = 2;
         app.sync_command_path_from_tree();
         let output = render_to_string(&mut app, 100, 24);
         // Focused panel shows [position/total]
-        assert!(output.contains("[3/8]"));
+        assert!(output.contains("[3/7]"));
     }
 
     #[test]

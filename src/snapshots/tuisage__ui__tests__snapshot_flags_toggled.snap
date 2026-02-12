@@ -2,21 +2,21 @@
 source: src/ui.rs
 expression: output
 ---
-mycli › deploy
-┌ Commands (8) ────────────────────────┐┌ Flags [1/6] ─────────────────────────────────────────────┐
-│  ▼ mycli                             ││ ▶ [•] --tag = v1.2.3 — Docker image tag                  │
-│      ├── init — Initialize a new     ││   ✓ --rollback — Rollback to previous version            │
-│project                               ││   ○ --skip-tests — Skip running tests before deploy      │
-│      ├── ▶ config — Manage           ││   ○ -y, --yes — Skip confirmation prompt                 │
-│configuration                         ││   [0] -v, --verbose [G] — Enable verbose logging         │
-│      ├── run — Run a task            ││   ○ -q, --quiet [G] — Enable quiet mode                  │
-│▶     ├── deploy — Deploy the         ││                                                          │
-│application                           ││                                                          │
-│      ├── ▶ plugin — Manage plugins   ││                                                          │
-│      ├── version — Print the CLI     │└──────────────────────────────────────────────────────────┘
-│version                               │┌ Arguments (1) ───────────────────────────────────────────┐
-│      └── help — Print help           ││   ● <environment> = prod [dev|staging|prod]              │
-│information                           ││                                                          │
+┌ Commands (7) ────────────────────────┐┌ Flags [1/6] ─────────────────────────────────────────────┐
+│  init — Initialize a new project     ││ ▶ [•] --tag = v1.2.3 — Docker image tag                  │
+│  ▶ config — Manage configuration     ││   ✓ --rollback — Rollback to previous version            │
+│  run — Run a task                    ││   ○ --skip-tests — Skip running tests before deploy      │
+│▶ deploy — Deploy the application     ││   ○ -y, --yes — Skip confirmation prompt                 │
+│  ▶ plugin — Manage plugins           ││   [0] -v, --verbose [G] — Enable verbose logging         │
+│  version — Print the CLI version     ││   ○ -q, --quiet [G] — Enable quiet mode                  │
+│  help — Print help information       ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      │└──────────────────────────────────────────────────────────┘
+│                                      │┌ Arguments (1) ───────────────────────────────────────────┐
+│                                      ││   ● <environment> = prod [dev|staging|prod]              │
+│                                      ││                                                          │
+│                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │

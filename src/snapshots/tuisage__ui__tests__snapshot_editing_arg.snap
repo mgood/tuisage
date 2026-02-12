@@ -2,21 +2,21 @@
 source: src/ui.rs
 expression: output
 ---
-mycli › init
-┌ Commands (8) ────────────────────────┐┌ Flags (4) ───────────────────────────────────────────────┐
-│  ▼ mycli                             ││   [·] -t, --template = <basic|full|minimal> — Template t │
-│▶     ├── init — Initialize a new     ││   ○ -f, --force — Overwrite existing files               │
-│project                               ││   [0] -v, --verbose [G] — Enable verbose logging         │
-│      ├── ▶ config — Manage           ││   ○ -q, --quiet [G] — Enable quiet mode                  │
-│configuration                         ││                                                          │
-│      ├── run — Run a task            ││                                                          │
-│      ├── deploy — Deploy the         ││                                                          │
-│application                           ││                                                          │
-│      ├── ▶ plugin — Manage plugins   ││                                                          │
-│      ├── version — Print the CLI     │└──────────────────────────────────────────────────────────┘
-│version                               │┌ Arguments [1/1] ─────────────────────────────────────────┐
-│      └── help — Print help           ││ ▶ ● <name> = my-project▎                                 │
-│information                           ││                                                          │
+┌ Commands (7) ────────────────────────┐┌ Flags (4) ───────────────────────────────────────────────┐
+│▶ init — Initialize a new project     ││   [·] -t, --template = <basic|full|minimal> — Template t │
+│  ▶ config — Manage configuration     ││   ○ -f, --force — Overwrite existing files               │
+│  run — Run a task                    ││   [0] -v, --verbose [G] — Enable verbose logging         │
+│  deploy — Deploy the application     ││   ○ -q, --quiet [G] — Enable quiet mode                  │
+│  ▶ plugin — Manage plugins           ││                                                          │
+│  version — Print the CLI version     ││                                                          │
+│  help — Print help information       ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      │└──────────────────────────────────────────────────────────┘
+│                                      │┌ Arguments [1/1] ─────────────────────────────────────────┐
+│                                      ││ ▶ ● <name> = my-project▎                                 │
+│                                      ││                                                          │
+│                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │

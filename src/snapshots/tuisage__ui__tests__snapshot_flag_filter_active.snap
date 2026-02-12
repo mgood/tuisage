@@ -2,21 +2,21 @@
 source: src/ui.rs
 expression: output
 ---
-mycli › deploy   /roll
-┌ Commands (8) ────────────────────────┐┌ Flags (/roll) [1/1] ─────────────────────────────────────┐
-│  ▼ mycli                             ││ ▶ ○ --rollback — Rollback to previous version            │
-│      ├── init — Initialize a new     ││                                                          │
-│project                               ││                                                          │
-│      ├── ▶ config — Manage           ││                                                          │
-│configuration                         ││                                                          │
-│      ├── run — Run a task            ││                                                          │
-│▶     ├── deploy — Deploy the         ││                                                          │
-│application                           ││                                                          │
-│      ├── ▶ plugin — Manage plugins   ││                                                          │
-│      ├── version — Print the CLI     │└──────────────────────────────────────────────────────────┘
-│version                               │┌ Arguments (1) ───────────────────────────────────────────┐
-│      └── help — Print help           ││   ● <environment> = <dev|staging|prod>                   │
-│information                           ││                                                          │
+┌ Commands (7) ────────────────────────┐┌ Flags (/roll) [1/1] ─────────────────────────────────────┐
+│  init — Initialize a new project     ││ ▶ ○ --rollback — Rollback to previous version            │
+│  ▶ config — Manage configuration     ││                                                          │
+│  run — Run a task                    ││                                                          │
+│▶ deploy — Deploy the application     ││                                                          │
+│  ▶ plugin — Manage plugins           ││                                                          │
+│  version — Print the CLI version     ││                                                          │
+│  help — Print help information       ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      │└──────────────────────────────────────────────────────────┘
+│                                      │┌ Arguments (1) ───────────────────────────────────────────┐
+│                                      ││   ● <environment> = <dev|staging|prod>                   │
+│                                      ││                                                          │
+│                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │

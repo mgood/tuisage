@@ -2,24 +2,24 @@
 source: src/ui.rs
 expression: output
 ---
-mycli › config
-┌ Commands [3/12] ─────────────────────┐┌ Flags (2) ───────────────────────────────────────────────┐
-│  ▼ mycli                             ││   [0] -v, --verbose [G] — Enable verbose logging         │
-│      ├── init — Initialize a new     ││   ○ -q, --quiet [G] — Enable quiet mode                  │
-│project                               ││                                                          │
-│▶     ├── ▼ config — Manage           ││                                                          │
-│configuration                         ││                                                          │
-│      │   ├── set (add) — Set a config││                                                          │
+┌ Commands [2/11] ─────────────────────┐┌ Flags (2) ───────────────────────────────────────────────┐
+│  init — Initialize a new project     ││   [0] -v, --verbose [G] — Enable verbose logging         │
+│▶ ▼ config — Manage configuration     ││   ○ -q, --quiet [G] — Enable quiet mode                  │
+│  │   ├── set (add) — Set a config    ││                                                          │
 │value                                 ││                                                          │
-│      │   ├── get — Get a config value││                                                          │
-│      │   ├── list (ls) — List all    ││                                                          │
-│config values                         ││                                                          │
-│      │   └── remove (rm) — Remove a  ││                                                          │
+│  │   ├── get — Get a config value    ││                                                          │
+│  │   ├── list (ls) — List all config ││                                                          │
+│values                                ││                                                          │
+│  │   └── remove (rm) — Remove a      ││                                                          │
 │config value                          ││                                                          │
-│      ├── run — Run a task            ││                                                          │
-│      ├── deploy — Deploy the         ││                                                          │
-│application                           ││                                                          │
-│      ├── ▶ plugin — Manage plugins   ││                                                          │
+│  run — Run a task                    ││                                                          │
+│  deploy — Deploy the application     ││                                                          │
+│  ▶ plugin — Manage plugins           ││                                                          │
+│  version — Print the CLI version     ││                                                          │
+│  help — Print help information       ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
  💡  Manage configuration
  Enter/→: select  ↑↓: navigate  Tab: next  /: filter  T: theme  Esc: back  q: quit [Dracula]
