@@ -432,11 +432,31 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
             let flag_display = flag_display_string(flag);
 
             if is_selected {
-                // Selected flag - bold, no highlighting
-                let flag_style = Style::default()
-                    .fg(colors.flag)
-                    .add_modifier(Modifier::BOLD);
-                spans.push(Span::styled(flag_display, flag_style));
+                // Selected flag - apply highlighting with high-contrast colors for visibility against selection background
+                if !match_scores.is_empty() {
+                    let pattern = app.filter();
+                    let normal_style = Style::default()
+                        .fg(colors.flag)
+                        .add_modifier(Modifier::BOLD);
+                    // Use inverted colors for matched characters to stand out against selection bg
+                    let highlight_style = Style::default()
+                        .fg(colors.bg)
+                        .bg(colors.flag)
+                        .add_modifier(Modifier::BOLD);
+                    let highlighted_spans = build_highlighted_text(
+                        &flag_display,
+                        pattern,
+                        normal_style,
+                        highlight_style,
+                    );
+                    spans.extend(highlighted_spans);
+                } else {
+                    // No filter active - just bold
+                    let flag_style = Style::default()
+                        .fg(colors.flag)
+                        .add_modifier(Modifier::BOLD);
+                    spans.push(Span::styled(flag_display, flag_style));
+                }
             } else if !is_match {
                 // Non-matching flag - subdued/dimmed
                 let flag_style = Style::default().fg(colors.help).add_modifier(Modifier::DIM);
@@ -1144,6 +1164,23 @@ flag "-q --quiet" help="Quiet mode"
         app.set_focus(Focus::Flags);
         app.filtering = true;
         app.filter_input.set_text("verb");
+
+        let output = render_to_string(&mut app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_flag_filter_selected_item() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+
+        // Focus on flags and filter for "tag" (matches --tag)
+        app.set_focus(Focus::Flags);
+        app.filtering = true;
+        app.filter_input.set_text("tag");
+
+        // Move selection to the matching flag (tag is at index 0)
+        app.flag_list_state.selected_index = 0;
 
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
