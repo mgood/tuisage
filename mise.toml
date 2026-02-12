@@ -30,3 +30,10 @@ else
   cargo clippy -- -D warnings
 fi
 '''
+
+# fish
+# cargo run -- (mise tasks ls --usage | psub)
+
+[tasks.recurse]
+description = "Run tuisage on its own mise tasks."
+run = "bash -c 'cargo run -- <(mise tasks ls --usage)'"

@@ -1,17 +1,43 @@
 use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 
+use clap::{CommandFactory, Parser};
+
 mod app;
 mod ui;
 
 use app::App;
 
+/// TUI application for interacting with CLI commands defined by usage specs
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Path to usage spec file, or "-" to read from stdin
+    spec_file: Option<String>,
+
+    /// Generate usage spec for this tool
+    #[arg(long)]
+    usage: bool,
+}
+
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
 
-    let args: Vec<String> = std::env::args().collect();
+    let args = Args::parse();
 
-    let spec = match args.get(1).map(|s| s.as_str()) {
+    // Handle --usage flag to output usage spec
+    if args.usage {
+        let mut cmd = Args::command();
+        let bin_name = std::env::args()
+            .next()
+            .unwrap_or_else(|| "tuisage".to_string());
+        let mut buf = Vec::new();
+        clap_usage::generate(&mut cmd, bin_name, &mut buf);
+        print!("{}", String::from_utf8_lossy(&buf));
+        return Ok(());
+    }
+
+    let spec = match args.spec_file.as_deref() {
         Some("-") => {
             // Explicit stdin: read usage spec from stdin
             let mut input = String::new();
@@ -33,10 +59,10 @@ fn main() -> color_eyre::Result<()> {
         None => {
             // No argument: check if stdin is piped (not a TTY)
             if std::io::stdin().is_terminal() {
-                eprintln!("Usage: tuisage <spec-file.usage.kdl>");
-                eprintln!("       tuisage -              # read spec from stdin");
-                eprintln!("       cat spec.kdl | tuisage  # pipe spec via stdin");
-                std::process::exit(1);
+                // Let clap handle the error message
+                return Err(color_eyre::eyre::eyre!(
+                    "No spec file provided. Use --help for usage information."
+                ));
             } else {
                 let mut input = String::new();
                 std::io::stdin().read_to_string(&mut input)?;
