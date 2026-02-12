@@ -13,7 +13,7 @@ These are the preferred libraries for implementing TuiSage features, as specifie
 | UI components | `ratatui-interact` | Breadcrumb, Input, FocusManager, ListPickerState, TreeView |
 | Color theming | `ratatui-themes` | Consistent theme palettes |
 | Usage spec parsing | `usage-lib` | Parse `.usage.kdl` files (no default features) |
-| Fuzzy matching (future) | `nucleo-matcher` | fzf-style scoring and ranking |
+| Fuzzy matching | `nucleo-matcher` | Pattern-based fzf-style scoring with multi-word and special character support |
 | Error reporting | `color-eyre` | Pretty error messages with context |
 | Snapshot testing | `insta` | Terminal output comparison (dev dependency) |
 
@@ -267,13 +267,15 @@ If the user is currently editing a value and clicks on a different item or panel
 
 ## Fuzzy Filtering
 
-Filtering uses scored subsequence-matching (powered by `nucleo-matcher`):
+Filtering uses scored fuzzy-matching (powered by `nucleo-matcher::Pattern`):
 
 1. The user presses `/` to activate filter mode in the Commands or Flags panel.
 2. The panel title shows the filter query (e.g., `Commands (/query) [2/15 matched]`).
-3. As the user types, items are scored against the filter pattern:
-   - **Matching items** (score > 0) are displayed in normal color with matching characters highlighted (emphasized)
+3. As the user types, items are scored against the filter pattern using `Pattern::parse()`:
+   - **Pattern matching** supports multi-word patterns (whitespace-separated) and fzf-style special characters (^, $, !, ')
+   - **Matching items** (score > 0) are displayed in normal color with matching characters highlighted (bold + underlined)
    - **Non-matching items** (score = 0) are displayed in a dimmed/subdued color without shifting the layout
+   - Match indices are sorted and deduplicated for accurate character-level highlighting
 4. In the Commands panel, the full tree structure is preserved — users can see all available commands for context.
 5. **Auto-selection**: If the currently selected item doesn't match the filter, the selection automatically moves to the next matching item.
 6. The panel title updates to show matching count vs. total (e.g., `Commands (/pl) [2/7 matched]`).
