@@ -82,7 +82,7 @@ The core state and logic module (~2900 lines including ~1200 lines of tests).
 
 - **`Action`** — return value from event handlers: `None`, `Quit`, `Accept`, `Execute`.
 - **`AppMode`** — enum: `Builder` (normal command-building UI) or `Executing` (embedded terminal running).
-- **`ExecutionState`** — struct holding PTY state: `command_display`, `parser` (vt100), `pty_writer`, `exited` flag, `exit_status`.
+- **`ExecutionState`** — struct holding PTY state: `command_display`, `parser` (vt100), `pty_writer`, `pty_master`, `exited` flag, `exit_status`.
 - **`Focus`** — enum of focusable panels: `Commands`, `Flags`, `Args`, `Preview`.
 - **`FlagValue`** — discriminated union: `Bool(bool)`, `String(String)`, `Count(u32)`.
 - **`ArgValue`** — struct with `name`, `value`, `required`, `choices` fields.
@@ -288,12 +288,12 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - **Theme cycling** — `]`/`[` keys cycle through themes forward/backward, `T` also cycles forward. Current theme name shown in status bar.
 - **Print-only mode** — press `p` when the Preview panel is focused to output the command to stdout and exit, enabling piping and shell integration.
 - **Command execution** — execute built commands in an embedded PTY terminal directly within the TUI. Commands are spawned with separate process arguments (not shell-stringified) via `portable-pty`. Terminal output is rendered in real-time using `tui-term::PseudoTerminal`. Keyboard input is forwarded to the running process. The execution view shows the command at the top, terminal output in the middle, and a status bar at the bottom. After the process exits, the user closes the view to return to the command builder for building and running additional commands.
-- Comprehensive test suite (127+ tests)
+- **PTY resize** — dynamically resize the embedded terminal when the TUI window is resized during execution. The PTY master is stored in `ExecutionState` and resized via `app.resize_pty()` when `Event::Resize` is received during execution mode.
+- Comprehensive test suite (136+ tests)
 - Zero clippy warnings
 
 ### Remaining Work
 
-- **PTY resize** — dynamically resize the embedded terminal when the TUI window is resized during execution
 - **Clipboard copy** — copy the built command to the system clipboard from within the TUI
 - **Embedded USAGE blocks** — verify and test support for script files with heredoc USAGE blocks via `--spec-file`
 - **Module splitting** — break `app.rs` into `state`, `input`, `builder` sub-modules; break `ui.rs` into widget modules

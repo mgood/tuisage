@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
+use portable_pty::{MasterPty, PtySize};
 use ratatui::layout::Rect;
 use ratatui_interact::components::{InputState, ListPickerState, TreeNode, TreeViewState};
 use ratatui_interact::state::FocusManager;
@@ -37,6 +38,8 @@ pub struct ExecutionState {
     pub parser: Arc<RwLock<vt100::Parser>>,
     /// Writer to send input to the PTY (None after the master is dropped).
     pub pty_writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
+    /// PTY master for resizing.
+    pub pty_master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
     /// Whether the child process has exited.
     pub exited: Arc<AtomicBool>,
     /// Exit status description (e.g. "0", "1", "signal 9").
@@ -194,6 +197,26 @@ impl App {
                     let _ = writer.flush();
                 }
             }
+        }
+    }
+
+    /// Resize the PTY to fit the new terminal dimensions.
+    pub fn resize_pty(&self, rows: u16, cols: u16) {
+        if let Some(ref exec) = self.execution {
+            // Resize the PTY master
+            if let Ok(mut master_guard) = exec.pty_master.lock() {
+                if let Some(ref mut master) = *master_guard {
+                    let _ = master.resize(PtySize {
+                        rows,
+                        cols,
+                        pixel_width: 0,
+                        pixel_height: 0,
+                    });
+                }
+            }
+            // Note: vt100::Parser doesn't support dynamic resizing.
+            // The PTY resize signal will cause the child process to reflow its output,
+            // and the parser will receive the reflowed content naturally.
         }
     }
 
@@ -3020,6 +3043,7 @@ mod tests {
             command_display: "mycli deploy".to_string(),
             parser,
             pty_writer,
+            pty_master: Arc::new(Mutex::new(None)),
             exited: exited.clone(),
             exit_status,
         };
@@ -3052,9 +3076,10 @@ mod tests {
             Arc::new(Mutex::new(None));
 
         let state = ExecutionState {
-            command_display: "mycli".to_string(),
+            command_display: "mycli deploy".to_string(),
             parser,
             pty_writer,
+            pty_master: Arc::new(Mutex::new(None)),
             exited,
             exit_status,
         };
@@ -3077,6 +3102,7 @@ mod tests {
             command_display: "mycli".to_string(),
             parser,
             pty_writer,
+            pty_master: Arc::new(Mutex::new(None)),
             exited,
             exit_status,
         };
@@ -3109,6 +3135,7 @@ mod tests {
             command_display: "mycli".to_string(),
             parser,
             pty_writer,
+            pty_master: Arc::new(Mutex::new(None)),
             exited,
             exit_status,
         };
@@ -3151,6 +3178,7 @@ mod tests {
             command_display: "mycli".to_string(),
             parser,
             pty_writer,
+            pty_master: Arc::new(Mutex::new(None)),
             exited,
             exit_status,
         };
@@ -3165,6 +3193,51 @@ mod tests {
         let result = app.handle_key(q);
         assert_eq!(result, Action::None);
         assert!(app.is_executing(), "Should still be executing");
+    }
+
+    #[test]
+    fn test_resize_pty() {
+        use portable_pty::{NativePtySystem, PtySize, PtySystem};
+
+        let mut app = App::new(sample_spec());
+
+        // Create a real PTY for testing resize
+        let pty_system = NativePtySystem::default();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("Failed to open PTY");
+
+        let parser = Arc::new(RwLock::new(vt100::Parser::new(24, 80, 0)));
+        let pty_master: Arc<Mutex<Option<Box<dyn portable_pty::MasterPty + Send>>>> =
+            Arc::new(Mutex::new(Some(pair.master)));
+
+        let state = ExecutionState {
+            command_display: "test command".to_string(),
+            parser,
+            pty_writer: Arc::new(Mutex::new(None)),
+            pty_master,
+            exited: Arc::new(AtomicBool::new(false)),
+            exit_status: Arc::new(Mutex::new(None)),
+        };
+
+        app.start_execution(state);
+
+        // Resize the PTY
+        app.resize_pty(40, 120);
+
+        // Verify the PTY master still exists (resize doesn't break it)
+        if let Some(ref exec) = app.execution {
+            let master_guard = exec.pty_master.lock().unwrap();
+            assert!(
+                master_guard.is_some(),
+                "PTY master should still exist after resize"
+            );
+        }
     }
 
     #[test]

@@ -251,10 +251,15 @@ fn spawn_command(app: &mut App, terminal_size: ratatui::layout::Size) -> color_e
     let pty_writer: Arc<Mutex<Option<Box<dyn std::io::Write + Send>>>> =
         Arc::new(Mutex::new(Some(writer)));
 
+    // Store the master for resizing
+    let pty_master: Arc<Mutex<Option<Box<dyn portable_pty::MasterPty + Send>>>> =
+        Arc::new(Mutex::new(Some(pair.master)));
+
     // Set up a thread to drop the writer and master when the child exits
     {
         let exited = exited.clone();
         let pty_writer = pty_writer.clone();
+        let pty_master = pty_master.clone();
         std::thread::spawn(move || {
             // Wait for the child to exit
             while !exited.load(Ordering::Relaxed) {
@@ -267,7 +272,9 @@ fn spawn_command(app: &mut App, terminal_size: ratatui::layout::Size) -> color_e
                 *w = None;
             }
             // Drop the master to clean up
-            drop(pair.master);
+            if let Ok(mut m) = pty_master.lock() {
+                *m = None;
+            }
         });
     }
 
@@ -275,6 +282,7 @@ fn spawn_command(app: &mut App, terminal_size: ratatui::layout::Size) -> color_e
         command_display,
         parser,
         pty_writer,
+        pty_master,
         exited,
         exit_status,
     };
@@ -305,8 +313,12 @@ fn run_event_loop(
                         // But if the process has exited, just close
                         app.handle_key(key);
                     }
-                    Event::Resize(_, _) => {
-                        // Terminal will be redrawn on next loop iteration
+                    Event::Resize(width, height) => {
+                        // Resize the PTY to match the new terminal size
+                        // Layout: 3 rows for command display + 1 row for status bar + 2 rows for terminal borders
+                        let pty_rows = height.saturating_sub(6).max(4);
+                        let pty_cols = width.saturating_sub(2).max(20);
+                        app.resize_pty(pty_rows, pty_cols);
                     }
                     _ => {}
                 }
