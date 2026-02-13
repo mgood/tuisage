@@ -257,7 +257,6 @@ impl App {
     }
 
     /// Cycle to the previous theme.
-    #[allow(dead_code)]
     pub fn prev_theme(&mut self) {
         self.theme_name = self.theme_name.prev();
     }
