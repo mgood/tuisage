@@ -1597,23 +1597,23 @@ flag "-q --quiet" help="Quiet mode"
         assert_eq!(app.palette().accent, ThemeName::Nord.palette().accent);
     }
 
-    // ── Breadcrumb widget tests ─────────────────────────────────────────
+    // ── Command path visibility tests ───────────────────────────────────
 
     #[test]
-    fn test_breadcrumb_shows_binary_name() {
+    fn test_binary_name_visible_in_preview() {
         let mut app = App::new(sample_spec());
         let output = render_to_string(&mut app, 100, 24);
-        // The breadcrumb should display the binary name
+        // The binary name should be visible in the command preview
         assert!(output.contains("mycli"));
     }
 
     #[test]
-    fn test_breadcrumb_shows_path() {
+    fn test_command_path_visible_in_ui() {
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["config"]);
 
         let output = render_to_string(&mut app, 100, 24);
-        // Should show both mycli and config in the breadcrumb
+        // Both mycli (in preview) and config (in tree + preview) should be visible
         assert!(output.contains("mycli"));
         assert!(output.contains("config"));
     }
