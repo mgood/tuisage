@@ -2,7 +2,7 @@
 source: src/ui.rs
 expression: output
 ---
-┌ Commands (/verb)─────────────────────┐┌ Flags (/verb) ───────────────────────────────────────────┐
+┌ Commands ────────────────────────────┐┌ Flags (/verb) ───────────────────────────────────────────┐
 │  init        Initialize a new project││ ▶ [·] --tag = <tag>                     Docker image tag │
 │  config          Manage configuration││   ○ --rollback              Rollback to previous version │
 │  │ set (add)       Set a config value││   ○ --skip-tests        Skip running tests before deploy │

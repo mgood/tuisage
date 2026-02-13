@@ -12,6 +12,24 @@ use ratatui_interact::traits::ClickRegionRegistry;
 use ratatui_themes::{ThemeName, ThemePalette};
 use usage::{Spec, SpecCommand, SpecFlag};
 
+/// Per-field match scores for an item (command or flag).
+/// Keeps name and help scores separate so highlighting can be applied
+/// independently to each field.
+#[derive(Debug, Clone, Copy)]
+pub struct MatchScores {
+    /// Score from matching against the item's name (or aliases/path).
+    pub name_score: u32,
+    /// Score from matching against the item's help text.
+    pub help_score: u32,
+}
+
+impl MatchScores {
+    /// Overall score: the best of name and help.
+    pub fn overall(&self) -> u32 {
+        self.name_score.max(self.help_score)
+    }
+}
+
 /// Actions that the event loop should take after handling a key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -247,6 +265,9 @@ impl App {
             click_regions: ClickRegionRegistry::new(),
         };
         app.sync_state();
+        // Synchronize command_path with the tree's initial selection so the
+        // correct flags/args are displayed on the very first render.
+        app.sync_command_path_from_tree();
         app
     }
 
@@ -444,10 +465,33 @@ impl App {
         // Initialize flag values for the current command path if not already set
         let path_key = self.command_path_key();
         if !self.flag_values.contains_key(&path_key) {
+            // Collect current global flag values from root so new levels inherit them
+            let root_global_values: std::collections::HashMap<String, FlagValue> = self
+                .flag_values
+                .get("")
+                .map(|root_flags| {
+                    root_flags
+                        .iter()
+                        .filter(|(name, _)| {
+                            self.spec
+                                .cmd
+                                .flags
+                                .iter()
+                                .any(|f| f.global && f.name == *name)
+                        })
+                        .map(|(name, val)| (name.clone(), val.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
             let flags = self.visible_flags_snapshot();
             let values: Vec<(String, FlagValue)> = flags
                 .iter()
                 .map(|f| {
+                    // For global flags, inherit the current value from root
+                    if let Some(global_val) = root_global_values.get(&f.name) {
+                        return (f.name.clone(), global_val.clone());
+                    }
                     let val = if f.count {
                         FlagValue::Count(0)
                     } else if f.arg.is_some() {
@@ -496,6 +540,30 @@ impl App {
         self.flag_values.entry(key).or_default()
     }
 
+    /// If the named flag is a global flag, propagate its value to all stored
+    /// command-path levels so that build_command (which reads from root) and
+    /// the UI (which reads from the current path) stay consistent.
+    fn sync_global_flag(&mut self, flag_name: &str, new_value: &FlagValue) {
+        let is_global = self
+            .spec
+            .cmd
+            .flags
+            .iter()
+            .any(|f| f.global && f.name == flag_name);
+        if !is_global {
+            return;
+        }
+        // Collect all keys first to avoid borrow issues
+        let keys: Vec<String> = self.flag_values.keys().cloned().collect();
+        for key in keys {
+            if let Some(flags) = self.flag_values.get_mut(&key) {
+                if let Some((_, val)) = flags.iter_mut().find(|(n, _)| n == flag_name) {
+                    *val = new_value.clone();
+                }
+            }
+        }
+    }
+
     // --- Tree view helpers ---
 
     /// Get the total number of commands in the flat list (all nodes, always visible).
@@ -504,8 +572,8 @@ impl App {
     }
 
     /// Compute match scores for all tree nodes when filtering.
-    /// Returns a map of node ID → score (0 for non-matches).
-    pub fn compute_tree_match_scores(&self) -> std::collections::HashMap<String, u32> {
+    /// Returns a map of node ID → MatchScores with per-field scores.
+    pub fn compute_tree_match_scores(&self) -> std::collections::HashMap<String, MatchScores> {
         let pattern = self.filter();
         if pattern.is_empty() {
             return std::collections::HashMap::new();
@@ -515,7 +583,7 @@ impl App {
 
     /// Compute match scores for all flags when filtering.
     /// Returns a map of flag name → score (0 for non-matches).
-    pub fn compute_flag_match_scores(&self) -> std::collections::HashMap<String, u32> {
+    pub fn compute_flag_match_scores(&self) -> std::collections::HashMap<String, MatchScores> {
         let pattern = self.filter();
         if pattern.is_empty() {
             return std::collections::HashMap::new();
@@ -548,8 +616,15 @@ impl App {
                 .map(|h| fuzzy_match_score(h, pattern, &mut temp_matcher))
                 .unwrap_or(0);
 
-            let best_score = name_score.max(long_score).max(short_score).max(help_score);
-            scores.insert(flag.name.clone(), best_score);
+            // name_score combines name, long, short, and path-like scores
+            let combined_name_score = name_score.max(long_score).max(short_score);
+            scores.insert(
+                flag.name.clone(),
+                MatchScores {
+                    name_score: combined_name_score,
+                    help_score,
+                },
+            );
         }
 
         scores
@@ -960,8 +1035,11 @@ impl App {
             Focus::Flags => {
                 let flag_idx = self.flag_index();
                 let values = self.current_flag_values_mut();
-                if let Some((_, FlagValue::String(ref mut s))) = values.get_mut(flag_idx) {
+                if let Some((name, FlagValue::String(ref mut s))) = values.get_mut(flag_idx) {
+                    let flag_name = name.clone();
                     *s = text;
+                    let new_val = FlagValue::String(s.clone());
+                    self.sync_global_flag(&flag_name, &new_val);
                 }
             }
             Focus::Args => {
@@ -1058,6 +1136,11 @@ impl App {
     }
 
     fn move_up(&mut self) {
+        // When a filter is active, skip non-matching items
+        if !self.filter().is_empty() {
+            self.move_to_prev_match();
+            return;
+        }
         match self.focus() {
             Focus::Commands => {
                 self.command_tree_state.select_prev();
@@ -1074,6 +1157,11 @@ impl App {
     }
 
     fn move_down(&mut self) {
+        // When a filter is active, skip non-matching items
+        if !self.filter().is_empty() {
+            self.move_to_next_match();
+            return;
+        }
         match self.focus() {
             Focus::Commands => {
                 let total = self.total_visible_commands();
@@ -1087,6 +1175,98 @@ impl App {
                 self.arg_list_state.select_next();
             }
             Focus::Preview => {}
+        }
+    }
+
+    /// Move to the previous matching item when a filter is active.
+    /// Wraps around to the last match if at the beginning.
+    fn move_to_prev_match(&mut self) {
+        match self.focus() {
+            Focus::Commands => {
+                let scores = self.compute_tree_match_scores();
+                let flat = flatten_command_tree(&self.command_tree_nodes);
+                let current = self.command_tree_state.selected_index;
+                let total = flat.len();
+                if total == 0 {
+                    return;
+                }
+                // Search backwards, wrapping around
+                for offset in 1..total {
+                    let idx = (current + total - offset) % total;
+                    if let Some(cmd) = flat.get(idx) {
+                        if scores.get(&cmd.id).map(|s| s.overall()).unwrap_or(0) > 0 {
+                            self.command_tree_state.selected_index = idx;
+                            self.sync_command_path_from_tree();
+                            return;
+                        }
+                    }
+                }
+            }
+            Focus::Flags => {
+                let scores = self.compute_flag_match_scores();
+                let flags = self.visible_flags();
+                let current = self.flag_list_state.selected_index;
+                let total = flags.len();
+                if total == 0 {
+                    return;
+                }
+                for offset in 1..total {
+                    let idx = (current + total - offset) % total;
+                    if let Some(flag) = flags.get(idx) {
+                        if scores.get(&flag.name).map(|s| s.overall()).unwrap_or(0) > 0 {
+                            self.flag_list_state.select(idx);
+                            return;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Move to the next matching item when a filter is active.
+    /// Wraps around to the first match if at the end.
+    fn move_to_next_match(&mut self) {
+        match self.focus() {
+            Focus::Commands => {
+                let scores = self.compute_tree_match_scores();
+                let flat = flatten_command_tree(&self.command_tree_nodes);
+                let current = self.command_tree_state.selected_index;
+                let total = flat.len();
+                if total == 0 {
+                    return;
+                }
+                // Search forwards, wrapping around
+                for offset in 1..total {
+                    let idx = (current + offset) % total;
+                    if let Some(cmd) = flat.get(idx) {
+                        if scores.get(&cmd.id).map(|s| s.overall()).unwrap_or(0) > 0 {
+                            self.command_tree_state.selected_index = idx;
+                            self.sync_command_path_from_tree();
+                            return;
+                        }
+                    }
+                }
+            }
+            Focus::Flags => {
+                let scores = self.compute_flag_match_scores();
+                let flags = self.visible_flags();
+                let current = self.flag_list_state.selected_index;
+                let total = flags.len();
+                if total == 0 {
+                    return;
+                }
+                for offset in 1..total {
+                    let idx = (current + offset) % total;
+                    if let Some(flag) = flags.get(idx) {
+                        if scores.get(&flag.name).map(|s| s.overall()).unwrap_or(0) > 0 {
+                            self.flag_list_state.select(idx);
+                            return;
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1170,10 +1350,19 @@ impl App {
 
                 // Toggle bool flags, start editing string flags
                 let values = self.current_flag_values_mut();
-                if let Some((_, value)) = values.get_mut(flag_idx) {
+                if let Some((name, value)) = values.get_mut(flag_idx) {
+                    let flag_name = name.clone();
                     match value {
-                        FlagValue::Bool(b) => *b = !*b,
-                        FlagValue::Count(c) => *c += 1,
+                        FlagValue::Bool(b) => {
+                            *b = !*b;
+                            let new_val = FlagValue::Bool(*b);
+                            self.sync_global_flag(&flag_name, &new_val);
+                        }
+                        FlagValue::Count(c) => {
+                            *c += 1;
+                            let new_val = FlagValue::Count(*c);
+                            self.sync_global_flag(&flag_name, &new_val);
+                        }
                         FlagValue::String(s) => {
                             if let Some(choices) = maybe_choices {
                                 // Cycle through choices
@@ -1183,6 +1372,8 @@ impl App {
                                     .map(|i| (i + 1) % choices.len())
                                     .unwrap_or(0);
                                 *s = choices[idx].clone();
+                                let new_val = FlagValue::String(s.clone());
+                                self.sync_global_flag(&flag_name, &new_val);
                             } else {
                                 self.start_editing();
                             }
@@ -1217,10 +1408,19 @@ impl App {
         if self.focus() == Focus::Flags {
             let flag_idx = self.flag_index();
             let values = self.current_flag_values_mut();
-            if let Some((_, value)) = values.get_mut(flag_idx) {
+            if let Some((name, value)) = values.get_mut(flag_idx) {
+                let flag_name = name.clone();
                 match value {
-                    FlagValue::Bool(b) => *b = !*b,
-                    FlagValue::Count(c) => *c += 1,
+                    FlagValue::Bool(b) => {
+                        *b = !*b;
+                        let new_val = FlagValue::Bool(*b);
+                        self.sync_global_flag(&flag_name, &new_val);
+                    }
+                    FlagValue::Count(c) => {
+                        *c += 1;
+                        let new_val = FlagValue::Count(*c);
+                        self.sync_global_flag(&flag_name, &new_val);
+                    }
                     _ => {}
                 }
             }
@@ -1237,8 +1437,8 @@ impl App {
 
                 // Check if current selection matches
                 if let Some(cmd) = flat.get(current_idx) {
-                    if let Some(&score) = scores.get(&cmd.id) {
-                        if score > 0 {
+                    if let Some(score) = scores.get(&cmd.id) {
+                        if score.overall() > 0 {
                             // Current selection matches, keep it
                             return;
                         }
@@ -1247,8 +1447,8 @@ impl App {
 
                 // Current doesn't match, find next matching item
                 for (idx, cmd) in flat.iter().enumerate() {
-                    if let Some(&score) = scores.get(&cmd.id) {
-                        if score > 0 {
+                    if let Some(score) = scores.get(&cmd.id) {
+                        if score.overall() > 0 {
                             self.command_tree_state.selected_index = idx;
                             self.sync_command_path_from_tree();
                             return;
@@ -1265,8 +1465,8 @@ impl App {
 
                 // Check if current selection matches
                 if let Some(flag) = flags.get(current_idx) {
-                    if let Some(&score) = scores.get(&flag.name) {
-                        if score > 0 {
+                    if let Some(score) = scores.get(&flag.name) {
+                        if score.overall() > 0 {
                             // Current selection matches, keep it
                             return;
                         }
@@ -1275,8 +1475,8 @@ impl App {
 
                 // Current doesn't match, find next matching item
                 for (idx, flag) in flags.iter().enumerate() {
-                    if let Some(&score) = scores.get(&flag.name) {
-                        if score > 0 {
+                    if let Some(score) = scores.get(&flag.name) {
+                        if score.overall() > 0 {
                             self.flag_list_state.select(idx);
                             return;
                         }
@@ -1293,8 +1493,11 @@ impl App {
     fn handle_decrement(&mut self) {
         let flag_idx = self.flag_index();
         let values = self.current_flag_values_mut();
-        if let Some((_, FlagValue::Count(c))) = values.get_mut(flag_idx) {
+        if let Some((name, FlagValue::Count(c))) = values.get_mut(flag_idx) {
+            let flag_name = name.clone();
             *c = c.saturating_sub(1);
+            let new_val = FlagValue::Count(*c);
+            self.sync_global_flag(&flag_name, &new_val);
         }
     }
 
@@ -1310,7 +1513,9 @@ impl App {
         };
         parts.push(bin.clone());
 
-        // Gather global flag values (from root command path)
+        // Gather global flag values from the root command path.
+        // Global flags are always synced to root via sync_global_flag(),
+        // so we only need to check the root key.
         let root_key = String::new();
         if let Some(root_flags) = self.flag_values.get(&root_key) {
             for (name, value) in root_flags {
@@ -1328,11 +1533,10 @@ impl App {
             if let Some(sub) = cmd.find_subcommand(name) {
                 cmd = sub;
 
-                // Add flag values for this level
+                // Add flag values for this level (skip global flags, already added from root)
                 let path_key = self.command_path[..=i].join(" ");
                 if let Some(level_flags) = self.flag_values.get(&path_key) {
                     for (fname, fvalue) in level_flags {
-                        // Skip global flags, they were already added
                         let is_global = self
                             .spec
                             .cmd
@@ -1380,7 +1584,7 @@ impl App {
             parts.push(word.to_string());
         }
 
-        // Gather global flag values (from root command path)
+        // Gather global flag values from root (synced via sync_global_flag)
         let root_key = String::new();
         if let Some(root_flags) = self.flag_values.get(&root_key) {
             for (name, value) in root_flags {
@@ -1601,7 +1805,7 @@ fn build_cmd_nodes(cmd: &SpecCommand, parent_path: &[String]) -> Vec<TreeNode<Cm
 fn compute_tree_scores(
     nodes: &[TreeNode<CmdData>],
     pattern: &str,
-) -> std::collections::HashMap<String, u32> {
+) -> std::collections::HashMap<String, MatchScores> {
     let flat = flatten_command_tree(nodes);
     let mut scores = std::collections::HashMap::new();
     let mut matcher = Matcher::new(Config::DEFAULT);
@@ -1626,8 +1830,15 @@ fn compute_tree_scores(
         // queries like "cfgset" can match subcommands via their parent chain.
         let path_score = fuzzy_match_score(&cmd.full_path, pattern, &mut matcher);
 
-        let node_score = name_score.max(alias_score).max(help_score).max(path_score);
-        scores.insert(cmd.id.clone(), node_score);
+        // name_score combines name, alias, and path scores
+        let combined_name_score = name_score.max(alias_score).max(path_score);
+        scores.insert(
+            cmd.id.clone(),
+            MatchScores {
+                name_score: combined_name_score,
+                help_score,
+            },
+        );
     }
 
     scores
@@ -1749,7 +1960,8 @@ mod tests {
         let app = App::new(sample_spec());
         assert_eq!(app.spec.bin, "mycli");
         assert_eq!(app.spec.name, "My CLI");
-        assert_eq!(app.command_path, Vec::<String>::new());
+        // After startup sync, command_path matches the tree's initial selection (first command)
+        assert_eq!(app.command_path, vec!["init"]);
         assert_eq!(app.focus(), Focus::Commands);
     }
 
@@ -1782,7 +1994,10 @@ mod tests {
 
     #[test]
     fn test_visible_subcommands_at_root() {
-        let app = App::new(sample_spec());
+        let mut app = App::new(sample_spec());
+        // After startup sync, command_path is ["init"], navigate to root
+        app.command_path.clear();
+        app.sync_state();
         let subs = app.visible_subcommands();
         let names: Vec<&str> = subs.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"init"));
@@ -1852,7 +2067,8 @@ mod tests {
     fn test_build_command_basic() {
         let app = App::new(sample_spec());
         let cmd = app.build_command();
-        assert_eq!(cmd, "mycli");
+        // After startup sync, command_path is ["init"] so command includes it
+        assert_eq!(cmd, "mycli init");
     }
 
     #[test]
@@ -1893,15 +2109,17 @@ mod tests {
     fn test_build_command_with_count_flag() {
         let mut app = App::new(sample_spec());
 
-        // Set verbose count to 3
-        let key = app.command_path_key();
-        if let Some(flags) = app.flag_values.get_mut(&key) {
+        // Set verbose count to 3 — verbose is a global flag, so set it at root
+        // and sync to all levels (as the UI toggle would do).
+        let root_key = String::new();
+        if let Some(flags) = app.flag_values.get_mut(&root_key) {
             for (name, value) in flags.iter_mut() {
                 if name == "verbose" {
                     *value = FlagValue::Count(3);
                 }
             }
         }
+        app.sync_global_flag("verbose", &FlagValue::Count(3));
 
         let cmd = app.build_command();
         assert!(cmd.contains("-vvv"));
@@ -1924,22 +2142,25 @@ mod tests {
         let scores = compute_tree_scores(&app.command_tree_nodes, "cfgset");
 
         // "cfgset" should match "config set" via full_path "config set"
-        let set_score = scores.get("config set").copied().unwrap_or(0);
+        let set_score = scores.get("config set").map(|s| s.overall()).unwrap_or(0);
         assert!(
             set_score > 0,
             "cfgset should match config set, got score {set_score}"
         );
 
         // "cfgset" should NOT match unrelated commands
-        let init_score = scores.get("init").copied().unwrap_or(0);
+        let init_score = scores.get("init").map(|s| s.overall()).unwrap_or(0);
         assert_eq!(init_score, 0, "cfgset should not match init");
 
-        let run_score = scores.get("run").copied().unwrap_or(0);
+        let run_score = scores.get("run").map(|s| s.overall()).unwrap_or(0);
         assert_eq!(run_score, 0, "cfgset should not match run");
 
         // "plinstall" should match "plugin install"
         let scores2 = compute_tree_scores(&app.command_tree_nodes, "plinstall");
-        let install_score = scores2.get("plugin install").copied().unwrap_or(0);
+        let install_score = scores2
+            .get("plugin install")
+            .map(|s| s.overall())
+            .unwrap_or(0);
         assert!(
             install_score > 0,
             "plinstall should match plugin install, got score {install_score}"
@@ -1978,7 +2199,8 @@ mod tests {
     #[test]
     fn test_command_path_navigation() {
         let mut app = App::new(sample_spec());
-        assert!(app.command_path.is_empty());
+        // After startup sync, command_path matches tree's initial selection
+        assert_eq!(app.command_path, vec!["init"]);
 
         app.navigate_to_command(&["config"]);
         assert_eq!(app.command_path, vec!["config"]);
@@ -2171,12 +2393,12 @@ mod tests {
         let scores = app.compute_flag_match_scores();
 
         // rollback should match (score > 0)
-        let rollback_score = scores.get("rollback").copied().unwrap_or(0);
+        let rollback_score = scores.get("rollback").map(|s| s.overall()).unwrap_or(0);
         assert!(rollback_score > 0, "rollback should match 'roll'");
 
         // tag and yes should not match (score = 0)
-        let tag_score = scores.get("tag").copied().unwrap_or(0);
-        let yes_score = scores.get("yes").copied().unwrap_or(0);
+        let tag_score = scores.get("tag").map(|s| s.overall()).unwrap_or(0);
+        let yes_score = scores.get("yes").map(|s| s.overall()).unwrap_or(0);
         assert_eq!(tag_score, 0, "tag should not match 'roll'");
         assert_eq!(yes_score, 0, "yes should not match 'roll'");
 
@@ -2379,11 +2601,15 @@ mod tests {
     #[test]
     fn test_focus_manager_integration() {
         let mut app = App::new(sample_spec());
-        // Root has commands and flags, no args → [Commands, Flags, Preview]
+        // After startup sync, "init" is selected which has args
+        // → [Commands, Flags, Args, Preview]
         assert_eq!(app.focus(), Focus::Commands);
 
         app.focus_manager.next();
         assert_eq!(app.focus(), Focus::Flags);
+
+        app.focus_manager.next();
+        assert_eq!(app.focus(), Focus::Args);
 
         app.focus_manager.next();
         assert_eq!(app.focus(), Focus::Preview);
@@ -2948,7 +3174,8 @@ mod tests {
     fn test_build_command_parts_basic() {
         let app = App::new(sample_spec());
         let parts = app.build_command_parts();
-        assert_eq!(parts, vec!["mycli"]);
+        // After startup sync, command_path is ["init"] so parts include it
+        assert_eq!(parts, vec!["mycli", "init"]);
     }
 
     #[test]
@@ -3419,5 +3646,315 @@ mod tests {
         app.set_focus(Focus::Flags);
         let result = app.handle_key(p);
         assert_eq!(result, Action::None, "p should do nothing when on Flags");
+    }
+
+    #[test]
+    fn test_startup_sync_selects_first_command() {
+        let app = App::new(sample_spec());
+        // After startup, command_path should match tree's first node
+        assert_eq!(app.command_path, vec!["init"]);
+        // Flags should be init's flags (template, force) + globals (verbose, quiet)
+        let flags = app.visible_flags();
+        let names: Vec<&str> = flags.iter().map(|f| f.name.as_str()).collect();
+        assert!(
+            names.contains(&"template"),
+            "init should have template flag"
+        );
+        assert!(names.contains(&"force"), "init should have force flag");
+        assert!(
+            names.contains(&"verbose"),
+            "init should have global verbose"
+        );
+        // Args should be init's args (name)
+        assert!(!app.arg_values.is_empty(), "init has a <name> arg");
+        assert_eq!(app.arg_values[0].name, "name");
+    }
+
+    #[test]
+    fn test_global_flag_sync_from_subcommand() {
+        let mut app = App::new(sample_spec());
+        // Navigate to deploy
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Flags);
+
+        // Find verbose flag index
+        let flags = app.visible_flags();
+        let verbose_idx = flags.iter().position(|f| f.name == "verbose").unwrap();
+        app.set_flag_index(verbose_idx);
+
+        // Toggle verbose via space (simulating user toggling global flag from subcommand)
+        let space = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char(' '),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(space);
+
+        // The verbose flag should now be Count(1) at the deploy level
+        let deploy_flags = app.current_flag_values();
+        let verbose_val = deploy_flags.iter().find(|(n, _)| n == "verbose");
+        assert!(
+            matches!(verbose_val, Some((_, FlagValue::Count(1)))),
+            "verbose should be Count(1) at deploy level"
+        );
+
+        // It should also be synced to root level
+        let root_flags = app.flag_values.get("").unwrap();
+        let root_verbose = root_flags.iter().find(|(n, _)| n == "verbose");
+        assert!(
+            matches!(root_verbose, Some((_, FlagValue::Count(1)))),
+            "verbose should be synced to root level"
+        );
+
+        // The built command should include -v
+        let cmd = app.build_command();
+        assert!(
+            cmd.contains("-v"),
+            "global flag toggled from subcommand should appear in command: {cmd}"
+        );
+    }
+
+    #[test]
+    fn test_global_flag_sync_across_multiple_levels() {
+        let mut app = App::new(sample_spec());
+
+        // Toggle verbose from root context
+        app.navigate_to_command(&["init"]);
+        app.set_focus(Focus::Flags);
+        let flags = app.visible_flags();
+        let verbose_idx = flags.iter().position(|f| f.name == "verbose").unwrap();
+        app.set_flag_index(verbose_idx);
+
+        // Increment verbose 3 times
+        let space = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char(' '),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(space);
+        app.handle_key(space);
+        app.handle_key(space);
+
+        // Navigate to deploy — verbose should reflect the synced value
+        app.navigate_to_command(&["deploy"]);
+        let deploy_flags = app.current_flag_values();
+        let verbose_val = deploy_flags.iter().find(|(n, _)| n == "verbose");
+        assert!(
+            matches!(verbose_val, Some((_, FlagValue::Count(3)))),
+            "verbose should be Count(3) at deploy level after sync"
+        );
+
+        // Command should include -vvv
+        let cmd = app.build_command();
+        assert!(cmd.contains("-vvv"), "command should contain -vvv: {cmd}");
+    }
+
+    #[test]
+    fn test_filtered_navigation_skips_non_matches() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Commands);
+
+        // Activate filter mode and type "deploy"
+        let slash = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('/'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(slash);
+
+        for c in "deploy".chars() {
+            let key = crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(c),
+                crossterm::event::KeyModifiers::NONE,
+            );
+            app.handle_key(key);
+        }
+
+        // Auto-selection should have moved to "deploy"
+        let flat = flatten_command_tree(&app.command_tree_nodes);
+        let selected = &flat[app.command_index()];
+        assert_eq!(selected.name, "deploy", "should auto-select deploy");
+
+        // Press down — should wrap around to deploy again (only match)
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(down);
+        let selected = &flat[app.command_index()];
+        assert_eq!(
+            selected.name, "deploy",
+            "down should stay on deploy (only match)"
+        );
+
+        // Press up — should also stay on deploy
+        let up = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Up,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(up);
+        let selected = &flat[app.command_index()];
+        assert_eq!(
+            selected.name, "deploy",
+            "up should stay on deploy (only match)"
+        );
+    }
+
+    #[test]
+    fn test_filtered_navigation_cycles_through_matches() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Commands);
+
+        // Filter for "'list" — the ' prefix requests an exact substring match in
+        // nucleo, so this matches only commands whose name/path contains "list"
+        // exactly: "config list" and "plugin list", but NOT "install".
+        let slash = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('/'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(slash);
+
+        for c in "'list".chars() {
+            let key = crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(c),
+                crossterm::event::KeyModifiers::NONE,
+            );
+            app.handle_key(key);
+        }
+
+        let flat = flatten_command_tree(&app.command_tree_nodes);
+        let first_selected = app.command_index();
+        let first_name = flat[first_selected].name.clone();
+        assert_eq!(first_name, "list", "should auto-select first 'list'");
+
+        // Press down — should move to the other "list"
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(down);
+        let second_selected = app.command_index();
+        assert_ne!(
+            second_selected, first_selected,
+            "down should move to a different list match"
+        );
+        assert_eq!(flat[second_selected].name, "list");
+
+        // Press up — should go back to the first match
+        let up = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Up,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(up);
+        assert_eq!(app.command_index(), first_selected);
+    }
+
+    #[test]
+    fn test_filtered_flag_navigation() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Flags);
+
+        // Filter for "skip" — should match "--skip-tests"
+        let slash = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('/'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(slash);
+
+        for c in "skip".chars() {
+            let key = crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(c),
+                crossterm::event::KeyModifiers::NONE,
+            );
+            app.handle_key(key);
+        }
+
+        let flags = app.visible_flags();
+        let selected_flag = &flags[app.flag_index()];
+        assert_eq!(
+            selected_flag.name, "skip-tests",
+            "should auto-select skip-tests"
+        );
+    }
+
+    #[test]
+    fn test_match_scores_separate_name_and_help() {
+        let app = App::new(sample_spec());
+        // "verbose" should match the verbose flag by name
+        let scores = compute_tree_scores(&app.command_tree_nodes, "verbose");
+
+        // "init" has help="Initialize a new project" — "verbose" should not match
+        // via name, but might or might not match via help. The key point is that
+        // name_score and help_score are independent.
+        if let Some(init_scores) = scores.get("init") {
+            // name_score should be 0 (init != verbose)
+            assert_eq!(
+                init_scores.name_score, 0,
+                "init name should not match 'verbose'"
+            );
+        }
+    }
+
+    #[test]
+    fn test_match_scores_help_only_match() {
+        let app = App::new(sample_spec());
+        // "project" appears in init's help text "Initialize a new project"
+        let scores = compute_tree_scores(&app.command_tree_nodes, "project");
+
+        let init_scores = scores.get("init").expect("init should have scores");
+        // name "init" should NOT match "project"
+        assert_eq!(
+            init_scores.name_score, 0,
+            "init name should not match 'project'"
+        );
+        // help "Initialize a new project" SHOULD match "project"
+        assert!(
+            init_scores.help_score > 0,
+            "init help should match 'project'"
+        );
+        // Overall should match
+        assert!(
+            init_scores.overall() > 0,
+            "init should match overall via help"
+        );
+    }
+
+    #[test]
+    fn test_match_scores_name_only_match() {
+        let app = App::new(sample_spec());
+        // "cfg" matches the name "config" but probably not its help "Manage configuration"
+        // (though "cfg" could partially match "configuration" — the key is name_score > 0)
+        let scores = compute_tree_scores(&app.command_tree_nodes, "cfg");
+
+        let config_scores = scores.get("config").expect("config should have scores");
+        assert!(
+            config_scores.name_score > 0,
+            "config name should match 'cfg'"
+        );
+    }
+
+    #[test]
+    fn test_flag_match_scores_separate_name_and_help() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Flags);
+
+        // "Docker" appears in --tag's help text "Docker image tag"
+        app.filter_input.clear();
+        for c in "Docker".chars() {
+            app.filter_input.insert_char(c);
+        }
+
+        let scores = app.compute_flag_match_scores();
+
+        // "tag" name should NOT match "Docker"
+        if let Some(tag_scores) = scores.get("tag") {
+            assert_eq!(
+                tag_scores.name_score, 0,
+                "tag name should not match 'Docker'"
+            );
+            assert!(
+                tag_scores.help_score > 0,
+                "tag help 'Docker image tag' should match 'Docker'"
+            );
+        }
     }
 }

@@ -312,7 +312,8 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
     app.click_regions.register(area, Focus::Commands);
 
     let is_focused = app.focus() == Focus::Commands;
-    let border_color = if is_focused {
+    let is_filtering = app.filtering && app.focus() == Focus::Commands;
+    let border_color = if is_focused || is_filtering {
         colors.active_border
     } else {
         colors.inactive_border
@@ -321,8 +322,8 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
     // Flatten the tree for display
     let flat_commands = flatten_command_tree(&app.command_tree_nodes);
 
-    let title = if app.filtering && !app.filter().is_empty() {
-        format!(" Commands (/{})", app.filter())
+    let title = if app.filtering && app.focus() == Focus::Commands {
+        format!(" Commands (/{}) ", app.filter())
     } else {
         " Commands ".to_string()
     };
@@ -336,13 +337,12 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
     let inner_height = area.height.saturating_sub(2) as usize;
     app.ensure_visible(Focus::Commands, inner_height);
 
-    // Compute match scores if filtering
-    let match_scores =
-        if app.filtering && !app.filter().is_empty() && app.focus() == Focus::Commands {
-            app.compute_tree_match_scores()
-        } else {
-            std::collections::HashMap::new()
-        };
+    // Compute match scores if filtering (with per-field scores)
+    let match_scores = if !app.filter().is_empty() && app.focus() == Focus::Commands {
+        app.compute_tree_match_scores()
+    } else {
+        std::collections::HashMap::new()
+    };
 
     // Get selected index
     let selected_index = app.command_index();
@@ -353,7 +353,10 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
         .enumerate()
         .map(|(i, cmd)| {
             let is_selected = i == selected_index;
-            let is_match = match_scores.get(&cmd.id).copied().unwrap_or(0) > 0;
+            let scores = match_scores.get(&cmd.id);
+            let is_match = scores.map(|s| s.overall()).unwrap_or(0) > 0;
+            let name_matches = scores.map(|s| s.name_score).unwrap_or(0) > 0;
+            let help_matches = scores.map(|s| s.help_score).unwrap_or(0) > 0;
 
             let mut spans = Vec::new();
 
@@ -385,8 +388,8 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
 
             // Apply styling based on selection and match
             if is_selected {
-                // Selected - apply highlighting if filtering
-                if !match_scores.is_empty() {
+                // Selected - apply highlighting only if name independently matches
+                if !match_scores.is_empty() && name_matches {
                     let pattern = app.filter();
                     let normal_style = Style::default()
                         .fg(colors.command)
@@ -412,8 +415,8 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
                     name_text.clone(),
                     Style::default().fg(colors.help).add_modifier(Modifier::DIM),
                 ));
-            } else if !match_scores.is_empty() {
-                // Matching - highlight characters
+            } else if !match_scores.is_empty() && name_matches {
+                // Matching via name - highlight characters in name
                 let pattern = app.filter();
                 let normal_style = Style::default().fg(colors.command);
                 let highlight_style = Style::default()
@@ -422,6 +425,12 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
                 let highlighted =
                     build_highlighted_text(&name_text, pattern, normal_style, highlight_style);
                 spans.extend(highlighted);
+            } else if !match_scores.is_empty() && help_matches {
+                // Matching via help only - show name normally (no confusing partial highlights)
+                spans.push(Span::styled(
+                    name_text.clone(),
+                    Style::default().fg(colors.command),
+                ));
             } else {
                 // Normal display
                 spans.push(Span::styled(
@@ -447,12 +456,36 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
                     spans.push(Span::raw(" "));
                 }
 
-                let help_style = if !is_match && !match_scores.is_empty() {
-                    Style::default().fg(colors.help).add_modifier(Modifier::DIM)
+                if !is_match && !match_scores.is_empty() {
+                    // Non-matching - dim help text
+                    spans.push(Span::styled(
+                        help,
+                        Style::default().fg(colors.help).add_modifier(Modifier::DIM),
+                    ));
+                } else if !match_scores.is_empty() && help_matches {
+                    // Help text matches the filter - highlight matched characters
+                    let pattern = app.filter();
+                    if is_selected {
+                        let normal_style = Style::default().fg(colors.help);
+                        let highlight_style = Style::default()
+                            .fg(colors.bg)
+                            .bg(colors.help)
+                            .add_modifier(Modifier::BOLD);
+                        let highlighted =
+                            build_highlighted_text(help, pattern, normal_style, highlight_style);
+                        spans.extend(highlighted);
+                    } else {
+                        let normal_style = Style::default().fg(colors.help);
+                        let highlight_style = Style::default()
+                            .fg(colors.help)
+                            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+                        let highlighted =
+                            build_highlighted_text(help, pattern, normal_style, highlight_style);
+                        spans.extend(highlighted);
+                    }
                 } else {
-                    Style::default().fg(colors.help)
-                };
-                spans.push(Span::styled(help, help_style));
+                    spans.push(Span::styled(help, Style::default().fg(colors.help)));
+                }
             }
 
             ListItem::new(Line::from(spans))
@@ -478,7 +511,8 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
     app.click_regions.register(area, Focus::Flags);
 
     let is_focused = app.focus() == Focus::Flags;
-    let border_color = if is_focused {
+    let is_filtering = app.filtering && app.focus() == Focus::Flags;
+    let border_color = if is_focused || is_filtering {
         colors.active_border
     } else {
         colors.inactive_border
@@ -487,14 +521,14 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
     // Compute index for scroll visibility
     let flag_index = app.flag_index();
 
-    // Compute match scores for filtering
-    let match_scores = if app.filtering && !app.filter().is_empty() && app.focus() == Focus::Flags {
+    // Compute match scores for filtering (with per-field scores)
+    let match_scores = if !app.filter().is_empty() && app.focus() == Focus::Flags {
         app.compute_flag_match_scores()
     } else {
         std::collections::HashMap::new()
     };
 
-    let title = if app.filtering && !app.filter().is_empty() && app.focus() == Focus::Flags {
+    let title = if app.filtering && app.focus() == Focus::Flags {
         format!(" Flags (/{}) ", app.filter())
     } else {
         " Flags ".to_string()
@@ -528,9 +562,11 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
             let value = flag_values.iter().find(|(n, _)| n == &flag.name);
             let default_val = flag_defaults.get(i).and_then(|d| d.as_ref());
 
-            // Check if this flag matches the filter
-            let score = match_scores.get(&flag.name).copied().unwrap_or(1);
-            let is_match = score > 0 || match_scores.is_empty();
+            // Check if this flag matches the filter (per-field scores)
+            let scores = match_scores.get(&flag.name);
+            let is_match = scores.map(|s| s.overall()).unwrap_or(1) > 0 || match_scores.is_empty();
+            let name_matches = scores.map(|s| s.name_score).unwrap_or(0) > 0;
+            let help_matches = scores.map(|s| s.help_score).unwrap_or(0) > 0;
 
             let mut spans = Vec::new();
 
@@ -577,8 +613,8 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
             let flag_display = flag_display_string(flag);
 
             if is_selected {
-                // Selected flag - apply highlighting with high-contrast colors for visibility against selection background
-                if !match_scores.is_empty() {
+                // Selected flag - apply highlighting only if name independently matches
+                if !match_scores.is_empty() && name_matches {
                     let pattern = app.filter();
                     let normal_style = Style::default()
                         .fg(colors.flag)
@@ -596,7 +632,7 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
                     );
                     spans.extend(highlighted_spans);
                 } else {
-                    // No filter active - just bold
+                    // No filter active or name doesn't independently match - just bold
                     let flag_style = Style::default()
                         .fg(colors.flag)
                         .add_modifier(Modifier::BOLD);
@@ -606,8 +642,8 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
                 // Non-matching flag - subdued/dimmed
                 let flag_style = Style::default().fg(colors.help).add_modifier(Modifier::DIM);
                 spans.push(Span::styled(flag_display, flag_style));
-            } else if !match_scores.is_empty() {
-                // Matching flag - highlight matched characters
+            } else if !match_scores.is_empty() && name_matches {
+                // Matching via name - highlight matched characters in name
                 let pattern = app.filter();
                 let normal_style = Style::default().fg(colors.flag);
                 let highlight_style = Style::default()
@@ -616,6 +652,10 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
                 let highlighted_spans =
                     build_highlighted_text(&flag_display, pattern, normal_style, highlight_style);
                 spans.extend(highlighted_spans);
+            } else if !match_scores.is_empty() && help_matches {
+                // Matching via help only - show name normally (no confusing partial highlights)
+                let flag_style = Style::default().fg(colors.flag);
+                spans.push(Span::styled(flag_display, flag_style));
             } else {
                 // Normal display
                 let flag_style = Style::default().fg(colors.flag);
@@ -716,12 +756,36 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
                     spans.push(Span::raw(" "));
                 }
 
-                let help_style = if !is_match {
-                    Style::default().fg(colors.help).add_modifier(Modifier::DIM)
+                if !is_match && !match_scores.is_empty() {
+                    // Non-matching - dim help text
+                    spans.push(Span::styled(
+                        help,
+                        Style::default().fg(colors.help).add_modifier(Modifier::DIM),
+                    ));
+                } else if !match_scores.is_empty() && help_matches {
+                    // Help text matches the filter - highlight matched characters
+                    let pattern = app.filter();
+                    if is_selected {
+                        let normal_style = Style::default().fg(colors.help);
+                        let highlight_style = Style::default()
+                            .fg(colors.bg)
+                            .bg(colors.help)
+                            .add_modifier(Modifier::BOLD);
+                        let highlighted =
+                            build_highlighted_text(help, pattern, normal_style, highlight_style);
+                        spans.extend(highlighted);
+                    } else {
+                        let normal_style = Style::default().fg(colors.help);
+                        let highlight_style = Style::default()
+                            .fg(colors.help)
+                            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+                        let highlighted =
+                            build_highlighted_text(help, pattern, normal_style, highlight_style);
+                        spans.extend(highlighted);
+                    }
                 } else {
-                    Style::default().fg(colors.help)
-                };
-                spans.push(Span::styled(help, help_style));
+                    spans.push(Span::styled(help, Style::default().fg(colors.help)));
+                }
             }
 
             let line = Line::from(spans);
@@ -1698,6 +1762,36 @@ flag "-q --quiet" help="Quiet mode"
         let output = render_to_string(&mut app, 100, 24);
         // Should show filter query in title, no counts
         assert!(output.contains("Flags (/roll)"));
+    }
+
+    #[test]
+    fn test_filter_mode_shows_slash_immediately() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Commands);
+        app.filtering = true;
+        // No text typed yet — filter_input is empty
+
+        let output = render_to_string(&mut app, 100, 24);
+        // Title should show the "/" prompt even with an empty query
+        assert!(
+            output.contains("Commands (/)"),
+            "Panel title should show '/' immediately when filter mode is activated, got:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_filter_mode_shows_slash_in_flags_panel() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Flags);
+        app.filtering = true;
+        // No text typed yet
+
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(
+            output.contains("Flags (/)"),
+            "Flags title should show '/' immediately when filter mode is activated, got:\n{output}"
+        );
     }
 
     // ── Unicode checkbox tests ──────────────────────────────────────────

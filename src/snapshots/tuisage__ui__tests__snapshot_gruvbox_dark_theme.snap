@@ -3,10 +3,10 @@ source: src/ui.rs
 expression: output
 ---
 ┌ Commands ────────────────────────────┐┌ Flags ───────────────────────────────────────────────────┐
-│▶ init        Initialize a new project││   [0] -v, --verbose [G]           Enable verbose logging │
-│  config          Manage configuration││   ○ -q, --quiet [G]                    Enable quiet mode │
-│  │ set (add)       Set a config value││   [·] -u, --user = <user>                 User to run as │
-│  │ get             Get a config value││                                                          │
+│▶ init        Initialize a new project││   [·] -t, --template = <basic|full|minimal> Template to  │
+│  config          Manage configuration││   ○ -f, --force                 Overwrite existing files │
+│  │ set (add)       Set a config value││   [0] -v, --verbose [G]           Enable verbose logging │
+│  │ get             Get a config value││   ○ -q, --quiet [G]                    Enable quiet mode │
 │  │ list (ls)   List all config values││                                                          │
 │  │ remove (rm)  Remove a config value││                                                          │
 │  run                       Run a task││                                                          │
@@ -14,7 +14,7 @@ expression: output
 │  plugin                Manage plugins││                                                          │
 │  │ install (i)       Install a plugin│└──────────────────────────────────────────────────────────┘
 │  │ uninstall (rm)  Uninstall a plugin│┌ Arguments ───────────────────────────────────────────────┐
-│  │ list (ls)   List installed plugins││                                                          │
+│  │ list (ls)   List installed plugins││   ● <name> = (empty)                                     │
 │  │ update              Update plugins││                                                          │
 │  version        Print the CLI version││                                                          │
 │  help          Print help information││                                                          │
@@ -24,5 +24,5 @@ expression: output
  💡  Initialize a new project
  Enter/→: select  ↑↓: navigate  Tab: next  /: filter  T: theme  Esc: back  q: quit [Gruvbox Dark]
 ┌ Command ─────────────────────────────────────────────────────────────────────────────────────────┐
-│ $ mycli                                                                                          │
+│ $ mycli init                                                                                     │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
