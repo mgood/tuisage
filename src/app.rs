@@ -214,24 +214,11 @@ impl App {
                     });
                 }
             }
-            // Recreate the vt100::Parser with the new size while preserving content
+            // Resize the vt100 parser's screen in place so it matches the new PTY size.
+            // This preserves existing content and avoids flashing/blanking.
+            // The child process receives SIGWINCH from the PTY resize and will redraw.
             if let Ok(mut parser_guard) = exec.parser.write() {
-                // Get the current screen content
-                let screen = parser_guard.screen();
-                let contents = screen.contents();
-
-                // Create a new parser with the new dimensions
-                let mut new_parser = vt100::Parser::new(rows, cols, 0);
-
-                // If we have content, feed it to the new parser
-                // This preserves what's currently visible while allowing the child
-                // process to redraw to the new size (it receives SIGWINCH)
-                if !contents.is_empty() {
-                    new_parser.process(contents.as_bytes());
-                }
-
-                // Replace with the new parser
-                *parser_guard = new_parser;
+                parser_guard.screen_mut().set_size(rows, cols);
             }
         }
     }
