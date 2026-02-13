@@ -923,6 +923,15 @@ impl App {
             return self.handle_execution_key(key);
         }
 
+        // Ctrl+R executes command from any panel, regardless of edit/filter mode
+        if key.code == KeyCode::Char('r')
+            && key
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL)
+        {
+            return Action::Execute;
+        }
+
         // If we're editing a text field, handle that separately
         if self.editing {
             return self.handle_editing_key(key);
@@ -984,17 +993,7 @@ impl App {
                 }
                 Action::None
             }
-            KeyCode::Enter => {
-                // Ctrl+Enter executes command from any panel
-                if key
-                    .modifiers
-                    .contains(crossterm::event::KeyModifiers::CONTROL)
-                {
-                    Action::Execute
-                } else {
-                    self.handle_enter()
-                }
-            }
+            KeyCode::Enter => self.handle_enter(),
             KeyCode::Up | KeyCode::Char('k') => {
                 self.move_up();
                 Action::None
@@ -3381,29 +3380,29 @@ mod tests {
     }
 
     #[test]
-    fn test_ctrl_enter_executes_from_any_panel() {
+    fn test_ctrl_r_executes_from_any_panel() {
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["deploy"]);
 
         // Test from Commands panel
         app.set_focus(Focus::Commands);
-        let ctrl_enter = crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Enter,
+        let ctrl_r = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('r'),
             crossterm::event::KeyModifiers::CONTROL,
         );
-        assert_eq!(app.handle_key(ctrl_enter), Action::Execute);
+        assert_eq!(app.handle_key(ctrl_r), Action::Execute);
 
         // Test from Flags panel
         app.set_focus(Focus::Flags);
-        assert_eq!(app.handle_key(ctrl_enter), Action::Execute);
+        assert_eq!(app.handle_key(ctrl_r), Action::Execute);
 
         // Test from Args panel
         app.set_focus(Focus::Args);
-        assert_eq!(app.handle_key(ctrl_enter), Action::Execute);
+        assert_eq!(app.handle_key(ctrl_r), Action::Execute);
 
         // Test from Preview panel
         app.set_focus(Focus::Preview);
-        assert_eq!(app.handle_key(ctrl_enter), Action::Execute);
+        assert_eq!(app.handle_key(ctrl_r), Action::Execute);
     }
 
     #[test]

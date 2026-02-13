@@ -1,0 +1,6 @@
+{
+  "chat.tools.terminal.autoApprove": {
+    "cargo test": true,
+    "cargo insta": true
+  }
+}
