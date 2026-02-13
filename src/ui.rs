@@ -324,14 +324,17 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
 
             // Right-align help text if present
             if let Some(help) = &cmd.help {
-                // Calculate padding to right-align the description
-                // Area width minus borders (2) minus current content length
-                let current_len = spans.iter().map(|s| s.content.len()).sum::<usize>();
-                let help_with_sep = format!(" — {}", help);
+                // Calculate padding based on actual display width
+                let current_len = spans
+                    .iter()
+                    .map(|s| s.content.chars().count())
+                    .sum::<usize>();
+                let help_text = format!("— {}", help);
                 let available_width = area.width.saturating_sub(2) as usize;
 
-                if current_len + help_with_sep.len() < available_width {
-                    let padding = available_width.saturating_sub(current_len + help_with_sep.len());
+                if current_len + help_text.chars().count() + 1 < available_width {
+                    let padding =
+                        available_width.saturating_sub(current_len + help_text.chars().count());
                     spans.push(Span::raw(" ".repeat(padding)));
                 } else {
                     spans.push(Span::raw(" "));
@@ -342,8 +345,7 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
                 } else {
                     Style::default().fg(colors.help)
                 };
-                spans.push(Span::styled("— ", help_style));
-                spans.push(Span::styled(help.as_str(), help_style));
+                spans.push(Span::styled(help_text, help_style));
             }
 
             ListItem::new(Line::from(spans))
@@ -538,10 +540,12 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
                 spans.push(Span::styled(" = ", Style::default().fg(colors.help)));
 
                 if is_editing {
-                    // Show the edit_input text with cursor
-                    let edit_text = app.edit_input.text();
+                    // Show the edit_input text with cursor at correct position
+                    let before_cursor = app.edit_input.text_before_cursor();
+                    let after_cursor = app.edit_input.text_after_cursor();
+
                     spans.push(Span::styled(
-                        edit_text,
+                        before_cursor,
                         Style::default()
                             .fg(colors.value)
                             .add_modifier(Modifier::UNDERLINED),
@@ -551,6 +555,12 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
                         Style::default()
                             .fg(colors.value)
                             .add_modifier(Modifier::SLOW_BLINK),
+                    ));
+                    spans.push(Span::styled(
+                        after_cursor,
+                        Style::default()
+                            .fg(colors.value)
+                            .add_modifier(Modifier::UNDERLINED),
                     ));
                 } else if s.is_empty() {
                     // Show choices hint or default
@@ -584,13 +594,17 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
 
             // Right-align help text if present
             if let Some(help) = &flag.help {
-                // Calculate padding to right-align the description
-                let current_len = spans.iter().map(|s| s.content.len()).sum::<usize>();
-                let help_with_sep = format!(" — {}", help);
+                // Calculate padding based on actual display width
+                let current_len = spans
+                    .iter()
+                    .map(|s| s.content.chars().count())
+                    .sum::<usize>();
+                let help_text = format!("— {}", help);
                 let available_width = area.width.saturating_sub(2).saturating_sub(2) as usize; // borders + padding
 
-                if current_len + help_with_sep.len() < available_width {
-                    let padding = available_width.saturating_sub(current_len + help_with_sep.len());
+                if current_len + help_text.chars().count() + 1 < available_width {
+                    let padding =
+                        available_width.saturating_sub(current_len + help_text.chars().count());
                     spans.push(Span::raw(" ".repeat(padding)));
                 } else {
                     spans.push(Span::raw(" "));
@@ -601,8 +615,7 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
                 } else {
                     Style::default().fg(colors.help)
                 };
-                spans.push(Span::styled("— ", help_style));
-                spans.push(Span::styled(help.as_str(), help_style));
+                spans.push(Span::styled(help_text, help_style));
             }
 
             let line = Line::from(spans);
@@ -697,10 +710,12 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
             spans.push(Span::styled(" = ", Style::default().fg(colors.help)));
 
             if is_editing {
-                // Show edit_input text with cursor
-                let edit_text = app.edit_input.text();
+                // Show edit_input text with cursor at correct position
+                let before_cursor = app.edit_input.text_before_cursor();
+                let after_cursor = app.edit_input.text_after_cursor();
+
                 spans.push(Span::styled(
-                    edit_text,
+                    before_cursor,
                     Style::default()
                         .fg(colors.value)
                         .add_modifier(Modifier::UNDERLINED),
@@ -710,6 +725,12 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
                     Style::default()
                         .fg(colors.value)
                         .add_modifier(Modifier::SLOW_BLINK),
+                ));
+                spans.push(Span::styled(
+                    after_cursor,
+                    Style::default()
+                        .fg(colors.value)
+                        .add_modifier(Modifier::UNDERLINED),
                 ));
             } else if arg_val.value.is_empty() {
                 if !arg_val.choices.is_empty() {
@@ -1878,6 +1899,46 @@ flag "-q --quiet" help="Quiet mode"
         assert!(
             !output.contains("-v ") && !output.contains("-vv"),
             "Preview should not contain -v when count is 0"
+        );
+    }
+
+    #[test]
+    fn test_cursor_position_in_editing() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["init"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+        app.start_editing();
+
+        // Type "hello"
+        app.edit_input.insert_char('h');
+        app.edit_input.insert_char('e');
+        app.edit_input.insert_char('l');
+        app.edit_input.insert_char('l');
+        app.edit_input.insert_char('o');
+
+        // Render with cursor at end
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(
+            output.contains("hello▎"),
+            "Should show cursor at end of text"
+        );
+
+        // Move cursor to beginning
+        app.edit_input.move_home();
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(
+            output.contains("▎hello"),
+            "Should show cursor at beginning of text"
+        );
+
+        // Move cursor to middle
+        app.edit_input.move_right();
+        app.edit_input.move_right();
+        let output = render_to_string(&mut app, 100, 24);
+        assert!(
+            output.contains("he▎llo"),
+            "Should show cursor in middle of text"
         );
     }
 }
