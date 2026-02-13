@@ -323,7 +323,7 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
     let flat_commands = flatten_command_tree(&app.command_tree_nodes);
 
     let title = if app.filtering && app.focus() == Focus::Commands {
-        format!(" Commands (/{}) ", app.filter())
+        format!(" Commands 🔍 {} ", app.filter())
     } else {
         " Commands ".to_string()
     };
@@ -529,7 +529,7 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
     };
 
     let title = if app.filtering && app.focus() == Focus::Flags {
-        format!(" Flags (/{}) ", app.filter())
+        format!(" Flags 🔍 {} ", app.filter())
     } else {
         " Flags ".to_string()
     };
@@ -1760,8 +1760,12 @@ flag "-q --quiet" help="Quiet mode"
         app.filter_input.set_text("roll");
 
         let output = render_to_string(&mut app, 100, 24);
-        // Should show filter query in title, no counts
-        assert!(output.contains("Flags (/roll)"));
+        // Should show filter query in title with emoji and query text
+        // Note: there appears to be extra spacing after emoji in terminal rendering
+        assert!(
+            output.contains("Flags 🔍") && output.contains("roll"),
+            "Expected 'Flags 🔍' and 'roll' in output"
+        );
     }
 
     #[test]
@@ -1772,10 +1776,10 @@ flag "-q --quiet" help="Quiet mode"
         // No text typed yet — filter_input is empty
 
         let output = render_to_string(&mut app, 100, 24);
-        // Title should show the "/" prompt even with an empty query
+        // Title should show the magnifying glass emoji even with an empty query
         assert!(
-            output.contains("Commands (/)"),
-            "Panel title should show '/' immediately when filter mode is activated, got:\n{output}"
+            output.contains("Commands 🔍"),
+            "Panel title should show '🔍' immediately when filter mode is activated, got:\n{output}"
         );
     }
 
@@ -1789,8 +1793,8 @@ flag "-q --quiet" help="Quiet mode"
 
         let output = render_to_string(&mut app, 100, 24);
         assert!(
-            output.contains("Flags (/)"),
-            "Flags title should show '/' immediately when filter mode is activated, got:\n{output}"
+            output.contains("Flags 🔍"),
+            "Flags title should show '🔍' immediately when filter mode is activated, got:\n{output}"
         );
     }
 

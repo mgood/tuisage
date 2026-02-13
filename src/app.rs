@@ -922,8 +922,11 @@ impl App {
                 Action::None
             }
             KeyCode::Char('/') => {
-                self.filtering = true;
-                self.filter_input.clear();
+                // Only activate filter mode for panels that support filtering
+                if matches!(self.focus(), Focus::Commands | Focus::Flags | Focus::Args) {
+                    self.filtering = true;
+                    self.filter_input.clear();
+                }
                 Action::None
             }
             KeyCode::Tab => {
@@ -1136,8 +1139,8 @@ impl App {
     }
 
     fn move_up(&mut self) {
-        // When a filter is active, skip non-matching items
-        if !self.filter().is_empty() {
+        // When in filter mode, skip non-matching items
+        if self.filtering {
             self.move_to_prev_match();
             return;
         }
@@ -1157,8 +1160,8 @@ impl App {
     }
 
     fn move_down(&mut self) {
-        // When a filter is active, skip non-matching items
-        if !self.filter().is_empty() {
+        // When in filter mode, skip non-matching items
+        if self.filtering {
             self.move_to_next_match();
             return;
         }
@@ -2439,6 +2442,71 @@ mod tests {
         assert!(!app.filtering);
         assert!(app.filter().is_empty());
         assert_eq!(app.focus(), Focus::Flags);
+    }
+
+    #[test]
+    fn test_slash_does_not_activate_filter_in_preview_pane() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Preview);
+        assert_eq!(app.focus(), Focus::Preview);
+        assert!(!app.filtering);
+
+        // Press "/" - should NOT activate filter mode
+        let slash = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('/'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(slash);
+        assert!(
+            !app.filtering,
+            "Filter mode should not activate in Preview pane"
+        );
+        assert!(app.filter().is_empty());
+    }
+
+    #[test]
+    fn test_filtered_navigation_only_works_when_filtering_active() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Commands);
+
+        // Enter filter mode and type a query
+        let slash = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('/'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(slash);
+        assert!(app.filtering);
+
+        let p_key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('p'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(p_key);
+        assert_eq!(app.filter(), "p");
+
+        // Press Enter to exit filter mode (but keep the query)
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(!app.filtering, "Should exit filter mode after Enter");
+        assert_eq!(app.filter(), "p", "Query should remain after Enter");
+
+        // Now navigation should use normal mode (not filtered)
+        // We can't easily test the internal behavior, but we verify that
+        // move_up/move_down work without filtering active
+        let initial_index = app.command_tree_state.selected_index;
+
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(down);
+
+        // Should move to the next item (not skip to next match)
+        let new_index = app.command_tree_state.selected_index;
+        assert_ne!(initial_index, new_index, "Should have moved to next item");
     }
 
     #[test]
