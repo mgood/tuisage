@@ -3,9 +3,9 @@ source: src/ui.rs
 expression: output
 ---
 ┌ Flags ───────────────────────────────────────────────────────────────────────┐
-│ ▶ ○ -v, --verbose                                           — Verbose output │
-│   ○ -f, --force                                            — Force operation │
-│   ○ --dry-run                                       — Show what would happen │
+│ ▶ ○ -v, --verbose                                             Verbose output │
+│   ○ -f, --force                                              Force operation │
+│   ○ --dry-run                                         Show what would happen │
 │                                                                              │
 │                                                                              │
 │                                                                              │

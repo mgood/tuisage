@@ -3,21 +3,21 @@ source: src/ui.rs
 expression: output
 ---
 ┌ Commands ────────────────────────────┐┌ Flags ───────────────────────────────────────────────────┐
-│  init      — Initialize a new project││   [0] -v, --verbose [G]         — Enable verbose logging │
-│▶ config        — Manage configuration││   ○ -q, --quiet [G]                  — Enable quiet mode │
-│    set (add)     — Set a config value││                                                          │
-│    get           — Get a config value││                                                          │
-│    list (ls) — List all config values││                                                          │
-│    remove (rm) — Remove a config valu││                                                          │
-│  run                     — Run a task││                                                          │
-│  deploy      — Deploy the application││                                                          │
-│  plugin              — Manage plugins││                                                          │
-│    install (i)     — Install a plugin│└──────────────────────────────────────────────────────────┘
-│    uninstall (rm) — Uninstall a plugi│┌ Arguments ───────────────────────────────────────────────┐
-│    list (ls) — List installed plugins││                                                          │
-│    update            — Update plugins││                                                          │
-│  version      — Print the CLI version││                                                          │
-│  help        — Print help information││                                                          │
+│  init        Initialize a new project││   [0] -v, --verbose [G]           Enable verbose logging │
+│▶ config          Manage configuration││   ○ -q, --quiet [G]                    Enable quiet mode │
+│    set (add)       Set a config value││                                                          │
+│    get             Get a config value││                                                          │
+│    list (ls)   List all config values││                                                          │
+│    remove (rm)  Remove a config value││                                                          │
+│  run                       Run a task││                                                          │
+│  deploy        Deploy the application││                                                          │
+│  plugin                Manage plugins││                                                          │
+│    install (i)       Install a plugin│└──────────────────────────────────────────────────────────┘
+│    uninstall (rm)  Uninstall a plugin│┌ Arguments ───────────────────────────────────────────────┐
+│    list (ls)   List installed plugins││                                                          │
+│    update              Update plugins││                                                          │
+│  version        Print the CLI version││                                                          │
+│  help          Print help information││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
