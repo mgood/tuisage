@@ -102,7 +102,7 @@ One of `--spec-cmd` or `--spec-file` is required (but not both).
 | `Backspace` | Decrement count flag (floor at 0) |
 | `/` | Start fuzzy filter (works in Commands, Flags, and Args panels) |
 | `Esc` | Cancel filter / stop editing |
-| `Ctrl+Enter` | Execute command (works from any panel) |
+| `Ctrl+R` | Execute command (works from any panel) |
 | `]` / `[` | Next / previous color theme |
 | `T` | Next color theme (alias for `]`) |
 | `p` | Print command to stdout and exit (when Preview is focused) |

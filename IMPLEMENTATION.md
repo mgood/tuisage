@@ -129,7 +129,7 @@ The core state and logic module (~2900 lines including ~1200 lines of tests).
 - **`fuzzy_match_indices()`** — returns both score and match indices for character-level highlighting. Indices are sorted and deduplicated as recommended by nucleo-matcher docs.
 - **`compute_tree_match_scores()`** — computes match scores for all commands in the flat list when filtering is active; matches against the command name, aliases, help text, and the full ancestor path (e.g. "config set") so queries like "cfgset" work. Returns map of node ID → score.
 - **`compute_flag_match_scores()`** — computes match scores for all flags when filtering is active; returns map of flag name → score.
-- **`auto_select_next_match()`** — automatically moves selection to the first matching item when current selection doesn't match filter. Operates on the full flat command list.
+- **`auto_select_next_match()`** — automatically moves selection to the first matching item when current selection doesn’t match filter. Operates on the full flat command list for commands, the full flag list for flags, and the arg list for arguments.
 - **`tree_expand_or_enter()`** — moves selection to first child of the selected command (Right/l/Enter key).
 - **`tree_collapse_or_parent()`** — moves selection to the parent command (Left/h key).
 - **`navigate_to_command()`** — selects a specific command by path in the flat list (used in tests).
@@ -171,7 +171,7 @@ A semantic color palette derived from the active `ThemePalette`. Maps abstract r
 
 #### Rendering Functions
 
-- **`render()`** — top-level entry point called by the event loop. Computes layout, derives colors, and delegates to sub-renderers. When in execution mode, delegates entirely to `render_execution_view()`.
+- **`render()`** — top-level entry point called by the event loop. Computes layout (preview at top, main content in middle, help bar at bottom), derives colors, and delegates to sub-renderers. When in execution mode, delegates entirely to `render_execution_view()`.
 - **`render_execution_view()`** — renders the execution UI: command display at top (3 rows), `PseudoTerminal` widget in the middle (fills remaining space), and status bar at bottom (1 row). Uses `tui-term::PseudoTerminal` to render the `vt100::Parser`'s screen. Shows running/finished state with appropriate border colors and status text.
 - **`render_main_content()`** — splits the area into a 2-column layout: commands on the left (40%) and flags + args stacked vertically on the right (60%). When there are no subcommands, the commands panel is hidden and flags + args fill the full width.
 - **`render_command_list()`** — renders the command list as a flat `List` widget with depth-based indentation (2 spaces per level). Supports per-item styling: selected items get bold text, non-matching items are dimmed during filtering, and matching characters are highlighted with inverted colors on selected items or bold+underlined on unselected items.
@@ -195,7 +195,7 @@ When filtering is active (`app.filtering == true`):
 3. **Full-Path Matching** — Commands are scored against their full ancestor path (e.g. "config set") in addition to the command name, aliases, and help text. This means queries like "cfgset" will match "config set" where "set" is a subcommand of "config".
 4. **Visual Styling** — Items with score = 0 (non-matches) are rendered with `Modifier::DIM` to subdue them without shifting the layout. This applies to both commands and flags.
 5. **Character Highlighting** — `fuzzy_match_indices()` returns the positions of matched characters, and `build_highlighted_text()` creates styled spans. On unselected items, matches are bold+underlined. On selected items, matches use inverted colors (foreground↔background) for visibility against the selection background. Help text is also highlighted when it matches the filter, using the same styling approach.
-6. **Auto-Selection** — When the filter changes, `auto_select_next_match()` moves the cursor to the first matching item if the current selection doesn't match. This operates on the full flat command list for commands, and the full flag list for flags.
+6. **Auto-Selection** — When the filter changes, `auto_select_next_match()` moves the cursor to the first matching item if the current selection doesn’t match. This operates on the full flat command list for commands, the full flag list for flags, and the arg list for arguments.
 7. **Filtered Navigation** — When a filter is active (non-empty filter text), `↑`/`↓` keys skip non-matching items and move directly to the previous/next matching item. `move_to_prev_match()` and `move_to_next_match()` scan in the appropriate direction and wrap around if needed.
 8. **Panel Switching** — `set_focus()` clears the filter when changing panels (via Tab or mouse) to prevent confusion.
 9. **Filter Mode Visual Cues** — When filter mode is activated, the panel title immediately shows the 🔍 emoji (e.g. "Commands 🔍" even before any text is typed). The panel border color changes to the active border color during filter mode, making it visually obvious that filtering is in progress. Panel titles show the filter query as it's typed (e.g. "Flags 🔍 roll").

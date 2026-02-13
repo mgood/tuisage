@@ -57,7 +57,9 @@ The usage spec is parsed via `usage-lib` into a `Spec` struct that provides:
 The terminal is divided into the following regions, rendered top-to-bottom:
 
 ```
-┌─────────────────┬────────────────────────────────┐
+┌──────────────────────────────────────────────────┐
+│ Command Preview                                  │
+├─────────────────┬────────────────────────────────┤
 │                 │                                │
 │   Commands      │     Flags                      │
 │   Panel         │     Panel                      │
@@ -72,12 +74,12 @@ The terminal is divided into the following regions, rendered top-to-bottom:
 ├─────────────────┴────────────────────────────────┤
 │ 💡 Help text for current item                    │
 │ Keybinding hints                      [Theme]    │
-├──────────────────────────────────────────────────┤
-│ Command Preview                                  │
 └──────────────────────────────────────────────────┘
 ```
 
-The layout uses a 2-column design: Commands on the left (40% width), and Flags + Arguments stacked vertically on the right (60% width, with Flags taking 60% and Args 40% of that column). The help bar (2 rows) and command preview (3 rows) are fixed at the bottom. When there are no subcommands, the Commands panel is hidden and Flags + Arguments fill the full width.
+The layout uses a 2-column design: Commands on the left (40% width), and Flags + Arguments stacked vertically on the right (60% width, with Flags taking 60% and Args 40% of that column). The Command Preview (3 rows) is fixed at the top, and the help bar (2 rows) is fixed at the bottom. When there are no subcommands, the Commands panel is hidden and Flags + Arguments fill the full width.
+
+The Command Preview is at the top so it remains in the same position when switching to execution mode (where the command is also displayed at the top), providing visual stability.
 
 The selected command in the always-visible tree, combined with the live command preview at the bottom, provides constant visibility of the user's position in the command hierarchy.
 
@@ -109,7 +111,7 @@ The selected command in the always-visible tree, combined with the live command 
   - `(default: X)` indicator when a default value exists
   - `[G]` indicator for inherited global flags
   - Count value for count flags (e.g., `[3]`)
-- Flags with choices show the current selection.
+- Flags with choices show the current selection via an inline select box (see [Inline Choice Select Box](#inline-choice-select-box)).
 - Global flags toggled from any subcommand level are correctly included in the built command.
 - When filtering is active, name and help text are matched independently — highlights only appear in the field that matched.
 - The panel title shows just "Flags" (no counts), or "Flags 🔍" when filter mode is first activated, or "Flags 🔍 query" as the user types. The panel border changes to the active color during filter mode.
@@ -127,8 +129,9 @@ The selected command in the always-visible tree, combined with the live command 
 
 ### Command Preview
 
-- Shows the fully assembled command string as it would be output.
+- Shows the fully assembled command string as it would be output, fixed at the **top** of the screen.
 - Updates in real time as the user toggles flags, fills values, and navigates.
+- Remains in the same position when switching to execution mode, providing visual stability.
 - When focused: displays a `▶` prefix to signal that Enter will execute the command.
 - When unfocused: displays a `$` prompt prefix.
 - The command is colorized: binary name, subcommands, flags, and values each get distinct colors.
@@ -257,7 +260,7 @@ When the user navigates to a new command, the state is synchronized:
 | `Backspace` | Flags panel (count) | Decrement the count (floor at 0) |
 | `p` | Preview panel | Print the command to stdout and exit (print-only mode) |
 | `/` | Commands, Flags, or Args panel | Activate fuzzy filter mode (no effect in Preview panel) |
-| `Ctrl+Enter` | Any panel | Execute the built command in an embedded PTY |
+| `Ctrl+R` | Any panel | Execute the built command in an embedded PTY |
 
 ### Editing Mode Keys
 
@@ -368,6 +371,29 @@ Filtering uses scored fuzzy-matching (powered by `nucleo-matcher::Pattern`):
 10. `Enter` exits typing mode but keeps the filter applied. Highlighting, dimming, filtered navigation, and the 🔍 indicator all remain active. Navigation keys (`j`/`k`, `↑`/`↓`) move between matches instead of appending to the filter query.
 11. `Esc` clears the filter (including any applied filter from Enter) and returns to the normal view.
 12. **Changing panels** (via `Tab`, `Shift-Tab`, or mouse click) clears the filter and resets the filter state.
+
+## Inline Choice Select Box
+
+When a flag or argument has predefined choices (e.g., `--template` with choices `basic`, `full`, `minimal`), activating it (via Enter) opens an **inline select box** instead of cycling through choices or opening a text editor.
+
+### Behavior
+
+1. **Activation**: Pressing Enter on a flag or argument that has choices opens the select box. The select box appears as an overlay rendered inline, directly below the item's position in the list.
+2. **Appearance**: The select box shows all available choices as a vertical list with a border, styled using the panel's active border color. The currently selected choice is highlighted. Choices that don't match the filter are hidden (not dimmed).
+3. **Fuzzy filtering**: As the user types, the choices are filtered using the same `nucleo-matcher` fuzzy matching algorithm. Non-matching choices are **hidden** (removed from the visible list), unlike the main panel filter which dims non-matches. The select box title shows the typed filter text.
+4. **Navigation**: `↑`/`↓`/`j`/`k` navigate between visible (matching) choices. Typing narrows the list.
+5. **Selection**: `Enter` confirms the highlighted choice, closes the select box, and sets the flag/argument value.
+6. **Cancellation**: `Esc` closes the select box without changing the value.
+7. **Auto-select**: If only one choice matches the filter, it is auto-highlighted. If the filter narrows to zero matches, the select box shows an empty state.
+8. **Sizing**: The select box is as wide as needed to fit the longest choice, plus the filter text, and as tall as the number of visible choices (up to a maximum of 10 rows). It is positioned to stay within the terminal bounds.
+
+### Rendering
+
+The select box is rendered as an overlay on top of the normal panel content, anchored below the activated item. It uses:
+- Active border color for the border
+- Selection background color for the highlighted choice
+- Normal text for other choices
+- The title shows the filter query (if any)
 
 ## Command Building
 

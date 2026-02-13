@@ -42,7 +42,7 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Support boolean flags (toggle on/off).
 - Support count flags (increment/decrement, e.g., `-vvv`).
 - Support flags that take string values (free-text input).
-- Support flags with predefined choices (cycle through options).
+- Support flags with predefined choices via an **inline select box** that appears below the flag when activated. The select box supports fuzzy filtering to narrow options by typing, and hides non-matching choices.
 - Display default values clearly when a flag has one.
 - Distinguish between global and command-specific flags.
 
@@ -50,7 +50,7 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 
 - Display positional arguments for the currently selected command.
 - Support free-text input for arguments.
-- Support arguments with predefined choices (cycle through options).
+- Support arguments with predefined choices via an **inline select box** that appears below the argument when activated. The select box supports fuzzy filtering to narrow options by typing, and hides non-matching choices.
 - Indicate which arguments are required vs. optional.
 
 ### Filtering
@@ -62,14 +62,14 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - **Separate name/help matching** — the command/flag name and help text are treated as independent fields for matching. Each field is scored separately; highlighting only appears in the field(s) that independently match. This prevents confusing partial highlights where a few characters match in the name and the rest match in the help text.
 - **Help text highlighting** — when the help text matches the filter, matching characters in the help text are highlighted using the same style as name highlights.
 - **Filtered navigation** — when a filter is active, `↑`/`↓` skip non-matching items and move directly to the previous/next matching item, making it fast to cycle through matches.
-- **Auto-select matching items** — if the currently selected item doesn't match the filter, automatically move the selection to the next matching item.
+- **Auto-select matching items** — if the currently selected item doesn't match the filter, automatically move the selection to the next matching item. This applies to all filterable panels: Commands, Flags, and Arguments.
 - **Filter mode visual cues** — when filter mode is activated, the panel title immediately shows the `/` prompt (e.g., `Commands (/)`) even before any text is typed, and the panel border changes to the active color to clearly indicate filter mode is in progress.
 - **Clear filter when changing panels** — switching focus via Tab or mouse click clears the active filter to prevent confusion.
 - Use scored matching (powered by `nucleo-matcher`) to rank results by relevance.
 
 ### Command Preview
 
-- Show a live preview of the assembled command, updated on every interaction.
+- Show a live preview of the assembled command at the **top** of the screen, updated on every interaction. This keeps the preview stable during command execution (it doesn't move when switching to execution mode).
 - Global flags toggled from any subcommand level are correctly included in the built command.
 - On startup, the correct flags and arguments for the initially selected command are displayed immediately (no key press required).
 - Allow the user to accept and output the command.
@@ -82,6 +82,7 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Keyboard input is forwarded to the running process (including Ctrl-C for SIGINT, arrow keys, etc.).
 - When the process exits, the terminal output remains visible. The user presses Esc/Enter/q to close the execution view and return to the command builder.
 - Remain open after execution to allow building and running additional commands.
+- Execute commands from any panel via `Ctrl+R` keyboard shortcut.
 - Provide a print-only mode: when the command preview is focused, a dedicated keybinding (`p`) outputs the command to stdout and exits, enabling piping or integration with external tools.
 - Exit cleanly with no output when the user quits the application.
 - Support `--usage` flag to output TuiSage's own usage spec and exit, enabling self-describing CLI integration.
