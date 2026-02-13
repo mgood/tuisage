@@ -288,7 +288,7 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - **Theme cycling** — `]`/`[` keys cycle through themes forward/backward, `T` also cycles forward. Current theme name shown in status bar.
 - **Print-only mode** — press `p` when the Preview panel is focused to output the command to stdout and exit, enabling piping and shell integration.
 - **Command execution** — execute built commands in an embedded PTY terminal directly within the TUI. Commands are spawned with separate process arguments (not shell-stringified) via `portable-pty`. Terminal output is rendered in real-time using `tui-term::PseudoTerminal`. Keyboard input is forwarded to the running process. The execution view shows the command at the top, terminal output in the middle, and a status bar at the bottom. After the process exits, the user closes the view to return to the command builder for building and running additional commands.
-- **PTY resize** — dynamically resize the embedded terminal when the TUI window is resized during execution. The PTY master is stored in `ExecutionState` and resized via `app.resize_pty()` when `Event::Resize` is received during execution mode.
+- **PTY resize** — dynamically resize the embedded terminal when the TUI window is resized during execution. The PTY master is stored in `ExecutionState` and resized via `app.resize_pty()` when `Event::Resize` is received during execution mode. The vt100 parser is recreated with the new dimensions while preserving existing screen content, and the child process receives SIGWINCH to redraw appropriately.
 - Comprehensive test suite (136+ tests)
 - Zero clippy warnings
 
