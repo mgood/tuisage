@@ -16,6 +16,9 @@ These are the preferred libraries for implementing TuiSage features, as specifie
 | Fuzzy matching | `nucleo-matcher` | Pattern-based fzf-style scoring with multi-word and special character support |
 | Error reporting | `color-eyre` | Pretty error messages with context |
 | Snapshot testing | `insta` | Terminal output comparison (dev dependency) |
+| Embedded terminal | `tui-term` | PseudoTerminal widget for rendering PTY output in the TUI |
+| Terminal emulation | `vt100` | VT100 parser for processing terminal control sequences |
+| PTY management | `portable-pty` | Cross-platform pseudo-terminal creation and process spawning |
 
 ## Input Handling
 
@@ -118,7 +121,7 @@ The terminal is divided into the following regions, rendered top-to-bottom:
 
 - Shows the fully assembled command string as it would be output.
 - Updates in real time as the user toggles flags, fills values, and navigates.
-- When focused: displays a `▶ RUN` indicator to signal that Enter will accept the command.
+- When focused: displays a `▶ RUN` indicator to signal that Enter will execute the command.
 - When unfocused: displays a `$` prompt prefix.
 - The command is colorized: binary name, subcommands, flags, and values each get distinct colors.
 
@@ -127,6 +130,28 @@ The terminal is divided into the following regions, rendered top-to-bottom:
 - Shows contextual help text for the currently hovered item.
 - Displays available keyboard shortcuts.
 - Shows the current theme name.
+
+### Execution View (during command execution)
+
+When a command is executed, the UI switches to a dedicated execution layout:
+
+```
+┌──────────────────────────────────────────────────┐
+│  Command: $ mycli deploy --tag v1.0 prod         │
+├──────────────────────────────────────────────────┤
+│                                                  │
+│  Pseudo-terminal output                          │
+│  (rendered via tui-term PseudoTerminal widget)   │
+│                                                  │
+│                                                  │
+├──────────────────────────────────────────────────┤
+│  Running… / Exited (0) — press Esc to close      │
+└──────────────────────────────────────────────────┘
+```
+
+- **Command pane** (top, 3 rows): Shows the executed command string with a `$` prefix, styled with bold text and the active border color.
+- **Terminal pane** (middle, fills remaining space): Renders the PTY output via `tui-term::PseudoTerminal`. While running, the border is active-colored and titled "Output (running…)". After exit, the border is inactive-colored and titled "Output (finished)".
+- **Status bar** (bottom, 1 row): Shows "Running… (input is forwarded to the process)" while active, or "Exited (CODE) — press Esc/Enter/q to close" after the process finishes.
 
 ## Focus System
 
@@ -218,7 +243,7 @@ When the user navigates to a new command, the state is synchronized:
 | `Enter` | Flags panel (value) | Start editing the flag value |
 | `Enter` | Flags panel (choices) | Cycle to the next choice |
 | `Enter` | Args panel | Start editing the argument / cycle choice |
-| `Enter` | Preview panel | Execute the built command |
+| `Enter` | Preview panel | Execute the built command in an embedded PTY |
 | `Space` | Flags panel (boolean) | Toggle the flag |
 | `Space` | Flags panel (count) | Increment the count |
 | `Backspace` | Flags panel (count) | Decrement the count (floor at 0) |
@@ -254,6 +279,30 @@ When the fuzzy filter is active:
 |---|---|
 | `]` | Switch to the next theme |
 | `[` | Switch to the previous theme |
+
+### Execution Mode Keys
+
+When a command is running in the embedded terminal:
+
+| Key | Action |
+|---|---|
+| Any character | Forwarded to the running process as stdin |
+| `Enter` | Forwarded as carriage return (`\r`) |
+| `Backspace` | Forwarded as DEL (`\x7f`) |
+| `Tab` | Forwarded as tab (`\t`) |
+| `Esc` | Forwarded as escape (`\x1b`) while running |
+| `↑` / `↓` / `←` / `→` | Forwarded as ANSI arrow key sequences |
+| `Home` / `End` / `Delete` | Forwarded as ANSI escape sequences |
+| `Ctrl-C` | Sends SIGINT (`\x03`) to the running process |
+| `Ctrl-D` | Sends EOF (`\x04`) to the running process |
+
+When the command has exited:
+
+| Key | Action |
+|---|---|
+| `Esc` | Close the execution view and return to the command builder |
+| `Enter` | Close the execution view and return to the command builder |
+| `q` | Close the execution view and return to the command builder |
 
 ## Mouse Interactions
 
@@ -296,7 +345,7 @@ Filtering uses scored fuzzy-matching (powered by `nucleo-matcher::Pattern`):
 
 ## Command Building
 
-The `build_command()` method assembles the final command string:
+The `build_command()` method assembles the final command string (for display):
 
 1. Start with the binary name from the spec.
 2. Append each subcommand in the current command path.
@@ -307,6 +356,15 @@ The `build_command()` method assembles the final command string:
    - Flags with choices: `--flag-name selected-choice`
 4. Append all non-empty argument values in positional order.
 5. Include flags from parent commands (global flags) if they have been set.
+
+### Command Parts for Execution
+
+The `build_command_parts()` method produces a `Vec<String>` of separate arguments for process execution:
+
+- The binary name is split on whitespace (e.g., `"mise run"` becomes `["mise", "run"]`).
+- Flag names and their values are separate elements (e.g., `["--tag", "v1.0"]` not `["--tag v1.0"]`).
+- Argument values are NOT quoted — each is a separate process argument, which avoids shell injection issues.
+- Count flags use the same format as display (e.g., `"-vvv"` as a single element).
 
 ### Flag Formatting Rules
 
@@ -351,9 +409,43 @@ Themes can be cycled at runtime with `]` and `[` keys. The current theme name is
 ## Terminal Lifecycle
 
 1. **Startup**: Parse CLI args (clap) → handle `--usage` if present → load spec (from `--spec-cmd` or `--spec-file`) → apply `--cmd` override if present → enable mouse capture → initialize terminal → create `App` state → enter event loop.
-2. **Event loop**: Draw frame → wait for event → handle key/mouse/resize → repeat. The application remains running indefinitely until the user quits.
-3. **Execute**: User presses Enter on preview → execute the built command → show output/status → return to the TUI for building the next command.
-4. **Quit**: User presses `q`/`Ctrl-C`/`Esc` at root → restore terminal → disable mouse capture → exit 0 (no output).
-5. **Error**: Parsing or terminal errors → report error via `color-eyre` → exit non-zero.
+2. **Event loop (builder mode)**: Draw frame → wait for event (blocking) → handle key/mouse/resize → repeat. The application remains running indefinitely until the user quits.
+3. **Execute**: User presses Enter on preview → spawn the command in a PTY via `portable-pty` → switch to execution mode → display embedded terminal output via `tui-term`.
+4. **Event loop (execution mode)**: Draw frame → poll for events (16ms interval for live terminal refresh) → forward keyboard input to PTY → repeat until user closes the execution view.
+5. **Process exit**: Background thread detects child process exit → sets `exited` flag and records exit status → UI updates to show "Exited" status → user presses Esc/Enter/q to close.
+6. **Return to builder**: Execution state is dropped (PTY writer and master cleaned up) → app mode switches back to `Builder` → normal event loop resumes.
+7. **Quit**: User presses `q`/`Ctrl-C`/`Esc` at root → restore terminal → disable mouse capture → exit 0 (no output).
+8. **Error**: Parsing or terminal errors → report error via `color-eyre` → exit non-zero.
 
 The TUI is **long-running** by design, allowing repeated command building and execution within a single session. An optional print-only mode may be added to output commands to stdout for integration with shell tools.
+
+## Command Execution Architecture
+
+Command execution uses a multi-threaded PTY-based approach:
+
+1. **PTY creation**: `portable-pty::NativePtySystem` creates a master/slave PTY pair sized to fit the terminal area (minus UI chrome).
+2. **Process spawning**: The command is spawned on the slave side using `CommandBuilder` with separate arguments (not shell-stringified). The slave is dropped immediately after spawning.
+3. **Output reading**: A background thread reads from the PTY master's reader in 8KB chunks and feeds the data into a `vt100::Parser`, which maintains the terminal screen state.
+4. **Input forwarding**: Keyboard events in execution mode are converted to byte sequences and written to the PTY master's writer.
+5. **Exit detection**: A background thread calls `child.wait()` and sets an `AtomicBool` flag plus the exit status string when the process finishes.
+6. **Cleanup**: After exit, a background thread drops the PTY writer (allowing the reader thread to see EOF) and drops the master to release system resources.
+7. **Rendering**: The `tui-term::PseudoTerminal` widget renders the `vt100::Parser`'s screen into the ratatui frame each tick.
+
+### State Model
+
+```
+AppMode::Builder  ──(Enter on Preview)──►  AppMode::Executing
+                                                │
+                                           [process runs]
+                                                │
+                                           [process exits]
+                                                │
+                                     (Esc/Enter/q) ──►  AppMode::Builder
+```
+
+The `ExecutionState` struct holds:
+- `command_display: String` — the command string shown at the top
+- `parser: Arc<RwLock<vt100::Parser>>` — shared terminal state
+- `pty_writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>` — input channel to the process
+- `exited: Arc<AtomicBool>` — whether the child has finished
+- `exit_status: Arc<Mutex<Option<String>>>` — the exit code/signal description

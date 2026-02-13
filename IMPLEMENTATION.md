@@ -13,6 +13,7 @@ This document describes how TuiSage is built — its architecture, code structur
 │  - Base command override (--cmd)                │
 │  - Terminal setup (ratatui + mouse capture)      │
 │  - Event loop (key, mouse, resize)              │
+│  - Command execution (PTY spawn + I/O threads)  │
 │  - Terminal teardown and command output          │
 └─────────────────────────────────────────────────┘
           │
@@ -20,12 +21,15 @@ This document describes how TuiSage is built — its architecture, code structur
 ┌─────────────────────────────────────────────────┐
 │                   app.rs                        │
 │  - App struct (holds Spec + all runtime state)  │
+│  - AppMode (Builder / Executing) + transitions  │
+│  - ExecutionState (PTY parser, writer, status)  │
 │  - Command path navigation (Vec<String>)        │
 │  - Flag/arg value storage (HashMaps)            │
 │  - Focus management (via ratatui-interact)      │
 │  - Key event handling → Action dispatch         │
 │  - Mouse event handling → Action dispatch       │
-│  - Command string builder                       │
+│  - Execution mode key forwarding to PTY         │
+│  - Command string builder + command parts       │
 │  - Fuzzy matching (nucleo-matcher)              │
 └─────────────────────────────────────────────────┘
           │
@@ -37,6 +41,7 @@ This document describes how TuiSage is built — its architecture, code structur
 │  - Semantic color derivation from theme palette │
 │  - Component rendering (commands, flags, args)  │
 │  - Command preview colorization                 │
+│  - Execution view (PseudoTerminal + status)     │
 │  - Click region registration                    │
 └─────────────────────────────────────────────────┘
 ```
@@ -55,17 +60,29 @@ The entry point. Responsibilities:
 - Enable mouse capture via `crossterm::event::EnableMouseCapture`.
 - Initialize the ratatui `DefaultTerminal`.
 - Run the event loop (`run_event_loop`), which draws frames and dispatches events.
+- Spawn commands in a PTY via `spawn_command()` when the `Execute` action is triggered.
 - On exit, restore the terminal, disable mouse capture, and optionally print the accepted command to stdout.
 
-The event loop is intentionally thin — it reads crossterm events and delegates to `app.handle_key()` or `app.handle_mouse()`, which return an `Action` enum (`None`, `Quit`, or `Accept`).
+The event loop has two modes:
+- **Builder mode**: Blocking event read — delegates to `app.handle_key()` or `app.handle_mouse()`, which return an `Action` enum (`None`, `Quit`, `Accept`, or `Execute`).
+- **Execution mode**: Polling event read (16ms interval) — forwards keyboard input to the PTY, continuously redraws to show live terminal output.
+
+The `spawn_command()` function:
+1. Calls `app.build_command_parts()` to get separate process arguments.
+2. Creates a PTY pair via `portable-pty::NativePtySystem`, sized to fit the terminal area.
+3. Spawns the command on the PTY slave using `CommandBuilder` with individual args (not shell-stringified).
+4. Starts background threads for: reading PTY output into `vt100::Parser`, waiting for child exit, and cleanup.
+5. Sets up the `ExecutionState` and switches the app to `AppMode::Executing`.
 
 ### `src/app.rs`
 
-The core state and logic module (~2050 lines including ~960 lines of tests).
+The core state and logic module (~2900 lines including ~1200 lines of tests).
 
 #### Key Types
 
-- **`Action`** — return value from event handlers: `None`, `Quit`, `Accept`.
+- **`Action`** — return value from event handlers: `None`, `Quit`, `Accept`, `Execute`.
+- **`AppMode`** — enum: `Builder` (normal command-building UI) or `Executing` (embedded terminal running).
+- **`ExecutionState`** — struct holding PTY state: `command_display`, `parser` (vt100), `pty_writer`, `exited` flag, `exit_status`.
 - **`Focus`** — enum of focusable panels: `Commands`, `Flags`, `Args`, `Preview`.
 - **`FlagValue`** — discriminated union: `Bool(bool)`, `String(String)`, `Count(u32)`.
 - **`ArgValue`** — struct with `name`, `value`, `required`, `choices` fields.
@@ -77,6 +94,8 @@ The core state and logic module (~2050 lines including ~960 lines of tests).
 | Field | Type | Purpose |
 |---|---|---|
 | `spec` | `usage::Spec` | The parsed usage specification |
+| `mode` | `AppMode` | Current app mode (Builder or Executing) |
+| `execution` | `Option<ExecutionState>` | Execution state when a command is running |
 | `theme_name` | `String` | Current color theme name |
 | `command_path` | `Vec<String>` | Current position in the command tree (derived from tree selection) |
 | `flag_values` | `HashMap<String, Vec<(String, FlagValue)>>` | Flag state keyed by command path |
@@ -99,9 +118,13 @@ The core state and logic module (~2050 lines including ~960 lines of tests).
 - **`visible_flags()`** — returns all flags for the current command plus inherited global flags (no filtering; rendering applies styling).
 - **`sync_state()`** — initializes or restores flag/arg values when navigating to a new command. Handles defaults.
 - **`sync_command_path_from_tree()`** — derives `command_path` from the currently selected command in the flat list and calls `sync_state()`.
-- **`handle_key()`** — top-level key dispatcher. Routes to `handle_editing_key()`, `handle_filter_key()`, or direct navigation/action based on current mode.
+- **`handle_key()`** — top-level key dispatcher. Routes to `handle_execution_key()` (when executing), `handle_editing_key()`, `handle_filter_key()`, or direct navigation/action based on current mode.
+- **`handle_execution_key()`** — handles keys during command execution: forwards input to the PTY while running, closes execution view on Esc/Enter/q when the process has exited.
 - **`handle_mouse()`** — maps mouse events to panel focus, item selection, scroll, and activation. Finishes any active edit before switching targets.
-- **`build_command()`** — assembles the complete command string from the current state.
+- **`build_command()`** — assembles the complete command string from the current state (for display).
+- **`build_command_parts()`** — assembles the command as a `Vec<String>` of separate arguments for process execution. Splits the binary name on whitespace, keeps flag names and values as separate elements, and does not quote argument values.
+- **`start_execution()`** / **`close_execution()`** — transition between Builder and Executing modes.
+- **`write_to_pty()`** — sends byte data to the PTY writer (for forwarding keyboard input during execution).
 - **`fuzzy_match_score()`** — scored fuzzy matching using `nucleo-matcher::Pattern`, returns match quality score (0 for no match). Uses `Pattern::parse()` for proper multi-word and special character support (^, $, !, ').
 - **`fuzzy_match_indices()`** — returns both score and match indices for character-level highlighting. Indices are sorted and deduplicated as recommended by nucleo-matcher docs.
 - **`compute_tree_match_scores()`** — computes match scores for all commands in the flat list when filtering is active; matches against the command name, aliases, help text, and the full ancestor path (e.g. "config set") so queries like "cfgset" work. Returns map of node ID → score.
@@ -140,7 +163,7 @@ When `sync_command_path_from_tree()` is called (on tree selection change):
 
 ### `src/ui.rs`
 
-The rendering module (~1955 lines including ~1065 lines of tests).
+The rendering module (~2070 lines including ~1065 lines of tests).
 
 #### `UiColors` Struct
 
@@ -148,7 +171,8 @@ A semantic color palette derived from the active `ThemePalette`. Maps abstract r
 
 #### Rendering Functions
 
-- **`render()`** — top-level entry point called by the event loop. Computes layout, derives colors, and delegates to sub-renderers.
+- **`render()`** — top-level entry point called by the event loop. Computes layout, derives colors, and delegates to sub-renderers. When in execution mode, delegates entirely to `render_execution_view()`.
+- **`render_execution_view()`** — renders the execution UI: command display at top (3 rows), `PseudoTerminal` widget in the middle (fills remaining space), and status bar at bottom (1 row). Uses `tui-term::PseudoTerminal` to render the `vt100::Parser`'s screen. Shows running/finished state with appropriate border colors and status text.
 - **`render_main_content()`** — splits the area into up to 3 columns (commands, flags, args). Commands tree is always visible. Hides flags/args panels with no content and redistributes space.
 - **`render_command_list()`** — renders the command list as a flat `List` widget with depth-based indentation (2 spaces per level). Supports per-item styling: selected items get bold text, non-matching items are dimmed during filtering, and matching characters are highlighted with inverted colors on selected items or bold+underlined on unselected items.
 - **`render_flag_list()`** — renders flags with checkbox indicators (✓/○), values, defaults, global tags, and count badges.
@@ -186,6 +210,9 @@ When filtering is active (`app.filtering == true`):
 | `ratatui-interact` | 0.4 | UI components | `TreeView`, `TreeNode`, `FocusManager`, `ListPickerState` |
 | `ratatui-themes` | 0.1 | Color theming | Provides `ThemePalette` with named themes |
 | `nucleo-matcher` | 0.3 | Fuzzy matching | Pattern-based scored matching with smart case, normalization, and multi-word support |
+| `portable-pty` | 0.9 | Pseudo-terminal management | Cross-platform PTY creation and process spawning |
+| `tui-term` | 0.3 | Terminal widget | `PseudoTerminal` widget for rendering PTY output in ratatui |
+| `vt100` | 0.16 | Terminal emulation | VT100 parser for processing terminal control sequences |
 | `color-eyre` | 0.6 | Error reporting | Pretty error messages with backtraces |
 | `insta` | 1 | Snapshot testing (dev) | Full terminal output comparison |
 | `pretty_assertions` | 1 | Test diffs (dev) | Better assertion failure output |
@@ -198,8 +225,8 @@ The `usage-lib` crate includes optional features for generating documentation, m
 
 ### Test Count
 
-113 tests total:
-- **56 tests** in `app.rs` — state logic, command building, tree navigation, key handling, mouse handling, filtering, editing, tree expand/collapse
+127 tests total:
+- **70 tests** in `app.rs` — state logic, command building, command parts, tree navigation, key handling, mouse handling, filtering, editing, tree expand/collapse, execution state management, execution key handling
 - **57 tests** in `ui.rs` — rendering assertions, snapshot tests, theming, click regions, filter display
 
 ### Test Fixtures
@@ -258,13 +285,14 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - Mouse support: click, scroll, right-click, click-to-activate
 - Visual polish: theming, scrolling, default indicators, accessible symbols
 - **TreeView display** — full command hierarchy shown as an expandable/collapsible tree using `ratatui-interact`'s `TreeView` widget, with tree connectors, expand/collapse icons, and keyboard/mouse navigation (Left/Right to collapse/expand, Enter to toggle). Top-level commands are direct tree nodes (no root wrapper), maximizing screen space and simplifying navigation.
-- Comprehensive test suite (113 tests)
+- **Command execution** — execute built commands in an embedded PTY terminal directly within the TUI. Commands are spawned with separate process arguments (not shell-stringified) via `portable-pty`. Terminal output is rendered in real-time using `tui-term::PseudoTerminal`. Keyboard input is forwarded to the running process. The execution view shows the command at the top, terminal output in the middle, and a status bar at the bottom. After the process exits, the user closes the view to return to the command builder for building and running additional commands.
+- Comprehensive test suite (127 tests)
 - Zero clippy warnings
 
 ### Remaining Work
 
 - **Inline aliases** — show command aliases with dimmed styling in the command list
-- **Command execution** — execute built commands directly within the TUI, remain open for building next command
+- **PTY resize** — dynamically resize the embedded terminal when the TUI window is resized during execution
 - **Print-only mode** — optional keybinding to output command to stdout for shell integration
 - **Clipboard copy** — copy the built command to the system clipboard from within the TUI
 - **Embedded USAGE blocks** — verify and test support for script files with heredoc USAGE blocks via `--spec-file`

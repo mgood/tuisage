@@ -82,6 +82,9 @@ Only add dependencies when they provide clear value. Current key dependencies:
 | `ratatui-interact` | UI components (Breadcrumb, Input, focus management) |
 | `ratatui-themes` | Consistent color theming |
 | `nucleo-matcher` | Fuzzy matching (scored, ranked) |
+| `portable-pty` | Cross-platform pseudo-terminal for command execution |
+| `tui-term` | PseudoTerminal widget for embedded terminal output |
+| `vt100` | VT100 terminal emulation (parsing control sequences) |
 | `color-eyre` | Error reporting |
 | `insta` | Snapshot testing (dev) |
 | `pretty_assertions` | Better test diffs (dev) |

@@ -71,7 +71,11 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 
 ### Command Execution & Output
 
-- Execute the built command directly from within the TUI.
+- Execute the built command directly from within the TUI using an embedded pseudo-terminal (PTY).
+- Commands are executed with separate process arguments (not shell-stringified), using `portable-pty` for full TTY support (colors, ANSI sequences, interactive I/O).
+- During execution, the UI switches to an execution view: the command is displayed at the top, terminal output fills the main area, and a status bar shows running/exited state.
+- Keyboard input is forwarded to the running process (including Ctrl-C for SIGINT, arrow keys, etc.).
+- When the process exits, the terminal output remains visible. The user presses Esc/Enter/q to close the execution view and return to the command builder.
 - Remain open after execution to allow building and running additional commands.
 - Provide an optional print-only mode (or keybinding) to output the command to stdout for piping or integration with external tools.
 - Exit cleanly with no output when the user quits the application.
@@ -107,3 +111,5 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Copy command to clipboard directly from the TUI.
 - Continuous integration pipeline for automated testing and quality checks.
 - Support script files with embedded `USAGE` heredoc blocks via `--spec-file`.
+- PTY resize support: dynamically resize the embedded terminal when the TUI window is resized during execution.
+- Send stdin input to the running process via a dedicated input bar.

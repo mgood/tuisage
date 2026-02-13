@@ -10,6 +10,7 @@ Point TuiSage at a usage spec — from a file or by running a command — and it
 - **Toggle flags** — boolean flags, count flags (`-vvv`), and flags with values
 - **Fill arguments** — positional args with free-text input or choice cycling
 - **Live preview** — see the assembled command update in real time
+- **Execute commands** — run the built command directly within the TUI in an embedded terminal (PTY)
 - **Fuzzy filter** — press `/` to filter commands or flags with scored, ranked matching (powered by `nucleo-matcher`)
 - **Mouse support** — click to select, scroll wheel to navigate, click-to-activate
 - **Scrolling** — long lists scroll automatically to keep the selection visible
@@ -63,17 +64,17 @@ tuisage --cmd "docker compose" --spec-file docker-compose.usage.kdl
 tuisage --usage
 ```
 
-### Output
+### Command Execution
 
-When you press **Enter** on the command preview, TuiSage prints the assembled command to stdout and exits. This makes it composable with other tools:
+When you press **Enter** on the command preview, TuiSage executes the command in an embedded terminal directly within the TUI. The command is run with separate process arguments (not shell-stringified) for safety.
 
-```sh
-# Copy the built command to your clipboard (macOS)
-tuisage --spec-file spec.kdl | pbcopy
+During execution:
+- The command is displayed at the top of the screen
+- Terminal output is shown in real time in a pseudo-terminal pane
+- Keyboard input is forwarded to the running process (including Ctrl-C)
+- After the process exits, press Esc/Enter/q to close and return to the command builder
 
-# Execute the built command directly
-eval "$(tuisage --spec-cmd 'mytool --usage')"
-```
+This allows you to build, run, tweak, and re-run commands iteratively without leaving the TUI.
 
 ## CLI Reference
 
@@ -96,7 +97,7 @@ One of `--spec-cmd` or `--spec-file` is required (but not both).
 | `←` / `h` | Collapse tree node (or move to parent) |
 | `→` / `l` | Expand tree node (or move to first child) |
 | `Tab` / `Shift-Tab` | Cycle focus between panels |
-| `Enter` | Toggle expand/collapse / toggle flag / edit arg / accept command |
+| `Enter` | Toggle expand/collapse / toggle flag / edit arg / execute command |
 | `Space` | Toggle boolean flag / increment count flag |
 | `Backspace` | Decrement count flag (floor at 0) |
 | `/` | Start fuzzy filter (works in Commands and Flags panels) |
@@ -104,6 +105,20 @@ One of `--spec-cmd` or `--spec-file` is required (but not both).
 | `]` / `[` | Next / previous color theme |
 | `q` | Quit |
 | `Ctrl-C` | Quit |
+
+### During Command Execution
+
+| Key | Action |
+|---|---|
+| Any key | Forwarded to the running process |
+| `Ctrl-C` | Send SIGINT to the running process |
+| `Ctrl-D` | Send EOF to the running process |
+
+### After Command Exits
+
+| Key | Action |
+|---|---|
+| `Esc` / `Enter` / `q` | Close execution view, return to builder |
 
 ## Mouse
 
@@ -148,7 +163,7 @@ See `fixtures/sample.usage.kdl` for a more comprehensive example.
 ## Testing
 
 ```sh
-# Run all tests (113 tests: unit + rendering + snapshots)
+# Run all tests (127 tests: unit + rendering + snapshots)
 cargo test
 
 # Review snapshot changes interactively
@@ -180,6 +195,9 @@ cargo insta test --accept
 | [ratatui-interact](https://crates.io/crates/ratatui-interact) | UI components (TreeView, breadcrumb, input, focus management) |
 | [ratatui-themes](https://crates.io/crates/ratatui-themes) | Color theming |
 | [nucleo-matcher](https://crates.io/crates/nucleo-matcher) | Fuzzy matching |
+| [portable-pty](https://crates.io/crates/portable-pty) | Cross-platform pseudo-terminal for command execution |
+| [tui-term](https://crates.io/crates/tui-term) | Pseudo-terminal widget for embedded terminal output |
+| [vt100](https://crates.io/crates/vt100) | Terminal emulation (VT100 parser) |
 | [color-eyre](https://crates.io/crates/color-eyre) | Error reporting |
 | [insta](https://crates.io/crates/insta) | Snapshot testing (dev) |
 
