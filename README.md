@@ -97,12 +97,14 @@ One of `--spec-cmd` or `--spec-file` is required (but not both).
 | `←` / `h` | Collapse tree node (or move to parent) |
 | `→` / `l` | Expand tree node (or move to first child) |
 | `Tab` / `Shift-Tab` | Cycle focus between panels |
-| `Enter` | Toggle expand/collapse / toggle flag / edit arg / execute command |
+| `Enter` | Navigate into command / toggle flag / edit arg / execute command |
 | `Space` | Toggle boolean flag / increment count flag |
 | `Backspace` | Decrement count flag (floor at 0) |
 | `/` | Start fuzzy filter (works in Commands and Flags panels) |
 | `Esc` | Cancel filter / stop editing / go back / quit |
 | `]` / `[` | Next / previous color theme |
+| `T` | Next color theme (alias for `]`) |
+| `p` | Print command to stdout and exit (when Preview is focused) |
 | `q` | Quit |
 | `Ctrl-C` | Quit |
 

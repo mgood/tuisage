@@ -31,10 +31,10 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 
 ### Command Navigation
 
-- Display the full tree of subcommands for the loaded spec.
-- Allow navigating into nested subcommands (multi-level depth).
-- Allow navigating back up the command tree.
-- Show the current command path as a breadcrumb trail.
+- Display the full tree of subcommands for the loaded spec as a flat indented list (all commands always visible with depth-based indentation).
+- Allow navigating into nested subcommands (multi-level depth) via arrow keys (←/→ or h/l) and Enter.
+- Allow navigating back up the command tree via Left arrow, Esc, or parent selection.
+- The selected command in the always-visible tree, combined with the live command preview, provides constant visibility of the user's position in the command hierarchy.
 
 ### Flag Interaction
 
@@ -62,7 +62,7 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - **Auto-select matching items** — if the currently selected item doesn't match the filter, automatically move the selection to the next matching item.
 - **Clear filter when changing panels** — switching focus via Tab or mouse click clears the active filter to prevent confusion.
 - Use scored matching (powered by `nucleo-matcher`) to rank results by relevance.
-- Show filtered/matching count vs. total count in the panel title.
+- Show the active filter query in the panel title (e.g., `Commands (/query)`).
 
 ### Command Preview
 
@@ -77,7 +77,7 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Keyboard input is forwarded to the running process (including Ctrl-C for SIGINT, arrow keys, etc.).
 - When the process exits, the terminal output remains visible. The user presses Esc/Enter/q to close the execution view and return to the command builder.
 - Remain open after execution to allow building and running additional commands.
-- Provide an optional print-only mode (or keybinding) to output the command to stdout for piping or integration with external tools.
+- Provide a print-only mode: when the command preview is focused, a dedicated keybinding (`p`) outputs the command to stdout and exits, enabling piping or integration with external tools.
 - Exit cleanly with no output when the user quits the application.
 - Support `--usage` flag to output TuiSage's own usage spec and exit, enabling self-describing CLI integration.
 
@@ -96,7 +96,7 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 ### Visual Design
 
 - Use terminal colors effectively to distinguish commands, flags, arguments, and values.
-- Support multiple color themes with a theme picker.
+- Support multiple color themes, switchable at runtime with `]` (next) and `[` (previous).
 - Use clear, accessible symbols that render well across terminal emulators.
 - Scroll long lists automatically to keep the selection visible.
 
@@ -107,9 +107,9 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 
 ## Future Considerations
 
-- Print/export keybinding to output the current command to stdout for piping or copying to clipboard.
 - Copy command to clipboard directly from the TUI.
 - Continuous integration pipeline for automated testing and quality checks.
 - Support script files with embedded `USAGE` heredoc blocks via `--spec-file`.
 - PTY resize support: dynamically resize the embedded terminal when the TUI window is resized during execution.
 - Send stdin input to the running process via a dedicated input bar.
+- Breadcrumb bar widget showing the command path above the main panels (currently the tree + preview provide equivalent context).

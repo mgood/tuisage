@@ -57,34 +57,38 @@ The usage spec is parsed via `usage-lib` into a `Spec` struct that provides:
 The terminal is divided into the following regions, rendered top-to-bottom:
 
 ```
-┌──────────────────────────────────────────────────┐
-│ Breadcrumb Bar                                   │
-├─────────────────┬────────────────┬───────────────┤
-│                 │                │               │
-│   Commands      │     Flags      │   Arguments   │
-│   Panel         │     Panel      │   Panel       │
-│                 │                │               │
-├─────────────────┴────────────────┴───────────────┤
-│ Command Preview                                  │
+┌─────────────────┬────────────────────────────────┐
+│                 │                                │
+│   Commands      │     Flags                      │
+│   Panel         │     Panel                      │
+│   (40%)         │     (60% top)                  │
+│                 │                                │
+│                 ├────────────────────────────────┤
+│                 │                                │
+│                 │     Arguments                  │
+│                 │     Panel                      │
+│                 │     (60% bottom)               │
+│                 │                                │
+├─────────────────┴────────────────────────────────┤
+│ 💡 Help text for current item                    │
+│ Keybinding hints                      [Theme]    │
 ├──────────────────────────────────────────────────┤
-│ Help / Status Bar                                │
+│ Command Preview                                  │
 └──────────────────────────────────────────────────┘
 ```
 
-### Breadcrumb Bar
+The layout uses a 2-column design: Commands on the left (40% width), and Flags + Arguments stacked vertically on the right (60% width, with Flags taking 60% and Args 40% of that column). The help bar (2 rows) and command preview (3 rows) are fixed at the bottom. When there are no subcommands, the Commands panel is hidden and Flags + Arguments fill the full width.
 
-- Displays the current navigation path through the command tree.
-- Format: `binary > subcommand > nested-subcommand`
-- Always shows at least the binary name from the spec.
-- Uses the `Breadcrumb` component from `ratatui-interact`.
+The selected command in the always-visible tree, combined with the live command preview at the bottom, provides constant visibility of the user's position in the command hierarchy — no dedicated breadcrumb bar is needed since the full tree is always displayed.
 
 ### Commands Panel
 
 - Displays the full command hierarchy as a flat list with depth-based indentation (2 spaces per level).
-- All commands and subcommands are always visible — there is no expand/collapse.
-- Each item shows the command name and its `help` text (if available).
+- All commands and subcommands are always visible — the entire tree is shown at all times.
+- Each item shows the command name and its `help` text (right-aligned, if available).
 - Aliases are shown alongside the command name (e.g., `remove (rm)`).
 - Left arrow (←/h) moves selection to the parent command; Right arrow (→/l) moves to the first child.
+- Enter navigates into the selected command (moves to first child), same as Right arrow.
 - The selected command determines which flags and arguments are displayed in the other panels.
 - When filtering is active, all commands remain visible:
   - **Non-matching commands** are displayed in a dimmed/subdued color
@@ -121,9 +125,10 @@ The terminal is divided into the following regions, rendered top-to-bottom:
 
 - Shows the fully assembled command string as it would be output.
 - Updates in real time as the user toggles flags, fills values, and navigates.
-- When focused: displays a `▶ RUN` indicator to signal that Enter will execute the command.
+- When focused: displays a `▶` prefix to signal that Enter will execute the command.
 - When unfocused: displays a `$` prompt prefix.
 - The command is colorized: binary name, subcommands, flags, and values each get distinct colors.
+- When focused, pressing `p` prints the command to stdout and exits (print-only mode for piping).
 
 ### Help / Status Bar
 
@@ -157,7 +162,7 @@ When a command is executed, the UI switches to a dedicated execution layout:
 
 The UI has four focusable panels, cycled with Tab/Shift-Tab:
 
-1. **Commands** — subcommand list
+1. **Commands** — command tree list
 2. **Flags** — flag list
 3. **Args** — argument list
 4. **Preview** — command preview
@@ -178,13 +183,12 @@ Focus is managed via `ratatui-interact`'s `FocusManager`. The focus order is reb
 
 ### Command Selection
 
-The currently selected command in the tree view determines which flags and arguments are displayed. The tree view maintains its own state for:
+The currently selected command in the flat tree list determines which flags and arguments are displayed. The list maintains its own state for:
 
 - Which node is currently selected (cursor position)
-- Which nodes are expanded (showing their children)
-- Scroll offset for long trees
+- Scroll offset for long lists
 
-The selected command's full path (e.g., `["config", "set"]`) is computed from the tree structure to look up flag and argument values.
+The selected command's full path (e.g., `["config", "set"]`) is computed from the flat list structure to look up flag and argument values.
 
 ### Flag Values
 
@@ -238,7 +242,7 @@ When the user navigates to a new command, the state is synchronized:
 
 | Key | Context | Action |
 |---|---|---|
-| `Enter` | Commands panel | Toggle expand/collapse of the selected tree node |
+| `Enter` | Commands panel | Navigate into the selected command (move to first child, same as →/l) |
 | `Enter` | Flags panel (boolean) | Toggle the flag |
 | `Enter` | Flags panel (value) | Start editing the flag value |
 | `Enter` | Flags panel (choices) | Cycle to the next choice |
@@ -247,6 +251,7 @@ When the user navigates to a new command, the state is synchronized:
 | `Space` | Flags panel (boolean) | Toggle the flag |
 | `Space` | Flags panel (count) | Increment the count |
 | `Backspace` | Flags panel (count) | Decrement the count (floor at 0) |
+| `p` | Preview panel | Print the command to stdout and exit (print-only mode) |
 | `/` | Commands or Flags panel | Activate fuzzy filter mode |
 
 ### Editing Mode Keys
@@ -279,6 +284,7 @@ When the fuzzy filter is active:
 |---|---|
 | `]` | Switch to the next theme |
 | `[` | Switch to the previous theme |
+| `T` | Switch to the next theme (alias) |
 
 ### Execution Mode Keys
 
@@ -311,8 +317,8 @@ Mouse support is enabled via crossterm's `EnableMouseCapture`.
 | Action | Effect |
 |---|---|
 | Left click on a panel | Focus that panel and select the clicked item |
-| Left click on an already-selected item | Activate it (toggle expand/collapse for tree nodes, same as Enter) |
-| Right click on a command | Expand the tree node |
+| Left click on an already-selected item | Activate it (same as Enter for the focused panel) |
+| Left click on already-focused Preview | Print the command to stdout and exit (Accept) |
 | Scroll wheel up | Move selection up in the panel under the cursor |
 | Scroll wheel down | Move selection down in the panel under the cursor |
 
@@ -385,26 +391,26 @@ When a list is longer than the visible area, scrolling is handled automatically:
 
 ## Theming
 
-TuiSage uses `ratatui-themes` for color theming. The theme provides a `ThemePalette` from which semantic UI colors are derived:
+TuiSage uses `ratatui-themes` for color theming. The theme provides a `ThemePalette` from which semantic UI colors are derived via `UiColors::from_palette()`:
 
 | UI Element | Palette Mapping |
 |---|---|
-| Command names | `palette.blue` |
-| Flag names | `palette.yellow` |
-| Argument names | `palette.green` |
-| Values | `palette.cyan` |
-| Required indicators | `palette.red` |
-| Help text | `palette.overlay0` or dim |
-| Active border | `palette.blue` |
-| Inactive border | `palette.surface1` |
-| Selection background | `palette.surface1` |
-| Editing background | `palette.surface2` |
-| Filter text | `palette.mauve` |
-| Choice indicators | `palette.peach` |
-| Default value text | `palette.overlay0` |
-| Count indicators | `palette.peach` |
+| Command names | `palette.info` |
+| Flag names | `palette.warning` |
+| Argument names | `palette.success` |
+| Values | `palette.accent` |
+| Required indicators | `palette.error` |
+| Help text | `palette.muted` |
+| Active border | `palette.accent` |
+| Inactive border | `palette.muted` |
+| Selection background | `palette.selection` |
+| Editing background | Derived from `palette.selection` (warm-tinted) |
+| Choice indicators | `palette.info` |
+| Default value text | `palette.muted` |
+| Count indicators | `palette.secondary` |
+| Bar background | Derived from `palette.bg` (slightly lighter) |
 
-Themes can be cycled at runtime with `]` and `[` keys. The current theme name is displayed in the status bar.
+Themes can be cycled at runtime with `]`/`[` keys (or `T` for next). The current theme name is displayed in the status bar.
 
 ## Terminal Lifecycle
 

@@ -109,7 +109,7 @@ The core state and logic module (~2900 lines including ~1200 lines of tests).
 | `flag_list_state` | `ListPickerState` | Selection + scroll state for flags |
 | `arg_list_state` | `ListPickerState` | Selection + scroll state for args |
 | `edit_input` | `InputState` | State for the value editing text input |
-| `click_regions` | `Vec<(Rect, Focus)>` | Registered click targets for mouse mapping |
+| `click_regions` | `ClickRegionRegistry<Focus>` | Registered click targets for mouse mapping (from ratatui-interact) |
 
 #### Key Methods
 
@@ -130,7 +130,7 @@ The core state and logic module (~2900 lines including ~1200 lines of tests).
 - **`compute_tree_match_scores()`** — computes match scores for all commands in the flat list when filtering is active; matches against the command name, aliases, help text, and the full ancestor path (e.g. "config set") so queries like "cfgset" work. Returns map of node ID → score.
 - **`compute_flag_match_scores()`** — computes match scores for all flags when filtering is active; returns map of flag name → score.
 - **`auto_select_next_match()`** — automatically moves selection to the first matching item when current selection doesn't match filter. Operates on the full flat command list.
-- **`tree_expand_or_enter()`** — moves selection to first child of the selected command (Right/l key).
+- **`tree_expand_or_enter()`** — moves selection to first child of the selected command (Right/l/Enter key).
 - **`tree_collapse_or_parent()`** — moves selection to the parent command (Left/h key).
 - **`navigate_to_command()`** — selects a specific command by path in the flat list (used in tests).
 - **`navigate_into_selected()`** / **`navigate_up()`** — select first child / select parent in the flat list.
@@ -148,7 +148,7 @@ The command hierarchy is built at startup by `build_command_tree()`:
    - `full_path` — space-joined ancestor names (e.g. "config set") used for fuzzy matching
    - `id` — same as the tree node ID, used for score lookups
 
-All commands are always visible — there is no expand/collapse. The flat list is the single source of truth for navigation, matching, and rendering.
+All commands are always visible — the entire hierarchy is shown as a flat indented list. The flat list is the single source of truth for navigation, matching, and rendering.
 
 #### State Synchronization Flow
 
@@ -173,7 +173,7 @@ A semantic color palette derived from the active `ThemePalette`. Maps abstract r
 
 - **`render()`** — top-level entry point called by the event loop. Computes layout, derives colors, and delegates to sub-renderers. When in execution mode, delegates entirely to `render_execution_view()`.
 - **`render_execution_view()`** — renders the execution UI: command display at top (3 rows), `PseudoTerminal` widget in the middle (fills remaining space), and status bar at bottom (1 row). Uses `tui-term::PseudoTerminal` to render the `vt100::Parser`'s screen. Shows running/finished state with appropriate border colors and status text.
-- **`render_main_content()`** — splits the area into up to 3 columns (commands, flags, args). Commands tree is always visible. Hides flags/args panels with no content and redistributes space.
+- **`render_main_content()`** — splits the area into a 2-column layout: commands on the left (40%) and flags + args stacked vertically on the right (60%). When there are no subcommands, the commands panel is hidden and flags + args fill the full width.
 - **`render_command_list()`** — renders the command list as a flat `List` widget with depth-based indentation (2 spaces per level). Supports per-item styling: selected items get bold text, non-matching items are dimmed during filtering, and matching characters are highlighted with inverted colors on selected items or bold+underlined on unselected items.
 - **`render_flag_list()`** — renders flags with checkbox indicators (✓/○), values, defaults, global tags, and count badges.
 - **`render_arg_list()`** — renders arguments with required indicators, current values, choices, and inline editing.
@@ -262,11 +262,11 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 | Rendering to stderr, output to stdout | Enables composability: `eval "$(tuisage spec.kdl)"` works because TUI output doesn't mix with the command string. |
 | Crossterm backend | Best cross-platform terminal support (macOS, Linux, Windows). |
 | Theme palette mapping | Instead of hardcoding colors, derive semantic colors from the active theme. This makes all themes work automatically. |
-| `TreeViewState` + `TreeNode` from ratatui-interact | Provides the full command hierarchy as a collapsible tree with selection, expand/collapse state, and scroll offset. |
+| `TreeViewState` + `TreeNode` from ratatui-interact | Provides the command hierarchy data model. Used as a flat indented list (all nodes always visible) with selection and scroll offset tracking. |
 | `ListPickerState` from ratatui-interact | Provides selection index + scroll offset tracking for flags and args panels. |
 | `FocusManager` from ratatui-interact | Handles Tab/Shift-Tab cycling with dynamic panel availability, reducing boilerplate. |
 | Finishing edits on focus change | Prevents a class of bugs where the edit input text leaks into the wrong field when clicking elsewhere. |
-| Commands tree always visible | The tree shows the entire command hierarchy, not just subcommands of the current selection. It remains visible even when navigating to leaf commands with no children. |
+| Commands list always visible | The flat indented list shows the entire command hierarchy, not just subcommands of the current selection. It remains visible even when navigating to leaf commands with no children, providing constant wayfinding context that eliminates the need for a separate breadcrumb bar. |
 | Arguments panel visibility based on spec | The arguments panel is shown whenever the current command defines arguments in the spec, ensuring consistent visibility regardless of whether arg values are populated. |
 
 ## Development Status
@@ -279,22 +279,23 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - Spec loading from shell commands (`--spec-cmd`) and files (`--spec-file`)
 - Base command override (`--cmd`) to set the built command prefix independently of the spec
 - Core app state: navigation, flag values, arg values, command building
-- Full TUI rendering: 3-panel layout, preview, help bar
+- Full TUI rendering: 2-column layout (commands left, flags+args stacked right), preview, help bar
 - Keyboard navigation: vim keys, Tab cycling, Enter/Space/Backspace actions
 - Fuzzy filtering with scored ranking, subdued non-matches, character-level match highlighting, and full-path subcommand matching (nucleo-matcher Pattern API)
-- Mouse support: click, scroll, right-click, click-to-activate
+- Mouse support: click, scroll, click-to-activate
 - Visual polish: theming, scrolling, default indicators, accessible symbols
-- **TreeView display** — full command hierarchy shown as an expandable/collapsible tree using `ratatui-interact`'s `TreeView` widget, with tree connectors, expand/collapse icons, and keyboard/mouse navigation (Left/Right to collapse/expand, Enter to toggle). Top-level commands are direct tree nodes (no root wrapper), maximizing screen space and simplifying navigation.
+- **Command tree display** — full command hierarchy shown as a flat indented list with depth-based indentation (2 spaces per level). All commands are always visible. Left/Right (h/l) navigate to parent/first-child. Enter navigates into the selected command (same as Right). The selected command determines which flags and arguments are displayed.
+- **Theme cycling** — `]`/`[` keys cycle through themes forward/backward, `T` also cycles forward. Current theme name shown in status bar.
+- **Print-only mode** — press `p` when the Preview panel is focused to output the command to stdout and exit, enabling piping and shell integration.
 - **Command execution** — execute built commands in an embedded PTY terminal directly within the TUI. Commands are spawned with separate process arguments (not shell-stringified) via `portable-pty`. Terminal output is rendered in real-time using `tui-term::PseudoTerminal`. Keyboard input is forwarded to the running process. The execution view shows the command at the top, terminal output in the middle, and a status bar at the bottom. After the process exits, the user closes the view to return to the command builder for building and running additional commands.
-- Comprehensive test suite (127 tests)
+- Comprehensive test suite (127+ tests)
 - Zero clippy warnings
 
 ### Remaining Work
 
-- **Inline aliases** — show command aliases with dimmed styling in the command list
 - **PTY resize** — dynamically resize the embedded terminal when the TUI window is resized during execution
-- **Print-only mode** — optional keybinding to output command to stdout for shell integration
 - **Clipboard copy** — copy the built command to the system clipboard from within the TUI
 - **Embedded USAGE blocks** — verify and test support for script files with heredoc USAGE blocks via `--spec-file`
 - **Module splitting** — break `app.rs` into `state`, `input`, `builder` sub-modules; break `ui.rs` into widget modules
 - **CI pipeline** — GitHub Actions for `cargo test`, `cargo clippy`, and `insta` snapshot checks
+- **Breadcrumb bar** — optional dedicated breadcrumb widget above the panels (the tree + preview currently provide equivalent context)
