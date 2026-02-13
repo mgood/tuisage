@@ -5,17 +5,17 @@ expression: output
 ┌ Commands ────────────────────────────┐┌ Flags ───────────────────────────────────────────────────┐
 │  init        Initialize a new project││   [·] -e, --env = <dev|staging|prod> Environment to run  │
 │  config          Manage configuration││   [•] -j, --jobs = 4 (default)   Number of parallel jobs │
-│    set (add)       Set a config value││   ○ --dry-run   Show what would be run without executing │
-│    get             Get a config value││   ○ -w, --watch             Watch for changes and re-run │
-│    list (ls)   List all config values││   [0] -v, --verbose [G]           Enable verbose logging │
-│    remove (rm)  Remove a config value││   ○ -q, --quiet [G]                    Enable quiet mode │
+│  │ set (add)       Set a config value││   ○ --dry-run   Show what would be run without executing │
+│  │ get             Get a config value││   ○ -w, --watch             Watch for changes and re-run │
+│  │ list (ls)   List all config values││   [0] -v, --verbose [G]           Enable verbose logging │
+│  │ remove (rm)  Remove a config value││   ○ -q, --quiet [G]                    Enable quiet mode │
 │▶ run                       Run a task││                                                          │
 │  deploy        Deploy the application││                                                          │
 │  plugin                Manage plugins││                                                          │
-│    install (i)       Install a plugin│└──────────────────────────────────────────────────────────┘
-│    uninstall (rm)  Uninstall a plugin│┌ Arguments ───────────────────────────────────────────────┐
-│    list (ls)   List installed plugins││   ● <task> = (empty)                                     │
-│    update              Update plugins││   ○ [args] = (empty)                                     │
+│  │ install (i)       Install a plugin│└──────────────────────────────────────────────────────────┘
+│  │ uninstall (rm)  Uninstall a plugin│┌ Arguments ───────────────────────────────────────────────┐
+│  │ list (ls)   List installed plugins││   ● <task> = (empty)                                     │
+│  │ update              Update plugins││   ○ [args] = (empty)                                     │
 │  version        Print the CLI version││                                                          │
 │  help          Print help information││                                                          │
 │                                      ││                                                          │

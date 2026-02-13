@@ -385,10 +385,11 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
                 spans.push(Span::raw("  "));
             }
 
-            // Depth-based indentation (2 spaces per level)
+            // Depth-based indentation with vertical line prefix
             if cmd.depth > 0 {
-                let indent = "  ".repeat(cmd.depth);
+                let indent = "  ".repeat(cmd.depth - 1);
                 spans.push(Span::styled(indent, Style::default().fg(colors.help)));
+                spans.push(Span::styled("│ ", Style::default().fg(colors.help)));
             }
 
             // Command name (without help text for now)
