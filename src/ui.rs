@@ -816,7 +816,9 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
     app.click_regions.register(area, Focus::Args);
 
     let is_focused = app.focus() == Focus::Args;
-    let border_color = if is_focused {
+    let is_filtering = app.filtering && app.focus() == Focus::Args;
+    let has_filter = app.filter_active() && app.focus() == Focus::Args;
+    let border_color = if is_focused || is_filtering {
         colors.active_border
     } else {
         colors.inactive_border
@@ -824,7 +826,18 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
 
     let arg_index = app.arg_index();
 
-    let title = " Arguments ".to_string();
+    // Compute match scores for filtering (with per-field scores)
+    let match_scores = if !app.filter().is_empty() && app.focus() == Focus::Args {
+        app.compute_arg_match_scores()
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    let title = if (app.filtering || has_filter) && app.focus() == Focus::Args {
+        format!(" Arguments 🔍 {} ", app.filter())
+    } else {
+        " Arguments ".to_string()
+    };
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -844,6 +857,11 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
         .map(|(i, arg_val)| {
             let is_selected = is_focused && i == arg_index;
             let is_editing = is_selected && app.editing;
+
+            // Check if this arg matches the filter (per-field scores)
+            let scores = match_scores.get(&arg_val.name);
+            let is_match = scores.map(|s| s.overall()).unwrap_or(1) > 0 || match_scores.is_empty();
+            let name_matches = scores.map(|s| s.name_score).unwrap_or(0) > 0;
 
             let mut spans = Vec::new();
 
@@ -866,17 +884,51 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
                 spans.push(Span::styled("○ ", Style::default().fg(colors.help)));
             }
 
-            // Arg name
-            let name_style = if is_selected {
-                Style::default().fg(colors.arg).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(colors.arg)
-            };
+            // Arg name with highlighting
             let bracket = if arg_val.required { "<>" } else { "[]" };
-            spans.push(Span::styled(
-                format!("{}{}{}", &bracket[..1], arg_val.name, &bracket[1..]),
-                name_style,
-            ));
+            let arg_display = format!("{}{}{}", &bracket[..1], arg_val.name, &bracket[1..]);
+
+            if is_selected {
+                // Selected arg - apply highlighting only if name independently matches
+                if !match_scores.is_empty() && name_matches {
+                    let pattern = app.filter();
+                    let normal_style = Style::default().fg(colors.arg).add_modifier(Modifier::BOLD);
+                    // Use inverted colors for matched characters
+                    let highlight_style = Style::default()
+                        .fg(colors.bg)
+                        .bg(colors.arg)
+                        .add_modifier(Modifier::BOLD);
+                    let highlighted_spans = build_highlighted_text(
+                        &arg_display,
+                        pattern,
+                        normal_style,
+                        highlight_style,
+                    );
+                    spans.extend(highlighted_spans);
+                } else {
+                    // No filter active or name doesn't independently match - just bold
+                    let name_style = Style::default().fg(colors.arg).add_modifier(Modifier::BOLD);
+                    spans.push(Span::styled(arg_display, name_style));
+                }
+            } else if !is_match {
+                // Non-matching arg - subdued/dimmed
+                let name_style = Style::default().fg(colors.help).add_modifier(Modifier::DIM);
+                spans.push(Span::styled(arg_display, name_style));
+            } else if !match_scores.is_empty() && name_matches {
+                // Matching via name - highlight matched characters
+                let pattern = app.filter();
+                let normal_style = Style::default().fg(colors.arg);
+                let highlight_style = Style::default()
+                    .fg(colors.arg)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+                let highlighted_spans =
+                    build_highlighted_text(&arg_display, pattern, normal_style, highlight_style);
+                spans.extend(highlighted_spans);
+            } else {
+                // No filter or doesn't match name - normal style
+                let name_style = Style::default().fg(colors.arg);
+                spans.push(Span::styled(arg_display, name_style));
+            }
 
             // Value display
             spans.push(Span::styled(" = ", Style::default().fg(colors.help)));
@@ -970,7 +1022,7 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) 
             Focus::Flags => {
                 "Enter/Space: toggle  ↑↓: navigate  Tab: next  /: filter  Ctrl+Enter: run  T: theme  q: quit"
             }
-            Focus::Args => "Enter: edit  ↑↓: navigate  Tab: next  Ctrl+Enter: run  T: theme  q: quit",
+            Focus::Args => "Enter: edit  ↑↓: navigate  Tab: next  /: filter  Ctrl+Enter: run  T: theme  q: quit",
             Focus::Preview => "Enter: run  p: print  Tab: next  T: theme  q: quit",
         }
     };
