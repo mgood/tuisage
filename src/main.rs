@@ -170,10 +170,10 @@ fn spawn_command(app: &mut App, terminal_size: ratatui::layout::Size) -> color_e
         cmd.cwd(cwd);
     }
 
-    // Size the PTY to fit the terminal area (minus borders for the output pane)
-    // Layout: 3 rows for command display + 1 row for status bar + 2 rows for terminal borders
-    let pty_rows = terminal_size.height.saturating_sub(6).max(4);
-    let pty_cols = terminal_size.width.saturating_sub(2).max(20);
+    // Size the PTY to fit the terminal area (no border around output pane)
+    // Layout: 3 rows for command display + 1 row for status bar
+    let pty_rows = terminal_size.height.saturating_sub(4).max(4);
+    let pty_cols = terminal_size.width.max(20);
 
     let pty_system = NativePtySystem::default();
     let pair = pty_system
@@ -315,9 +315,9 @@ fn run_event_loop(
                     }
                     Event::Resize(width, height) => {
                         // Resize the PTY to match the new terminal size
-                        // Layout: 3 rows for command display + 1 row for status bar + 2 rows for terminal borders
-                        let pty_rows = height.saturating_sub(6).max(4);
-                        let pty_cols = width.saturating_sub(2).max(20);
+                        // Layout: 3 rows for command display + 1 row for status bar
+                        let pty_rows = height.saturating_sub(4).max(4);
+                        let pty_cols = width.max(20);
                         app.resize_pty(pty_rows, pty_cols);
                     }
                     _ => {}

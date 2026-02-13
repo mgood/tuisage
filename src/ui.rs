@@ -222,23 +222,7 @@ fn render_execution_view(frame: &mut Frame, app: &App, colors: &UiColors) {
         .map(|e| e.exited.load(Ordering::Relaxed))
         .unwrap_or(false);
 
-    let term_title = if exited {
-        " Output (finished) "
-    } else {
-        " Output (running…) "
-    };
-
-    let term_border_color = if exited {
-        colors.inactive_border
-    } else {
-        colors.active_border
-    };
-
-    let term_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(term_border_color))
-        .title(term_title)
-        .title_style(Style::default().fg(term_border_color).bold());
+    let term_block = Block::default().borders(Borders::NONE);
 
     if let Some(ref exec) = app.execution {
         if let Ok(parser) = exec.parser.read() {
