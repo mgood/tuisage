@@ -227,9 +227,9 @@ The `usage-lib` crate includes optional features for generating documentation, m
 
 ### Test Count
 
-127 tests total:
-- **70 tests** in `app.rs` — state logic, command building, command parts, tree navigation, key handling, mouse handling, filtering, editing, tree expand/collapse, execution state management, execution key handling
-- **57 tests** in `ui.rs` — rendering assertions, snapshot tests, theming, click regions, filter display
+148 tests total:
+- **88 tests** in `app.rs` — state logic, command building, command parts, tree navigation, key handling, mouse handling, filtering, editing, tree expand/collapse, execution state management, execution key handling, global flag sync, filtered navigation, startup sync, separate name/help matching
+- **60 tests** in `ui.rs` — rendering assertions, snapshot tests, theming, click regions, filter display, filter mode visual cues
 
 ### Test Fixtures
 
