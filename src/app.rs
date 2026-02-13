@@ -807,8 +807,18 @@ impl App {
                 }
                 Action::None
             }
-            KeyCode::Char('T') => {
+            KeyCode::Char('T') | KeyCode::Char(']') => {
                 self.next_theme();
+                Action::None
+            }
+            KeyCode::Char('[') => {
+                self.prev_theme();
+                Action::None
+            }
+            KeyCode::Char('p') => {
+                if self.focus() == Focus::Preview {
+                    return Action::Accept;
+                }
                 Action::None
             }
             KeyCode::Char('/') => {
@@ -1115,7 +1125,8 @@ impl App {
     fn handle_enter(&mut self) -> Action {
         match self.focus() {
             Focus::Commands => {
-                // Enter selects the command (same as clicking)
+                // Enter navigates into the selected command (same as Right/l)
+                self.tree_expand_or_enter();
                 Action::None
             }
             Focus::Flags => {
@@ -1522,7 +1533,9 @@ impl App {
                     .nth(self.arg_index())
                     .and_then(|a| a.help.clone())
             }),
-            Focus::Preview => Some("Press Enter to accept the command, Esc to go back".to_string()),
+            Focus::Preview => {
+                Some("Enter: run command  p: print to stdout  Esc: go back".to_string())
+            }
         }
     }
 }
@@ -3153,5 +3166,183 @@ mod tests {
         let result = app.handle_key(q);
         assert_eq!(result, Action::None);
         assert!(app.is_executing(), "Should still be executing");
+    }
+
+    #[test]
+    fn test_bracket_right_cycles_theme_forward() {
+        let mut app = App::new(sample_spec());
+        let initial_theme = app.theme_name;
+
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char(']'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let result = app.handle_key(key);
+        assert_eq!(result, Action::None);
+        assert_ne!(app.theme_name, initial_theme, "Theme should have changed");
+
+        // T should also cycle forward to the same next theme
+        let mut app2 = App::new(sample_spec());
+        let t_key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('T'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app2.handle_key(t_key);
+        assert_eq!(
+            app.theme_name, app2.theme_name,
+            "] and T should both cycle to same theme"
+        );
+    }
+
+    #[test]
+    fn test_bracket_left_cycles_theme_backward() {
+        let mut app = App::new(sample_spec());
+        let initial_theme = app.theme_name;
+
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('['),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let result = app.handle_key(key);
+        assert_eq!(result, Action::None);
+        assert_ne!(
+            app.theme_name, initial_theme,
+            "Theme should have changed backward"
+        );
+    }
+
+    #[test]
+    fn test_bracket_left_right_are_inverses() {
+        let mut app = App::new(sample_spec());
+        let initial_theme = app.theme_name;
+
+        // Cycle forward with ]
+        let right = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char(']'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(right);
+        let after_forward = app.theme_name;
+        assert_ne!(after_forward, initial_theme);
+
+        // Cycle backward with [
+        let left = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('['),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(left);
+        assert_eq!(app.theme_name, initial_theme, "[ should undo ]");
+    }
+
+    #[test]
+    fn test_enter_on_commands_navigates_into_child() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Commands);
+
+        // Navigate to "config" which has children (set, get, list, remove)
+        app.navigate_to_command(&["config"]);
+        let config_idx = app.command_index();
+        assert_eq!(app.command_path, vec!["config"]);
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let result = app.handle_key(enter);
+        assert_eq!(result, Action::None);
+
+        // Should have moved to first child of "config" (which is "config set")
+        assert!(
+            app.command_index() > config_idx,
+            "Enter should navigate into first child"
+        );
+        // The command path should include "config" and a child
+        assert!(
+            app.command_path.len() >= 2,
+            "Should have navigated deeper: {:?}",
+            app.command_path
+        );
+    }
+
+    #[test]
+    fn test_enter_on_commands_same_as_right() {
+        // Enter and Right should produce the same result on Commands panel
+        let mut app_enter = App::new(sample_spec());
+        app_enter.set_focus(Focus::Commands);
+        app_enter.navigate_to_command(&["config"]);
+
+        let mut app_right = App::new(sample_spec());
+        app_right.set_focus(Focus::Commands);
+        app_right.navigate_to_command(&["config"]);
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let right = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Right,
+            crossterm::event::KeyModifiers::NONE,
+        );
+
+        app_enter.handle_key(enter);
+        app_right.handle_key(right);
+
+        assert_eq!(app_enter.command_index(), app_right.command_index());
+        assert_eq!(app_enter.command_path, app_right.command_path);
+    }
+
+    #[test]
+    fn test_enter_on_leaf_command_does_nothing() {
+        // Enter on a command with no children should be a no-op
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Commands);
+        app.navigate_to_command(&["init"]); // "init" has no subcommands
+        let init_idx = app.command_index();
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let result = app.handle_key(enter);
+        assert_eq!(result, Action::None);
+        assert_eq!(
+            app.command_index(),
+            init_idx,
+            "Enter on leaf should not move"
+        );
+    }
+
+    #[test]
+    fn test_p_on_preview_returns_accept() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Preview);
+
+        let p = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('p'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let result = app.handle_key(p);
+        assert_eq!(result, Action::Accept);
+    }
+
+    #[test]
+    fn test_p_on_non_preview_does_nothing() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Commands);
+
+        let p = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('p'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let result = app.handle_key(p);
+        assert_eq!(
+            result,
+            Action::None,
+            "p should do nothing when not on Preview"
+        );
+
+        app.set_focus(Focus::Flags);
+        let result = app.handle_key(p);
+        assert_eq!(result, Action::None, "p should do nothing when on Flags");
     }
 }
