@@ -256,7 +256,8 @@ When the user navigates to a new command, the state is synchronized:
 | `Space` | Flags panel (count) | Increment the count |
 | `Backspace` | Flags panel (count) | Decrement the count (floor at 0) |
 | `p` | Preview panel | Print the command to stdout and exit (print-only mode) |
-| `/` | Commands, Flags, or Args panel | Activate fuzzy filter mode (no effect in Preview panel) |
+| `/` | Commands or Flags panel | Activate fuzzy filter mode (no effect in Args or Preview panels) |
+| `Ctrl+Enter` | Any panel | Execute the built command in an embedded PTY |
 
 ### Editing Mode Keys
 
@@ -279,7 +280,7 @@ When in **typing mode** (after pressing `/`):
 |---|---|
 | Any character | Append to the filter query; auto-select next matching item if current item doesn't match |
 | `Backspace` | Delete the last character from the query; auto-select next matching item if current item doesn't match |
-| `Esc` | Clear the filter and exit filter mode |
+| `Esc` | Clear the filter and exit typing mode |
 | `↑` / `↓` | Navigate to the previous/next **matching** item (skips non-matching items) |
 | `Enter` | Apply the filter and exit typing mode (filter remains active; navigation keys like `j`/`k` move between matches instead of appending to the query) |
 | `Tab` | Switch focus to the other panel and clear the filter |
@@ -289,7 +290,7 @@ When a filter is **applied** (after pressing `Enter`):
 | Key | Action |
 |---|---|
 | `↑` / `↓` / `j` / `k` | Navigate to the previous/next **matching** item (skips non-matching items) |
-| `Esc` | Clear the applied filter and return to the normal view |
+| `Esc` | Clear the applied filter |
 | `Tab` / `Shift-Tab` | Switch focus to another panel and clear the filter |
 | `/` | Start a new filter (clears the previous one and enters typing mode) |
 
@@ -349,7 +350,7 @@ If the user is currently editing a value and clicks on a different item or panel
 
 Filtering uses scored fuzzy-matching (powered by `nucleo-matcher::Pattern`):
 
-1. The user presses `/` to activate filter mode in the Commands, Flags, or Args panel. Pressing `/` in the Preview panel has no effect.
+1. The user presses `/` to activate filter mode in the Commands or Flags panel. Pressing `/` in the Args or Preview panels has no effect (Args filtering is not yet implemented).
 2. **Filter mode visual cues**:
    - The panel title immediately shows the 🔍 emoji (e.g., `Commands 🔍` when the query is empty, `Commands 🔍 query` as the user types). The 🔍 remains visible as long as a filter is applied (including after Enter exits typing mode). No counts are shown.
    - The panel border color changes to the active border color during typing mode to clearly indicate filter input is active.

@@ -100,8 +100,9 @@ One of `--spec-cmd` or `--spec-file` is required (but not both).
 | `Enter` | Navigate into command / toggle flag / edit arg / execute command |
 | `Space` | Toggle boolean flag / increment count flag |
 | `Backspace` | Decrement count flag (floor at 0) |
-| `/` | Start fuzzy filter (works in Commands, Flags, and Args panels) |
-| `Esc` | Cancel filter / stop editing / go back / quit |
+| `/` | Start fuzzy filter (works in Commands and Flags panels) |
+| `Esc` | Cancel filter / stop editing |
+| `Ctrl+Enter` | Execute command (works from any panel) |
 | `]` / `[` | Next / previous color theme |
 | `T` | Next color theme (alias for `]`) |
 | `p` | Print command to stdout and exit (when Preview is focused) |
