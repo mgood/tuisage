@@ -313,6 +313,7 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
 
     let is_focused = app.focus() == Focus::Commands;
     let is_filtering = app.filtering && app.focus() == Focus::Commands;
+    let has_filter = app.filter_active() && app.focus() == Focus::Commands;
     let border_color = if is_focused || is_filtering {
         colors.active_border
     } else {
@@ -322,7 +323,7 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
     // Flatten the tree for display
     let flat_commands = flatten_command_tree(&app.command_tree_nodes);
 
-    let title = if app.filtering && app.focus() == Focus::Commands {
+    let title = if (app.filtering || has_filter) && app.focus() == Focus::Commands {
         format!(" Commands 🔍 {} ", app.filter())
     } else {
         " Commands ".to_string()
@@ -512,6 +513,7 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
 
     let is_focused = app.focus() == Focus::Flags;
     let is_filtering = app.filtering && app.focus() == Focus::Flags;
+    let has_filter = app.filter_active() && app.focus() == Focus::Flags;
     let border_color = if is_focused || is_filtering {
         colors.active_border
     } else {
@@ -528,7 +530,7 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
         std::collections::HashMap::new()
     };
 
-    let title = if app.filtering && app.focus() == Focus::Flags {
+    let title = if (app.filtering || has_filter) && app.focus() == Focus::Flags {
         format!(" Flags 🔍 {} ", app.filter())
     } else {
         " Flags ".to_string()

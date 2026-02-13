@@ -319,11 +319,17 @@ impl App {
     /// Set the focus to a specific panel.
     pub fn set_focus(&mut self, panel: Focus) {
         // Clear filter when changing panels
-        if self.focus() != panel && self.filtering {
+        if self.focus() != panel {
             self.filtering = false;
             self.filter_input.clear();
         }
         self.focus_manager.set(panel);
+    }
+
+    /// Whether a filter is applied (filter text is non-empty), regardless of
+    /// whether the user is still in typing mode (`self.filtering`).
+    pub fn filter_active(&self) -> bool {
+        !self.filter().is_empty()
     }
 
     // --- Convenience accessors for indices ---
@@ -930,15 +936,24 @@ impl App {
                 Action::None
             }
             KeyCode::Tab => {
+                self.filtering = false;
+                self.filter_input.clear();
                 self.focus_manager.next();
                 Action::None
             }
             KeyCode::BackTab => {
+                self.filtering = false;
+                self.filter_input.clear();
                 self.focus_manager.prev();
                 Action::None
             }
             KeyCode::Esc => {
-                if self.focus() == Focus::Commands {
+                // If a filter is applied (even after Enter), clear it first
+                if self.filter_active() {
+                    self.filtering = false;
+                    self.filter_input.clear();
+                    Action::None
+                } else if self.focus() == Focus::Commands {
                     // Move to parent if one exists, quit if at top level
                     if let Some(parent_idx) = self.find_parent_index() {
                         self.command_tree_state.selected_index = parent_idx;
@@ -1139,8 +1154,8 @@ impl App {
     }
 
     fn move_up(&mut self) {
-        // When in filter mode, skip non-matching items
-        if self.filtering {
+        // When a filter is applied, skip non-matching items
+        if self.filter_active() {
             self.move_to_prev_match();
             return;
         }
@@ -1160,8 +1175,8 @@ impl App {
     }
 
     fn move_down(&mut self) {
-        // When in filter mode, skip non-matching items
-        if self.filtering {
+        // When a filter is applied, skip non-matching items
+        if self.filter_active() {
             self.move_to_next_match();
             return;
         }
@@ -2465,7 +2480,7 @@ mod tests {
     }
 
     #[test]
-    fn test_filtered_navigation_only_works_when_filtering_active() {
+    fn test_filtered_navigation_works_after_enter_applies_filter() {
         let mut app = App::new(sample_spec());
         app.set_focus(Focus::Commands);
 
@@ -2484,29 +2499,98 @@ mod tests {
         app.handle_key(p_key);
         assert_eq!(app.filter(), "p");
 
-        // Press Enter to exit filter mode (but keep the query)
+        // Press Enter to exit typing mode (but keep the filter applied)
         let enter = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Enter,
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(enter);
-        assert!(!app.filtering, "Should exit filter mode after Enter");
+        assert!(!app.filtering, "Should exit typing mode after Enter");
         assert_eq!(app.filter(), "p", "Query should remain after Enter");
+        assert!(app.filter_active(), "Filter should still be active");
 
-        // Now navigation should use normal mode (not filtered)
-        // We can't easily test the internal behavior, but we verify that
-        // move_up/move_down work without filtering active
-        let initial_index = app.command_tree_state.selected_index;
-
-        let down = crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Down,
+        // Navigation should still use filtered mode (skip non-matches)
+        // j/k should work without appending to the filter text
+        let j_key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('j'),
             crossterm::event::KeyModifiers::NONE,
         );
-        app.handle_key(down);
+        app.handle_key(j_key);
+        assert_eq!(app.filter(), "p", "j should navigate, not append to filter");
+        assert!(app.filter_active(), "Filter should remain active after j");
+    }
 
-        // Should move to the next item (not skip to next match)
-        let new_index = app.command_tree_state.selected_index;
-        assert_ne!(initial_index, new_index, "Should have moved to next item");
+    #[test]
+    fn test_esc_clears_applied_filter() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Commands);
+
+        // Enter filter mode, type, then apply with Enter
+        let slash = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('/'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(slash);
+
+        let p_key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('p'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(p_key);
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(!app.filtering);
+        assert!(app.filter_active(), "Filter should be active after Enter");
+
+        // Esc should clear the applied filter
+        let esc = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(esc);
+        assert!(!app.filtering);
+        assert!(!app.filter_active(), "Esc should clear the applied filter");
+        assert!(app.filter().is_empty());
+    }
+
+    #[test]
+    fn test_tab_clears_applied_filter() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Commands);
+
+        // Enter filter mode, type, then apply with Enter
+        let slash = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('/'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(slash);
+
+        let p_key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('p'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(p_key);
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.filter_active(), "Filter should be active after Enter");
+
+        // Tab should clear the filter and switch focus
+        let tab = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Tab,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(tab);
+        assert!(!app.filter_active(), "Tab should clear the applied filter");
+        assert!(app.filter().is_empty());
+        assert_eq!(app.focus(), Focus::Flags);
     }
 
     #[test]
