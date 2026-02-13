@@ -87,6 +87,7 @@ The core state and logic module (~2900 lines including ~1200 lines of tests).
 - **`FlagValue`** — discriminated union: `Bool(bool)`, `String(String)`, `Count(u32)`.
 - **`ArgValue`** — struct with `name`, `value`, `required`, `choices` fields.
 - **`CmdData`** — data stored in each tree node: `name`, `help`, `aliases`.
+- **`ChoiceSelectState`** — state for the inline choice select box: `choices`, `filter_input`, `selected_index`, `source_panel`, `source_index`.
 - **`App`** — the main application state struct.
 
 #### `App` Struct Fields
@@ -108,6 +109,7 @@ The core state and logic module (~2900 lines including ~1200 lines of tests).
 | `command_tree_state` | `TreeViewState` | Tree view state: selection index, collapsed set, scroll |
 | `flag_list_state` | `ListPickerState` | Selection + scroll state for flags |
 | `arg_list_state` | `ListPickerState` | Selection + scroll state for args |
+| `choice_select` | `Option<ChoiceSelectState>` | State for inline choice select box (None when closed) |
 | `edit_input` | `InputState` | State for the value editing text input |
 | `click_regions` | `ClickRegionRegistry<Focus>` | Registered click targets for mouse mapping (from ratatui-interact) |
 
@@ -300,7 +302,11 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - **Print-only mode** — press `p` when the Preview panel is focused to output the command to stdout and exit, enabling piping and shell integration.
 - **Command execution** — execute built commands in an embedded PTY terminal directly within the TUI. Commands are spawned with separate process arguments (not shell-stringified) via `portable-pty`. Terminal output is rendered in real-time using `tui-term::PseudoTerminal`. Keyboard input is forwarded to the running process. The execution view shows the command at the top, terminal output in the middle, and a status bar at the bottom. After the process exits, the user closes the view to return to the command builder for building and running additional commands.
 - **PTY resize** — dynamically resize the embedded terminal when the TUI window is resized during execution. The PTY master is stored in `ExecutionState` and resized via `app.resize_pty()` when `Event::Resize` is received during execution mode. The vt100 parser screen is resized in place via `screen_mut().set_size()`, preserving content without flashing, while the child process receives SIGWINCH to redraw.
-- Comprehensive test suite (136+ tests)
+- **Command Preview at top** — the command preview pane is positioned at the top of the screen (matching the execution view layout), providing visual stability when switching between builder and execution modes.
+- **Ctrl+R execute shortcut** — execute the built command from any panel via `Ctrl+R` (replaces `Ctrl+Enter` which could be intercepted by terminal emulators). Works regardless of edit or filter mode.
+- **Args filter auto-select** — when filtering in the Arguments panel, the cursor automatically moves to the first matching argument if the current selection doesn't match the filter.
+- **Inline choice select box** — flags and arguments with predefined choices open an inline select box overlay instead of cycling through options. The select box supports fuzzy filtering (non-matching choices are hidden), navigation with Up/Down, confirmation with Enter, and cancellation with Esc. The current value is pre-selected when the box opens.
+- Comprehensive test suite (163+ tests)
 - Zero clippy warnings
 
 ### Remaining Work
