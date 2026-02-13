@@ -1,3 +1,5 @@
+use std::sync::atomic::Ordering;
+
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -6,11 +8,12 @@ use ratatui::{
     Frame,
 };
 use ratatui_themes::ThemePalette;
+use tui_term::widget::PseudoTerminal;
 
 #[cfg(test)]
 extern crate insta;
 
-use crate::app::{flatten_command_tree, App, FlagValue, Focus};
+use crate::app::{flatten_command_tree, App, AppMode, FlagValue, Focus};
 
 /// Derive a semantic color palette for our UI elements from the theme palette.
 /// This maps semantic theme colors to our specific UI roles.
@@ -137,6 +140,14 @@ fn build_highlighted_text(
 
 /// Render the full UI: command panel, flag panel, arg panel, preview, help bar.
 pub fn render(frame: &mut Frame, app: &mut App) {
+    let palette = app.palette();
+    let colors = UiColors::from_palette(&palette);
+
+    if app.mode == AppMode::Executing {
+        render_execution_view(frame, app, &colors);
+        return;
+    }
+
     let area = frame.area();
 
     // Top-level vertical layout:
@@ -155,15 +166,127 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Clear click regions each frame so they're rebuilt from current layout
     app.click_regions.clear();
 
-    let palette = app.palette();
-    let colors = UiColors::from_palette(&palette);
-
     render_main_content(frame, app, outer[0], &colors);
     render_help_bar(frame, app, outer[1], &colors);
     render_preview(frame, app, outer[2], &colors);
 
     // Register preview area for click hit-testing
     app.click_regions.register(outer[2], Focus::Preview);
+}
+
+/// Render the execution view: command at top, terminal output in middle, status at bottom.
+fn render_execution_view(frame: &mut Frame, app: &App, colors: &UiColors) {
+    let area = frame.area();
+
+    // Layout: [command display] [terminal output] [status bar]
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // command display
+            Constraint::Min(4),    // terminal output
+            Constraint::Length(1), // status bar
+        ])
+        .split(area);
+
+    // --- Command display at top ---
+    let command_display = app
+        .execution
+        .as_ref()
+        .map(|e| e.command_display.clone())
+        .unwrap_or_default();
+
+    let cmd_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(colors.active_border))
+        .title(" Command ")
+        .title_style(Style::default().fg(colors.active_border).bold());
+
+    let cmd_spans = vec![
+        Span::styled("$ ", Style::default().fg(colors.command)),
+        Span::styled(
+            command_display,
+            Style::default()
+                .fg(colors.preview_cmd)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+    let cmd_paragraph = Paragraph::new(Line::from(cmd_spans))
+        .block(cmd_block)
+        .wrap(Wrap { trim: false });
+    frame.render_widget(cmd_paragraph, outer[0]);
+
+    // --- Terminal output ---
+    let exited = app
+        .execution
+        .as_ref()
+        .map(|e| e.exited.load(Ordering::Relaxed))
+        .unwrap_or(false);
+
+    let term_title = if exited {
+        " Output (finished) "
+    } else {
+        " Output (running…) "
+    };
+
+    let term_border_color = if exited {
+        colors.inactive_border
+    } else {
+        colors.active_border
+    };
+
+    let term_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(term_border_color))
+        .title(term_title)
+        .title_style(Style::default().fg(term_border_color).bold());
+
+    if let Some(ref exec) = app.execution {
+        if let Ok(parser) = exec.parser.read() {
+            let pseudo_term = PseudoTerminal::new(parser.screen())
+                .block(term_block)
+                .style(Style::default().fg(colors.preview_cmd).bg(colors.bg));
+            frame.render_widget(pseudo_term, outer[1]);
+        } else {
+            // Fallback if lock is poisoned
+            let fallback = Paragraph::new("(terminal output unavailable)")
+                .block(term_block)
+                .style(Style::default().fg(colors.help));
+            frame.render_widget(fallback, outer[1]);
+        }
+    } else {
+        let fallback = Paragraph::new("(no execution state)")
+            .block(term_block)
+            .style(Style::default().fg(colors.help));
+        frame.render_widget(fallback, outer[1]);
+    }
+
+    // --- Status bar at bottom ---
+    let status_text = if exited {
+        let exit_code = app.execution_exit_status().unwrap_or_default();
+        format!(
+            " Exited ({}) — press Esc/Enter/q to close ",
+            if exit_code.is_empty() {
+                "unknown".to_string()
+            } else {
+                exit_code
+            }
+        )
+    } else {
+        " Running… (input is forwarded to the process) ".to_string()
+    };
+
+    let status_style = if exited {
+        Style::default()
+            .fg(colors.help)
+            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+    } else {
+        Style::default()
+            .fg(colors.command)
+            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+    };
+
+    let status = Paragraph::new(status_text).style(status_style);
+    frame.render_widget(status, outer[2]);
 }
 
 /// Render the main content area with panels for commands, flags, and args.

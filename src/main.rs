@@ -1,12 +1,17 @@
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
 
 use clap::{CommandFactory, Parser};
+use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 
 mod app;
 mod ui;
 
-use app::App;
+use app::{App, ExecutionState};
 
 /// TUI application for interactively building CLI commands from usage specs
 #[derive(Parser, Debug)]
@@ -147,6 +152,137 @@ fn run_spec_command(cmd: &str) -> color_eyre::Result<String> {
     })
 }
 
+/// Spawn the built command in a PTY and set up the execution state in the app.
+fn spawn_command(app: &mut App, terminal_size: ratatui::layout::Size) -> color_eyre::Result<()> {
+    let parts = app.build_command_parts();
+    if parts.is_empty() {
+        return Err(color_eyre::eyre::eyre!("No command to execute"));
+    }
+
+    let command_display = app.build_command();
+
+    // Build the PTY command with separate arguments
+    let mut cmd = CommandBuilder::new(&parts[0]);
+    for arg in &parts[1..] {
+        cmd.arg(arg);
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        cmd.cwd(cwd);
+    }
+
+    // Size the PTY to fit the terminal area (minus borders for the output pane)
+    // Layout: 3 rows for command display + 1 row for status bar + 2 rows for terminal borders
+    let pty_rows = terminal_size.height.saturating_sub(6).max(4);
+    let pty_cols = terminal_size.width.saturating_sub(2).max(20);
+
+    let pty_system = NativePtySystem::default();
+    let pair = pty_system
+        .openpty(PtySize {
+            rows: pty_rows,
+            cols: pty_cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to open PTY: {}", e))?;
+
+    let parser = Arc::new(RwLock::new(vt100::Parser::new(pty_rows, pty_cols, 0)));
+    let exited = Arc::new(AtomicBool::new(false));
+    let exit_status: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+    // Spawn the child process on the slave side
+    let child_result = pair.slave.spawn_command(cmd);
+    // Drop the slave immediately — the child owns it now
+    drop(pair.slave);
+
+    let mut child = child_result
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to spawn command '{}': {}", parts[0], e))?;
+
+    // Spawn a thread to wait for the child to exit
+    {
+        let exited = exited.clone();
+        let exit_status = exit_status.clone();
+        std::thread::spawn(move || {
+            match child.wait() {
+                Ok(status) => {
+                    if let Ok(mut s) = exit_status.lock() {
+                        *s = Some(format!("{}", status));
+                    }
+                }
+                Err(e) => {
+                    if let Ok(mut s) = exit_status.lock() {
+                        *s = Some(format!("error: {}", e));
+                    }
+                }
+            }
+            exited.store(true, Ordering::Relaxed);
+        });
+    }
+
+    // Spawn a thread to read PTY output and feed it to the vt100 parser
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to clone PTY reader: {}", e))?;
+
+    {
+        let parser = parser.clone();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 8192];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break, // EOF
+                    Ok(size) => {
+                        if let Ok(mut p) = parser.write() {
+                            p.process(&buf[..size]);
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
+    // Get the writer for forwarding keyboard input
+    let writer = pair
+        .master
+        .take_writer()
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to take PTY writer: {}", e))?;
+
+    let pty_writer: Arc<Mutex<Option<Box<dyn std::io::Write + Send>>>> =
+        Arc::new(Mutex::new(Some(writer)));
+
+    // Set up a thread to drop the writer and master when the child exits
+    {
+        let exited = exited.clone();
+        let pty_writer = pty_writer.clone();
+        std::thread::spawn(move || {
+            // Wait for the child to exit
+            while !exited.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            // Give a moment for final output to be read
+            std::thread::sleep(Duration::from_millis(100));
+            // Drop the writer so the reader thread can finish
+            if let Ok(mut w) = pty_writer.lock() {
+                *w = None;
+            }
+            // Drop the master to clean up
+            drop(pair.master);
+        });
+    }
+
+    let state = ExecutionState {
+        command_display,
+        parser,
+        pty_writer,
+        exited,
+        exit_status,
+    };
+
+    app.start_execution(state);
+    Ok(())
+}
+
 fn run_event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut App,
@@ -156,6 +292,30 @@ fn run_event_loop(
     loop {
         terminal.draw(|frame| ui::render(frame, app))?;
 
+        // Use polling when in execution mode so we can refresh the terminal output
+        if app.is_executing() {
+            if event::poll(Duration::from_millis(16))? {
+                match event::read()? {
+                    Event::Key(key) => {
+                        if key.kind != KeyEventKind::Press {
+                            continue;
+                        }
+
+                        // Ctrl-C during execution: forward to PTY (handled in app)
+                        // But if the process has exited, just close
+                        app.handle_key(key);
+                    }
+                    Event::Resize(_, _) => {
+                        // Terminal will be redrawn on next loop iteration
+                    }
+                    _ => {}
+                }
+            }
+            // Continue the loop to redraw (polling-based refresh for terminal output)
+            continue;
+        }
+
+        // Normal builder mode: blocking event read
         match event::read()? {
             Event::Key(key) => {
                 if key.kind != KeyEventKind::Press {
@@ -176,6 +336,18 @@ fn run_event_loop(
                             return Ok(Some(cmd));
                         }
                     }
+                    app::Action::Execute => {
+                        let size = terminal.size()?;
+                        let term_size = ratatui::layout::Size {
+                            width: size.width,
+                            height: size.height,
+                        };
+                        if let Err(e) = spawn_command(app, term_size) {
+                            // If spawning fails, we could show an error but for now just log it
+                            // The user will see the error in the terminal
+                            eprintln!("Failed to execute command: {}", e);
+                        }
+                    }
                 }
             }
             Event::Mouse(mouse) => match app.handle_mouse(mouse) {
@@ -185,6 +357,16 @@ fn run_event_loop(
                     let cmd = app.build_command();
                     if !cmd.is_empty() {
                         return Ok(Some(cmd));
+                    }
+                }
+                app::Action::Execute => {
+                    let size = terminal.size()?;
+                    let term_size = ratatui::layout::Size {
+                        width: size.width,
+                        height: size.height,
+                    };
+                    if let Err(e) = spawn_command(app, term_size) {
+                        eprintln!("Failed to execute command: {}", e);
                     }
                 }
             },

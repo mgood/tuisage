@@ -1,3 +1,7 @@
+use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
 use ratatui::layout::Rect;
@@ -13,6 +17,30 @@ pub enum Action {
     None,
     Quit,
     Accept,
+    Execute,
+}
+
+/// Whether the app is in command-builder mode or execution mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppMode {
+    /// Normal command-building UI.
+    Builder,
+    /// A command is running (or has finished) in an embedded terminal.
+    Executing,
+}
+
+/// State for a running (or finished) command execution.
+pub struct ExecutionState {
+    /// The command string displayed at the top.
+    pub command_display: String,
+    /// vt100 parser holding the terminal screen state.
+    pub parser: Arc<RwLock<vt100::Parser>>,
+    /// Writer to send input to the PTY (None after the master is dropped).
+    pub pty_writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
+    /// Whether the child process has exited.
+    pub exited: Arc<AtomicBool>,
+    /// Exit status description (e.g. "0", "1", "signal 9").
+    pub exit_status: Arc<Mutex<Option<String>>>,
 }
 
 /// Which panel currently has focus.
@@ -69,6 +97,12 @@ pub struct FlatCommand {
 pub struct App {
     pub spec: Spec,
 
+    /// Current app mode (builder vs executing).
+    pub mode: AppMode,
+
+    /// Execution state when a command is running.
+    pub execution: Option<ExecutionState>,
+
     /// Current color theme.
     pub theme_name: ThemeName,
 
@@ -119,12 +153,58 @@ impl App {
         Self::with_theme(spec, ThemeName::default())
     }
 
-    pub fn with_theme(spec: Spec, theme_name: ThemeName) -> Self {
+    /// Check if the app is currently in execution mode.
+    pub fn is_executing(&self) -> bool {
+        self.mode == AppMode::Executing
+    }
+
+    /// Check if the running command has exited.
+    pub fn execution_exited(&self) -> bool {
+        self.execution
+            .as_ref()
+            .map(|e| e.exited.load(Ordering::Relaxed))
+            .unwrap_or(false)
+    }
+
+    /// Get the exit status string, if available.
+    pub fn execution_exit_status(&self) -> Option<String> {
+        self.execution
+            .as_ref()
+            .and_then(|e| e.exit_status.lock().ok().and_then(|s| s.clone()))
+    }
+
+    /// Close the execution view and return to the builder.
+    pub fn close_execution(&mut self) {
+        self.mode = AppMode::Builder;
+        self.execution = None;
+    }
+
+    /// Start command execution with the given execution state.
+    pub fn start_execution(&mut self, state: ExecutionState) {
+        self.mode = AppMode::Executing;
+        self.execution = Some(state);
+    }
+
+    /// Write bytes to the PTY (forward keyboard input during execution).
+    pub fn write_to_pty(&self, data: &[u8]) {
+        if let Some(ref exec) = self.execution {
+            if let Ok(mut writer_guard) = exec.pty_writer.lock() {
+                if let Some(ref mut writer) = *writer_guard {
+                    let _ = writer.write_all(data);
+                    let _ = writer.flush();
+                }
+            }
+        }
+    }
+
+    pub fn with_theme(spec: usage::Spec, theme_name: ThemeName) -> Self {
         let tree_nodes = build_command_tree(&spec);
         let tree_state = TreeViewState::new();
 
         let mut app = Self {
             spec,
+            mode: AppMode::Builder,
+            execution: None,
             theme_name,
             command_path: Vec::new(),
             flag_values: std::collections::HashMap::new(),
@@ -703,6 +783,11 @@ impl App {
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
         use crossterm::event::KeyCode;
 
+        // If in execution mode, handle separately
+        if self.is_executing() {
+            return self.handle_execution_key(key);
+        }
+
         // If we're editing a text field, handle that separately
         if self.editing {
             return self.handle_editing_key(key);
@@ -970,6 +1055,63 @@ impl App {
         }
     }
 
+    /// Handle key events during command execution mode.
+    fn handle_execution_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
+        use crossterm::event::KeyCode;
+
+        if self.execution_exited() {
+            // Command has finished — any key closes the execution view
+            match key.code {
+                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                    self.close_execution();
+                    return Action::None;
+                }
+                _ => return Action::None,
+            }
+        }
+
+        // Command is still running — forward input to the PTY
+        let bytes: Option<Vec<u8>> = match key.code {
+            KeyCode::Char(c) => {
+                let mut buf = [0u8; 4];
+                let s = c.encode_utf8(&mut buf);
+                Some(s.as_bytes().to_vec())
+            }
+            KeyCode::Enter => Some(b"\r".to_vec()),
+            KeyCode::Backspace => Some(b"\x7f".to_vec()),
+            KeyCode::Tab => Some(b"\t".to_vec()),
+            KeyCode::Esc => Some(b"\x1b".to_vec()),
+            KeyCode::Up => Some(b"\x1b[A".to_vec()),
+            KeyCode::Down => Some(b"\x1b[B".to_vec()),
+            KeyCode::Right => Some(b"\x1b[C".to_vec()),
+            KeyCode::Left => Some(b"\x1b[D".to_vec()),
+            KeyCode::Home => Some(b"\x1b[H".to_vec()),
+            KeyCode::End => Some(b"\x1b[F".to_vec()),
+            KeyCode::Delete => Some(b"\x1b[3~".to_vec()),
+            _ => None,
+        };
+
+        if let Some(data) = bytes {
+            // Handle Ctrl+C to send SIGINT
+            if key
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL)
+            {
+                if let KeyCode::Char('c') = key.code {
+                    self.write_to_pty(b"\x03");
+                    return Action::None;
+                }
+                if let KeyCode::Char('d') = key.code {
+                    self.write_to_pty(b"\x04");
+                    return Action::None;
+                }
+            }
+            self.write_to_pty(&data);
+        }
+
+        Action::None
+    }
+
     fn handle_enter(&mut self) -> Action {
         match self.focus() {
             Focus::Commands => {
@@ -1031,7 +1173,7 @@ impl App {
                 }
                 Action::None
             }
-            Focus::Preview => Action::Accept,
+            Focus::Preview => Action::Execute,
         }
     }
 
@@ -1185,6 +1327,116 @@ impl App {
         }
 
         parts.join(" ")
+    }
+
+    /// Build the command as a list of separate argument strings (for process execution).
+    /// Unlike `build_command()`, this does NOT quote values — each element is a separate arg.
+    pub fn build_command_parts(&self) -> Vec<String> {
+        let mut parts: Vec<String> = Vec::new();
+
+        // Binary name (may contain spaces like "mise run", split into separate args)
+        let bin = if self.spec.bin.is_empty() {
+            &self.spec.name
+        } else {
+            &self.spec.bin
+        };
+        for word in bin.split_whitespace() {
+            parts.push(word.to_string());
+        }
+
+        // Gather global flag values (from root command path)
+        let root_key = String::new();
+        if let Some(root_flags) = self.flag_values.get(&root_key) {
+            for (name, value) in root_flags {
+                self.format_flag_parts(name, value, &self.spec.cmd.flags, &mut parts);
+            }
+        }
+
+        // Add subcommand path
+        let mut cmd = &self.spec.cmd;
+        for (i, name) in self.command_path.iter().enumerate() {
+            parts.push(name.clone());
+
+            if let Some(sub) = cmd.find_subcommand(name) {
+                cmd = sub;
+
+                let path_key = self.command_path[..=i].join(" ");
+                if let Some(level_flags) = self.flag_values.get(&path_key) {
+                    for (fname, fvalue) in level_flags {
+                        let is_global = self
+                            .spec
+                            .cmd
+                            .flags
+                            .iter()
+                            .any(|f| f.global && f.name == *fname);
+                        if is_global {
+                            continue;
+                        }
+                        self.format_flag_parts(fname, fvalue, &cmd.flags, &mut parts);
+                    }
+                }
+            }
+        }
+
+        // Add positional arg values (unquoted — each is a separate process arg)
+        for arg in &self.arg_values {
+            if !arg.value.is_empty() {
+                parts.push(arg.value.clone());
+            }
+        }
+
+        parts
+    }
+
+    /// Append flag parts (as separate arguments) to the parts list.
+    fn format_flag_parts(
+        &self,
+        name: &str,
+        value: &FlagValue,
+        flags: &[SpecFlag],
+        parts: &mut Vec<String>,
+    ) {
+        let flag = flags.iter().find(|f| f.name == name);
+        let flag = flag.or_else(|| {
+            self.spec
+                .cmd
+                .flags
+                .iter()
+                .find(|f| f.name == name && f.global)
+        });
+
+        let Some(flag) = flag else { return };
+
+        match value {
+            FlagValue::Bool(true) => {
+                if let Some(long) = flag.long.first() {
+                    parts.push(format!("--{long}"));
+                } else if let Some(short) = flag.short.first() {
+                    parts.push(format!("-{short}"));
+                }
+            }
+            FlagValue::Bool(false) | FlagValue::Count(0) => {}
+            FlagValue::Count(n) => {
+                if let Some(short) = flag.short.first() {
+                    parts.push(format!("-{}", short.to_string().repeat(*n as usize)));
+                } else if let Some(long) = flag.long.first() {
+                    for _ in 0..*n {
+                        parts.push(format!("--{long}"));
+                    }
+                }
+            }
+            FlagValue::String(s) if s.is_empty() => {}
+            FlagValue::String(s) => {
+                if let Some(long) = flag.long.first() {
+                    parts.push(format!("--{long}"));
+                } else if let Some(short) = flag.short.first() {
+                    parts.push(format!("-{short}"));
+                } else {
+                    return;
+                }
+                parts.push(s.clone());
+            }
+        }
     }
 
     fn format_flag_value(
@@ -2652,5 +2904,254 @@ mod tests {
             vec!["config"],
             "Should have moved to parent"
         );
+    }
+
+    #[test]
+    fn test_build_command_parts_basic() {
+        let app = App::new(sample_spec());
+        let parts = app.build_command_parts();
+        assert_eq!(parts, vec!["mycli"]);
+    }
+
+    #[test]
+    fn test_build_command_parts_with_subcommand() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        let parts = app.build_command_parts();
+        assert_eq!(parts, vec!["mycli", "deploy"]);
+    }
+
+    #[test]
+    fn test_build_command_parts_with_flags_and_args() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+
+        // Toggle a boolean flag (deploy has --rollback)
+        let values = app.current_flag_values_mut();
+        if let Some((_, val)) = values.iter_mut().find(|(n, _)| n == "rollback") {
+            *val = FlagValue::Bool(true);
+        }
+        // Set a string flag
+        if let Some((_, val)) = values.iter_mut().find(|(n, _)| n == "tag") {
+            *val = FlagValue::String("v1.0".to_string());
+        }
+        // Set a positional arg
+        app.arg_values[0].value = "prod".to_string();
+
+        let parts = app.build_command_parts();
+        assert!(parts.contains(&"mycli".to_string()));
+        assert!(parts.contains(&"deploy".to_string()));
+        assert!(parts.contains(&"--rollback".to_string()));
+        assert!(parts.contains(&"--tag".to_string()));
+        assert!(parts.contains(&"v1.0".to_string()));
+        assert!(parts.contains(&"prod".to_string()));
+        // --tag and v1.0 should be separate elements (not combined)
+        let tag_idx = parts.iter().position(|p| p == "--tag").unwrap();
+        assert_eq!(parts[tag_idx + 1], "v1.0");
+    }
+
+    #[test]
+    fn test_build_command_parts_splits_bin_with_spaces() {
+        let mut spec = sample_spec();
+        spec.bin = "mise run".to_string();
+        let app = App::new(spec);
+        let parts = app.build_command_parts();
+        assert_eq!(parts[0], "mise");
+        assert_eq!(parts[1], "run");
+    }
+
+    #[test]
+    fn test_build_command_parts_arg_not_quoted() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        // Set a positional arg with spaces — should remain a single element, unquoted
+        app.arg_values[0].value = "hello world".to_string();
+        let parts = app.build_command_parts();
+        assert!(parts.contains(&"hello world".to_string()));
+        // Should NOT contain quotes
+        assert!(!parts.iter().any(|p| p.contains('"')));
+    }
+
+    #[test]
+    fn test_build_command_parts_count_flag() {
+        let mut app = App::new(sample_spec());
+        // Set a count flag on the root level (verbose)
+        let root_key = String::new();
+        if let Some(flags) = app.flag_values.get_mut(&root_key) {
+            if let Some((_, val)) = flags.iter_mut().find(|(n, _)| n == "verbose") {
+                *val = FlagValue::Count(3);
+            }
+        }
+        let parts = app.build_command_parts();
+        assert!(parts.contains(&"-vvv".to_string()));
+    }
+
+    #[test]
+    fn test_app_mode_default_is_builder() {
+        let app = App::new(sample_spec());
+        assert_eq!(app.mode, AppMode::Builder);
+        assert!(!app.is_executing());
+        assert!(app.execution.is_none());
+    }
+
+    #[test]
+    fn test_start_and_close_execution() {
+        let mut app = App::new(sample_spec());
+
+        let parser = Arc::new(RwLock::new(vt100::Parser::new(24, 80, 0)));
+        let exited = Arc::new(AtomicBool::new(false));
+        let exit_status = Arc::new(Mutex::new(None));
+        let pty_writer: Arc<Mutex<Option<Box<dyn std::io::Write + Send>>>> =
+            Arc::new(Mutex::new(None));
+
+        let state = ExecutionState {
+            command_display: "mycli deploy".to_string(),
+            parser,
+            pty_writer,
+            exited: exited.clone(),
+            exit_status,
+        };
+
+        app.start_execution(state);
+        assert_eq!(app.mode, AppMode::Executing);
+        assert!(app.is_executing());
+        assert!(app.execution.is_some());
+        assert!(!app.execution_exited());
+
+        // Simulate process exit
+        exited.store(true, Ordering::Relaxed);
+        assert!(app.execution_exited());
+
+        // Close execution
+        app.close_execution();
+        assert_eq!(app.mode, AppMode::Builder);
+        assert!(!app.is_executing());
+        assert!(app.execution.is_none());
+    }
+
+    #[test]
+    fn test_execution_exit_status() {
+        let mut app = App::new(sample_spec());
+
+        let parser = Arc::new(RwLock::new(vt100::Parser::new(24, 80, 0)));
+        let exited = Arc::new(AtomicBool::new(true));
+        let exit_status = Arc::new(Mutex::new(Some("0".to_string())));
+        let pty_writer: Arc<Mutex<Option<Box<dyn std::io::Write + Send>>>> =
+            Arc::new(Mutex::new(None));
+
+        let state = ExecutionState {
+            command_display: "mycli".to_string(),
+            parser,
+            pty_writer,
+            exited,
+            exit_status,
+        };
+
+        app.start_execution(state);
+        assert_eq!(app.execution_exit_status(), Some("0".to_string()));
+    }
+
+    #[test]
+    fn test_execution_key_closes_on_exit() {
+        let mut app = App::new(sample_spec());
+
+        let parser = Arc::new(RwLock::new(vt100::Parser::new(24, 80, 0)));
+        let exited = Arc::new(AtomicBool::new(true));
+        let exit_status = Arc::new(Mutex::new(Some("0".to_string())));
+        let pty_writer: Arc<Mutex<Option<Box<dyn std::io::Write + Send>>>> =
+            Arc::new(Mutex::new(None));
+
+        let state = ExecutionState {
+            command_display: "mycli".to_string(),
+            parser,
+            pty_writer,
+            exited,
+            exit_status,
+        };
+
+        app.start_execution(state);
+        assert!(app.is_executing());
+
+        // Pressing Esc when exited should close execution and return to builder
+        let esc = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let result = app.handle_key(esc);
+        assert_eq!(result, Action::None);
+        assert!(!app.is_executing());
+        assert_eq!(app.mode, AppMode::Builder);
+    }
+
+    #[test]
+    fn test_execution_key_enter_closes_on_exit() {
+        let mut app = App::new(sample_spec());
+
+        let parser = Arc::new(RwLock::new(vt100::Parser::new(24, 80, 0)));
+        let exited = Arc::new(AtomicBool::new(true));
+        let exit_status = Arc::new(Mutex::new(None));
+        let pty_writer: Arc<Mutex<Option<Box<dyn std::io::Write + Send>>>> =
+            Arc::new(Mutex::new(None));
+
+        let state = ExecutionState {
+            command_display: "mycli".to_string(),
+            parser,
+            pty_writer,
+            exited,
+            exit_status,
+        };
+
+        app.start_execution(state);
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let result = app.handle_key(enter);
+        assert_eq!(result, Action::None);
+        assert!(!app.is_executing());
+    }
+
+    #[test]
+    fn test_preview_enter_returns_execute_action() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Preview);
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let result = app.handle_key(enter);
+        assert_eq!(result, Action::Execute);
+    }
+
+    #[test]
+    fn test_execution_key_does_not_close_while_running() {
+        let mut app = App::new(sample_spec());
+
+        let parser = Arc::new(RwLock::new(vt100::Parser::new(24, 80, 0)));
+        let exited = Arc::new(AtomicBool::new(false)); // still running
+        let exit_status = Arc::new(Mutex::new(None));
+        let pty_writer: Arc<Mutex<Option<Box<dyn std::io::Write + Send>>>> =
+            Arc::new(Mutex::new(None));
+
+        let state = ExecutionState {
+            command_display: "mycli".to_string(),
+            parser,
+            pty_writer,
+            exited,
+            exit_status,
+        };
+
+        app.start_execution(state);
+
+        // Pressing 'q' while running should NOT close (it's forwarded to PTY)
+        let q = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('q'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let result = app.handle_key(q);
+        assert_eq!(result, Action::None);
+        assert!(app.is_executing(), "Should still be executing");
     }
 }
