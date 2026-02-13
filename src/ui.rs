@@ -329,12 +329,11 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
                     .iter()
                     .map(|s| s.content.chars().count())
                     .sum::<usize>();
-                let help_text = format!("— {}", help);
                 let available_width = area.width.saturating_sub(2) as usize;
 
-                if current_len + help_text.chars().count() + 1 < available_width {
+                if current_len + help.chars().count() + 1 < available_width {
                     let padding =
-                        available_width.saturating_sub(current_len + help_text.chars().count());
+                        available_width.saturating_sub(current_len + help.chars().count());
                     spans.push(Span::raw(" ".repeat(padding)));
                 } else {
                     spans.push(Span::raw(" "));
@@ -345,7 +344,7 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
                 } else {
                     Style::default().fg(colors.help)
                 };
-                spans.push(Span::styled(help_text, help_style));
+                spans.push(Span::styled(help, help_style));
             }
 
             ListItem::new(Line::from(spans))
@@ -599,12 +598,11 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
                     .iter()
                     .map(|s| s.content.chars().count())
                     .sum::<usize>();
-                let help_text = format!("— {}", help);
                 let available_width = area.width.saturating_sub(2).saturating_sub(2) as usize; // borders + padding
 
-                if current_len + help_text.chars().count() + 1 < available_width {
+                if current_len + help.chars().count() + 1 < available_width {
                     let padding =
-                        available_width.saturating_sub(current_len + help_text.chars().count());
+                        available_width.saturating_sub(current_len + help.chars().count());
                     spans.push(Span::raw(" ".repeat(padding)));
                 } else {
                     spans.push(Span::raw(" "));
@@ -615,7 +613,7 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
                 } else {
                     Style::default().fg(colors.help)
                 };
-                spans.push(Span::styled(help_text, help_style));
+                spans.push(Span::styled(help, help_style));
             }
 
             let line = Line::from(spans);
