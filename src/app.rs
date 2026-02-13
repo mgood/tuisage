@@ -1562,6 +1562,32 @@ impl App {
 
                 // No matches found, stay at current position
             }
+            Focus::Args => {
+                let scores = self.compute_arg_match_scores();
+                let current_idx = self.arg_list_state.selected_index;
+
+                // Check if current selection matches
+                if let Some(av) = self.arg_values.get(current_idx) {
+                    if let Some(score) = scores.get(&av.name) {
+                        if score.overall() > 0 {
+                            // Current selection matches, keep it
+                            return;
+                        }
+                    }
+                }
+
+                // Current doesn't match, find next matching item
+                for (idx, av) in self.arg_values.iter().enumerate() {
+                    if let Some(score) = scores.get(&av.name) {
+                        if score.overall() > 0 {
+                            self.arg_list_state.select(idx);
+                            return;
+                        }
+                    }
+                }
+
+                // No matches found, stay at current position
+            }
             _ => {}
         }
     }
@@ -4191,5 +4217,67 @@ mod tests {
                 "tag help 'Docker image tag' should match 'Docker'"
             );
         }
+    }
+
+    #[test]
+    fn test_args_filter_auto_selects_matching_arg() {
+        // "config set" has two args: <key> and <value>
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["config", "set"]);
+        app.set_focus(Focus::Args);
+
+        // Verify we have at least two args
+        assert!(
+            app.arg_values.len() >= 2,
+            "config set should have at least 2 args"
+        );
+
+        // Select the first arg (<key>)
+        app.set_arg_index(0);
+        assert_eq!(app.arg_index(), 0);
+        let first_arg_name = app.arg_values[0].name.clone();
+
+        // Enter filter mode
+        let slash = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('/'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(slash);
+        assert!(app.filtering);
+
+        // Type a filter that matches the second arg but NOT the first
+        // The args are "key" and "value", so typing "val" should match "value" but not "key"
+        for c in "val".chars() {
+            let key = crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(c),
+                crossterm::event::KeyModifiers::NONE,
+            );
+            app.handle_key(key);
+        }
+
+        // The first arg "key" shouldn't match "val"
+        let scores = app.compute_arg_match_scores();
+        let first_score = scores
+            .get(&first_arg_name)
+            .map(|s| s.overall())
+            .unwrap_or(0);
+        assert_eq!(
+            first_score, 0,
+            "'{}' should not match 'val'",
+            first_arg_name
+        );
+
+        // The cursor should have moved away from the first arg to a matching one
+        let selected = app.arg_index();
+        let selected_name = &app.arg_values[selected].name;
+        let selected_score = scores
+            .get(selected_name)
+            .map(|s| s.overall())
+            .unwrap_or(0);
+        assert!(
+            selected_score > 0,
+            "selected arg '{}' should match 'val'",
+            selected_name
+        );
     }
 }
