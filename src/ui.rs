@@ -965,13 +965,13 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) 
     } else {
         match app.focus() {
             Focus::Commands => {
-                "Enter/→: select  ↑↓: navigate  Tab: next  /: filter  T: theme  Esc: back  q: quit"
+                "↑↓: navigate  Tab: next  /: filter  Ctrl+Enter: run  T: theme  q: quit"
             }
             Focus::Flags => {
-                "Enter/Space: toggle  ↑↓: navigate  Tab: next  /: filter  T: theme  q: quit"
+                "Enter/Space: toggle  ↑↓: navigate  Tab: next  /: filter  Ctrl+Enter: run  T: theme  q: quit"
             }
-            Focus::Args => "Enter: edit  ↑↓: navigate  Tab: next  T: theme  Esc: back  q: quit",
-            Focus::Preview => "Enter: run  p: print  Tab: next  T: theme  Esc: back  q: quit",
+            Focus::Args => "Enter: edit  ↑↓: navigate  Tab: next  Ctrl+Enter: run  T: theme  q: quit",
+            Focus::Preview => "Enter: run  p: print  Tab: next  T: theme  q: quit",
         }
     };
 

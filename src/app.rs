@@ -726,15 +726,6 @@ impl App {
         }
     }
 
-    /// Backward-compatible: move selection to parent node.
-    /// Equivalent to the old "navigate up".
-    pub fn navigate_up(&mut self) {
-        if let Some(parent_idx) = self.find_parent_index() {
-            self.command_tree_state.selected_index = parent_idx;
-            self.sync_command_path_from_tree();
-        }
-    }
-
     /// Handle a mouse event and return the resulting Action.
     pub fn handle_mouse(&mut self, event: crossterm::event::MouseEvent) -> Action {
         use crossterm::event::{MouseButton, MouseEventKind};
@@ -929,7 +920,7 @@ impl App {
             }
             KeyCode::Char('/') => {
                 // Only activate filter mode for panels that support filtering
-                if matches!(self.focus(), Focus::Commands | Focus::Flags | Focus::Args) {
+                if matches!(self.focus(), Focus::Commands | Focus::Flags) {
                     self.filtering = true;
                     self.filter_input.clear();
                 }
@@ -948,29 +939,24 @@ impl App {
                 Action::None
             }
             KeyCode::Esc => {
-                // If a filter is applied (even after Enter), clear it first
+                // Esc only clears filter when active (otherwise no effect)
                 if self.filter_active() {
                     self.filtering = false;
                     self.filter_input.clear();
-                    Action::None
-                } else if self.focus() == Focus::Commands {
-                    // Move to parent if one exists, quit if at top level
-                    if let Some(parent_idx) = self.find_parent_index() {
-                        self.command_tree_state.selected_index = parent_idx;
-                        self.sync_command_path_from_tree();
-                        Action::None
-                    } else {
-                        Action::Quit
-                    }
-                } else if !self.command_path.is_empty() {
-                    // Other panels: navigate up in the tree
-                    self.navigate_up();
-                    Action::None
+                }
+                Action::None
+            }
+            KeyCode::Enter => {
+                // Ctrl+Enter executes command from any panel
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL)
+                {
+                    Action::Execute
                 } else {
-                    Action::Quit
+                    self.handle_enter()
                 }
             }
-            KeyCode::Enter => self.handle_enter(),
             KeyCode::Up | KeyCode::Char('k') => {
                 self.move_up();
                 Action::None
@@ -3273,53 +3259,29 @@ mod tests {
     }
 
     #[test]
-    fn test_esc_at_root_quits() {
+    fn test_ctrl_enter_executes_from_any_panel() {
         let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+
+        // Test from Commands panel
         app.set_focus(Focus::Commands);
-        // Select root node (index 0)
-        app.command_tree_state.selected_index = 0;
-        app.sync_command_path_from_tree();
-
-        let esc = crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Esc,
-            crossterm::event::KeyModifiers::NONE,
+        let ctrl_enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::CONTROL,
         );
-        assert_eq!(app.handle_key(esc), Action::Quit);
-    }
+        assert_eq!(app.handle_key(ctrl_enter), Action::Execute);
 
-    #[test]
-    fn test_esc_on_top_level_quits() {
-        let mut app = App::new(sample_spec());
-        app.navigate_to_command(&["config"]);
-        app.set_focus(Focus::Commands);
+        // Test from Flags panel
+        app.set_focus(Focus::Flags);
+        assert_eq!(app.handle_key(ctrl_enter), Action::Execute);
 
-        // config is top-level, so Esc should quit
-        let esc = crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Esc,
-            crossterm::event::KeyModifiers::NONE,
-        );
-        let result = app.handle_key(esc);
-        assert_eq!(result, Action::Quit);
-    }
+        // Test from Args panel
+        app.set_focus(Focus::Args);
+        assert_eq!(app.handle_key(ctrl_enter), Action::Execute);
 
-    #[test]
-    fn test_esc_on_leaf_moves_to_parent() {
-        let mut app = App::new(sample_spec());
-        // Navigate to a nested command
-        app.navigate_to_command(&["config", "set"]);
-        app.set_focus(Focus::Commands);
-
-        let esc = crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Esc,
-            crossterm::event::KeyModifiers::NONE,
-        );
-        let result = app.handle_key(esc);
-        assert_eq!(result, Action::None);
-        assert_eq!(
-            app.command_path,
-            vec!["config"],
-            "Should have moved to parent"
-        );
+        // Test from Preview panel
+        app.set_focus(Focus::Preview);
+        assert_eq!(app.handle_key(ctrl_enter), Action::Execute);
     }
 
     #[test]
