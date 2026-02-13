@@ -11,7 +11,7 @@ Point TuiSage at a usage spec — from a file or by running a command — and it
 - **Fill arguments** — positional args with free-text input or choice cycling
 - **Live preview** — see the assembled command update in real time
 - **Execute commands** — run the built command directly within the TUI in an embedded terminal (PTY)
-- **Fuzzy filter** — press `/` to filter commands or flags with scored, ranked matching (powered by `nucleo-matcher`)
+- **Fuzzy filter** — press `/` to filter commands or flags with scored, ranked matching (powered by `nucleo-matcher`); panel title shows 🔍 emoji when filtering
 - **Mouse support** — click to select, scroll wheel to navigate, click-to-activate
 - **Scrolling** — long lists scroll automatically to keep the selection visible
 - **Default indicators** — flags with default values are clearly marked
@@ -100,7 +100,7 @@ One of `--spec-cmd` or `--spec-file` is required (but not both).
 | `Enter` | Navigate into command / toggle flag / edit arg / execute command |
 | `Space` | Toggle boolean flag / increment count flag |
 | `Backspace` | Decrement count flag (floor at 0) |
-| `/` | Start fuzzy filter (works in Commands and Flags panels) |
+| `/` | Start fuzzy filter (works in Commands, Flags, and Args panels) |
 | `Esc` | Cancel filter / stop editing / go back / quit |
 | `]` / `[` | Next / previous color theme |
 | `T` | Next color theme (alias for `]`) |

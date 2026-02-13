@@ -97,7 +97,7 @@ The selected command in the always-visible tree, combined with the live command 
   - **Matching includes the full ancestor path** so that queries like "cfgset" match "config set"
   - **Selected command** is always shown with bold styling and cursor indicator
   - **Help text highlighting** — if the help text matches the filter, matching characters are highlighted with the same style as name matches
-- The panel title shows just "Commands" (no counts), or "Commands (/)" when filter mode is first activated, or "Commands (/query)" as the user types. The panel border changes to the active color during filter mode.
+- The panel title shows just "Commands" (no counts), or "Commands 🔍" when filter mode is first activated, or "Commands 🔍 query" as the user types. The panel border changes to the active color during filter mode.
 
 ### Flags Panel
 
@@ -112,7 +112,7 @@ The selected command in the always-visible tree, combined with the live command 
 - Flags with choices show the current selection.
 - Global flags toggled from any subcommand level are correctly included in the built command.
 - When filtering is active, name and help text are matched independently — highlights only appear in the field that matched.
-- The panel title shows just "Flags" (no counts), or "Flags (/)" when filter mode is first activated, or "Flags (/query)" as the user types. The panel border changes to the active color during filter mode.
+- The panel title shows just "Flags" (no counts), or "Flags 🔍" when filter mode is first activated, or "Flags 🔍 query" as the user types. The panel border changes to the active color during filter mode.
 
 ### Arguments Panel
 
@@ -256,7 +256,7 @@ When the user navigates to a new command, the state is synchronized:
 | `Space` | Flags panel (count) | Increment the count |
 | `Backspace` | Flags panel (count) | Decrement the count (floor at 0) |
 | `p` | Preview panel | Print the command to stdout and exit (print-only mode) |
-| `/` | Commands or Flags panel | Activate fuzzy filter mode |
+| `/` | Commands, Flags, or Args panel | Activate fuzzy filter mode (no effect in Preview panel) |
 
 ### Editing Mode Keys
 
@@ -278,8 +278,8 @@ When the fuzzy filter is active:
 | Any character | Append to the filter query; auto-select next matching item if current item doesn't match |
 | `Backspace` | Delete the last character from the query; auto-select next matching item if current item doesn't match |
 | `Esc` | Clear the filter and exit filter mode |
-| `↑` / `↓` | Navigate to the previous/next **matching** item (skips non-matching items) |
-| `Enter` | Apply the filter and exit filter mode |
+| `↑` / `↓` | Navigate to the previous/next **matching** item (skips non-matching items); only while filter mode is active |
+| `Enter` | Exit filter mode and keep filtered results visible; navigation returns to normal mode |
 | `Tab` | Switch focus to the other panel and clear the filter |
 
 ### Theme Keys
@@ -338,9 +338,9 @@ If the user is currently editing a value and clicks on a different item or panel
 
 Filtering uses scored fuzzy-matching (powered by `nucleo-matcher::Pattern`):
 
-1. The user presses `/` to activate filter mode in the Commands or Flags panel.
+1. The user presses `/` to activate filter mode in the Commands, Flags, or Args panel. Pressing `/` in the Preview panel has no effect.
 2. **Filter mode visual cues**:
-   - The panel title immediately shows the `/` prompt (e.g., `Commands (/)` when the query is empty, `Commands (/query)` as the user types). No counts are shown.
+   - The panel title immediately shows the 🔍 emoji (e.g., `Commands 🔍` when the query is empty, `Commands 🔍 query` as the user types). No counts are shown.
    - The panel border color changes to the active border color to clearly indicate filter mode is active, regardless of which panel has focus.
 3. As the user types, items are scored against the filter pattern using `Pattern::parse()`:
    - **Pattern matching** supports multi-word patterns (whitespace-separated) and fzf-style special characters (^, $, !, ')
@@ -353,7 +353,7 @@ Filtering uses scored fuzzy-matching (powered by `nucleo-matcher::Pattern`):
 7. All commands remain visible for context — the flat list structure is preserved.
 8. **Auto-selection**: If the currently selected item doesn't match the filter, the selection automatically moves to the first matching item.
 9. **Filtered navigation**: When a filter is active, `↑`/`↓` skip non-matching items and move directly to the previous/next matching item. This makes it fast to cycle through matches without manually scrolling past dimmed non-matches.
-10. `Enter` applies the filter and exits filter mode.
+10. `Enter` exits filter mode while keeping the filtered results visible. Navigation returns to normal mode (Up/Down move through all items, not just matches).
 11. `Esc` clears the filter and returns to the normal view.
 12. **Changing panels** (via `Tab` or mouse click) clears the filter and resets the filter state.
 

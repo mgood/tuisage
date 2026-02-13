@@ -118,7 +118,7 @@ The core state and logic module (~2900 lines including ~1200 lines of tests).
 - **`visible_flags()`** — returns all flags for the current command plus inherited global flags (no filtering; rendering applies styling).
 - **`sync_state()`** — initializes or restores flag/arg values when navigating to a new command. Handles defaults.
 - **`sync_command_path_from_tree()`** — derives `command_path` from the currently selected command in the flat list and calls `sync_state()`.
-- **`handle_key()`** — top-level key dispatcher. Routes to `handle_execution_key()` (when executing), `handle_editing_key()`, `handle_filter_key()`, or direct navigation/action based on current mode.
+- **`handle_key()`** — top-level key dispatcher. Routes to `handle_execution_key()` (when executing), `handle_editing_key()`, `handle_filter_key()`, or direct navigation/action based on current mode. The `/` key only activates filter mode for Commands, Flags, and Args panels (not Preview).
 - **`handle_execution_key()`** — handles keys during command execution: forwards input to the PTY while running, closes execution view on Esc/Enter/q when the process has exited.
 - **`handle_mouse()`** — maps mouse events to panel focus, item selection, scroll, and activation. Finishes any active edit before switching targets.
 - **`build_command()`** — assembles the complete command string from the current state (for display).
@@ -198,7 +198,7 @@ When filtering is active (`app.filtering == true`):
 6. **Auto-Selection** — When the filter changes, `auto_select_next_match()` moves the cursor to the first matching item if the current selection doesn't match. This operates on the full flat command list for commands, and the full flag list for flags.
 7. **Filtered Navigation** — When a filter is active (non-empty filter text), `↑`/`↓` keys skip non-matching items and move directly to the previous/next matching item. `move_to_prev_match()` and `move_to_next_match()` scan in the appropriate direction and wrap around if needed.
 8. **Panel Switching** — `set_focus()` clears the filter when changing panels (via Tab or mouse) to prevent confusion.
-9. **Filter Mode Visual Cues** — When filter mode is activated, the panel title immediately shows the `/` prompt (e.g. "Commands (/)" even before any text is typed). The panel border color changes to the active border color during filter mode, making it visually obvious that filtering is in progress. Panel titles show the filter query as it's typed (e.g. "Flags (/roll)").
+9. **Filter Mode Visual Cues** — When filter mode is activated, the panel title immediately shows the 🔍 emoji (e.g. "Commands 🔍" even before any text is typed). The panel border color changes to the active border color during filter mode, making it visually obvious that filtering is in progress. Panel titles show the filter query as it's typed (e.g. "Flags 🔍 roll").
 
 ## Dependencies
 
@@ -288,8 +288,8 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - Fuzzy filtering with scored ranking, subdued non-matches, character-level match highlighting, and full-path subcommand matching (nucleo-matcher Pattern API)
 - **Separate name/help matching** — name and help text are scored independently; highlighting only appears in the field that matched, preventing confusing cross-field partial highlights
 - **Help text highlighting** — filter matches in help text are highlighted with the same bold+underlined (or inverted) style used for name matches
-- **Filtered navigation** — `↑`/`↓` in filter mode skip non-matching items to move directly between matches
-- **Filter mode visual cues** — panel title shows `/` prompt immediately on activation (even before typing), and panel border changes to active color during filter mode
+- **Filtered navigation** — `↑`/`↓` in filter mode skip non-matching items to move directly between matches. When filter mode is exited with Enter (keeping filtered results visible), navigation returns to normal mode.
+- **Filter mode visual cues** — panel title shows 🔍 emoji immediately on activation (even before typing), and panel border changes to active color during filter mode
 - Mouse support: click, scroll, click-to-activate
 - Visual polish: theming, scrolling, default indicators, accessible symbols
 - **Startup sync** — tree selection and command path are synchronized on construction, so flags/args display correctly on the first render without requiring a key press
