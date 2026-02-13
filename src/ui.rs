@@ -960,6 +960,8 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) 
         "Enter: confirm  Esc: cancel"
     } else if app.filtering {
         "Enter: apply  Esc: clear  ↑↓: navigate"
+    } else if app.filter_active() {
+        "↑↓/jk: next match  /: new filter  Esc: clear filter"
     } else {
         match app.focus() {
             Focus::Commands => {

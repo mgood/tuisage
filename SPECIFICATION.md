@@ -271,16 +271,27 @@ When editing a text value (flag value or argument):
 
 ### Filter Mode Keys
 
-When the fuzzy filter is active:
+Filtering has two phases: **typing mode** (actively entering a query) and **applied filter** (query locked in, keys navigate instead of typing).
+
+When in **typing mode** (after pressing `/`):
 
 | Key | Action |
 |---|---|
 | Any character | Append to the filter query; auto-select next matching item if current item doesn't match |
 | `Backspace` | Delete the last character from the query; auto-select next matching item if current item doesn't match |
 | `Esc` | Clear the filter and exit filter mode |
-| `↑` / `↓` | Navigate to the previous/next **matching** item (skips non-matching items); only while filter mode is active |
-| `Enter` | Exit filter mode and keep filtered results visible; navigation returns to normal mode |
+| `↑` / `↓` | Navigate to the previous/next **matching** item (skips non-matching items) |
+| `Enter` | Apply the filter and exit typing mode (filter remains active; navigation keys like `j`/`k` move between matches instead of appending to the query) |
 | `Tab` | Switch focus to the other panel and clear the filter |
+
+When a filter is **applied** (after pressing `Enter`):
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` / `j` / `k` | Navigate to the previous/next **matching** item (skips non-matching items) |
+| `Esc` | Clear the applied filter and return to the normal view |
+| `Tab` / `Shift-Tab` | Switch focus to another panel and clear the filter |
+| `/` | Start a new filter (clears the previous one and enters typing mode) |
 
 ### Theme Keys
 
@@ -340,8 +351,8 @@ Filtering uses scored fuzzy-matching (powered by `nucleo-matcher::Pattern`):
 
 1. The user presses `/` to activate filter mode in the Commands, Flags, or Args panel. Pressing `/` in the Preview panel has no effect.
 2. **Filter mode visual cues**:
-   - The panel title immediately shows the 🔍 emoji (e.g., `Commands 🔍` when the query is empty, `Commands 🔍 query` as the user types). No counts are shown.
-   - The panel border color changes to the active border color to clearly indicate filter mode is active, regardless of which panel has focus.
+   - The panel title immediately shows the 🔍 emoji (e.g., `Commands 🔍` when the query is empty, `Commands 🔍 query` as the user types). The 🔍 remains visible as long as a filter is applied (including after Enter exits typing mode). No counts are shown.
+   - The panel border color changes to the active border color during typing mode to clearly indicate filter input is active.
 3. As the user types, items are scored against the filter pattern using `Pattern::parse()`:
    - **Pattern matching** supports multi-word patterns (whitespace-separated) and fzf-style special characters (^, $, !, ')
    - **Matching items** (score > 0) are displayed in normal color with matching characters highlighted (bold+underlined on unselected items, inverted colors on the selected item)
@@ -352,10 +363,10 @@ Filtering uses scored fuzzy-matching (powered by `nucleo-matcher::Pattern`):
 6. **Full-path matching**: In the Commands panel, subcommands are matched against their full ancestor path (e.g. "config set") so that queries like "cfgset" match subcommands via their parent chain.
 7. All commands remain visible for context — the flat list structure is preserved.
 8. **Auto-selection**: If the currently selected item doesn't match the filter, the selection automatically moves to the first matching item.
-9. **Filtered navigation**: When a filter is active, `↑`/`↓` skip non-matching items and move directly to the previous/next matching item. This makes it fast to cycle through matches without manually scrolling past dimmed non-matches.
-10. `Enter` exits filter mode while keeping the filtered results visible. Navigation returns to normal mode (Up/Down move through all items, not just matches).
-11. `Esc` clears the filter and returns to the normal view.
-12. **Changing panels** (via `Tab` or mouse click) clears the filter and resets the filter state.
+9. **Filtered navigation**: When a filter is applied (during typing mode or after Enter), `↑`/`↓` skip non-matching items and move directly to the previous/next matching item. This makes it fast to cycle through matches without manually scrolling past dimmed non-matches.
+10. `Enter` exits typing mode but keeps the filter applied. Highlighting, dimming, filtered navigation, and the 🔍 indicator all remain active. Navigation keys (`j`/`k`, `↑`/`↓`) move between matches instead of appending to the filter query.
+11. `Esc` clears the filter (including any applied filter from Enter) and returns to the normal view.
+12. **Changing panels** (via `Tab`, `Shift-Tab`, or mouse click) clears the filter and resets the filter state.
 
 ## Command Building
 

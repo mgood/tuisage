@@ -288,8 +288,9 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - Fuzzy filtering with scored ranking, subdued non-matches, character-level match highlighting, and full-path subcommand matching (nucleo-matcher Pattern API)
 - **Separate name/help matching** — name and help text are scored independently; highlighting only appears in the field that matched, preventing confusing cross-field partial highlights
 - **Help text highlighting** — filter matches in help text are highlighted with the same bold+underlined (or inverted) style used for name matches
-- **Filtered navigation** — `↑`/`↓` in filter mode skip non-matching items to move directly between matches. When filter mode is exited with Enter (keeping filtered results visible), navigation returns to normal mode.
-- **Filter mode visual cues** — panel title shows 🔍 emoji immediately on activation (even before typing), and panel border changes to active color during filter mode
+- **Two-phase filtering** — typing mode (`filtering = true`) accepts query input; pressing Enter exits typing mode but keeps the filter applied. The `filter_active()` helper checks for non-empty filter text regardless of typing mode. Filtered navigation, highlighting, and dimming all remain active as long as `filter_active()` is true. Esc, Tab, and panel switching clear the filter entirely.
+- **Filtered navigation** — `↑`/`↓`/`j`/`k` skip non-matching items whenever a filter is applied (both during typing and after Enter). This lets users type a query, press Enter, then navigate matches with `j`/`k` without appending to the query.
+- **Filter mode visual cues** — panel title shows 🔍 emoji whenever a filter is applied (during typing mode and after Enter). Panel border changes to active color during typing mode.
 - Mouse support: click, scroll, click-to-activate
 - Visual polish: theming, scrolling, default indicators, accessible symbols
 - **Startup sync** — tree selection and command path are synchronized on construction, so flags/args display correctly on the first render without requiring a key press
