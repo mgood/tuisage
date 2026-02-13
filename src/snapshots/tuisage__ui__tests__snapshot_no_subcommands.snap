@@ -3,7 +3,7 @@ source: src/ui.rs
 expression: output
 ---
 ┌ Flags ───────────────────────────────────────────────────────────────────────┐
-│ ▶ [·] -o, --output = <path> — Output path                                    │
+│ ▶ [·] -o, --output = <path>                              — Output path       │
 │                                                                              │
 │                                                                              │
 │                                                                              │

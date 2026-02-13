@@ -170,64 +170,32 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 fn render_main_content(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
     // Commands tree should always be visible (shows entire tree, not just subcommands)
     let has_commands = !app.command_tree_nodes.is_empty();
-    let has_flags = !app.visible_flags().is_empty();
-    // Args should be visible if the current command defines any args
-    let cmd = app.current_command();
-    let has_args = cmd.args.iter().any(|a| !a.hide);
 
-    // Decide layout based on what's available
-    match (has_commands, has_flags || has_args) {
-        (true, true) => {
-            // Split horizontally: commands on left, flags+args on right
-            let h_split = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-                .split(area);
+    // Always show Flags and Args panes, even if empty
+    if has_commands {
+        // Split horizontally: commands on left, flags+args on right
+        let h_split = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .split(area);
 
-            render_command_list(frame, app, h_split[0], colors);
+        render_command_list(frame, app, h_split[0], colors);
 
-            if has_flags && has_args {
-                let v_split = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-                    .split(h_split[1]);
-                render_flag_list(frame, app, v_split[0], colors);
-                render_arg_list(frame, app, v_split[1], colors);
-            } else if has_flags {
-                render_flag_list(frame, app, h_split[1], colors);
-            } else {
-                render_arg_list(frame, app, h_split[1], colors);
-            }
-        }
-        (true, false) => {
-            render_command_list(frame, app, area, colors);
-        }
-        (false, true) => {
-            if has_flags && has_args {
-                let v_split = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-                    .split(area);
-                render_flag_list(frame, app, v_split[0], colors);
-                render_arg_list(frame, app, v_split[1], colors);
-            } else if has_flags {
-                render_flag_list(frame, app, area, colors);
-            } else {
-                render_arg_list(frame, app, area, colors);
-            }
-        }
-        (false, false) => {
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(colors.inactive_border))
-                .title(" No options ")
-                .padding(Padding::horizontal(1));
-            let inner = Paragraph::new("This command has no subcommands, flags, or arguments.")
-                .style(Style::default().fg(colors.help).bg(colors.bg))
-                .wrap(Wrap { trim: true })
-                .block(block);
-            frame.render_widget(inner, area);
-        }
+        // Always split vertically for flags and args
+        let v_split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+            .split(h_split[1]);
+        render_flag_list(frame, app, v_split[0], colors);
+        render_arg_list(frame, app, v_split[1], colors);
+    } else {
+        // No commands - still show flags and args
+        let v_split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+            .split(area);
+        render_flag_list(frame, app, v_split[0], colors);
+        render_arg_list(frame, app, v_split[1], colors);
     }
 }
 
@@ -285,13 +253,13 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
             // Selection cursor
             if is_selected {
                 spans.push(Span::styled(
-                    "▶",
+                    "▶ ",
                     Style::default()
                         .fg(colors.active_border)
                         .add_modifier(Modifier::BOLD),
                 ));
             } else {
-                spans.push(Span::raw(" "));
+                spans.push(Span::raw("  "));
             }
 
             // Depth-based indentation (2 spaces per level)
@@ -300,14 +268,12 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
                 spans.push(Span::styled(indent, Style::default().fg(colors.help)));
             }
 
-            // Command name and details — match highlighting uses full_path
-            let mut text = cmd.name.clone();
-            if !cmd.aliases.is_empty() {
-                text.push_str(&format!(" ({})", cmd.aliases.join(", ")));
-            }
-            if let Some(help) = &cmd.help {
-                text.push_str(&format!(" — {}", help));
-            }
+            // Command name (without help text for now)
+            let name_text = if !cmd.aliases.is_empty() {
+                format!("{} ({})", cmd.name, cmd.aliases.join(", "))
+            } else {
+                cmd.name.clone()
+            };
 
             // Apply styling based on selection and match
             if is_selected {
@@ -322,11 +288,11 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
                         .bg(colors.command)
                         .add_modifier(Modifier::BOLD);
                     let highlighted =
-                        build_highlighted_text(&text, pattern, normal_style, highlight_style);
+                        build_highlighted_text(&name_text, pattern, normal_style, highlight_style);
                     spans.extend(highlighted);
                 } else {
                     spans.push(Span::styled(
-                        text,
+                        name_text.clone(),
                         Style::default()
                             .fg(colors.command)
                             .add_modifier(Modifier::BOLD),
@@ -335,7 +301,7 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
             } else if !is_match && !match_scores.is_empty() {
                 // Non-matching when filtering - dim
                 spans.push(Span::styled(
-                    text,
+                    name_text.clone(),
                     Style::default().fg(colors.help).add_modifier(Modifier::DIM),
                 ));
             } else if !match_scores.is_empty() {
@@ -346,11 +312,38 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
                     .fg(colors.command)
                     .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
                 let highlighted =
-                    build_highlighted_text(&text, pattern, normal_style, highlight_style);
+                    build_highlighted_text(&name_text, pattern, normal_style, highlight_style);
                 spans.extend(highlighted);
             } else {
                 // Normal display
-                spans.push(Span::styled(text, Style::default().fg(colors.command)));
+                spans.push(Span::styled(
+                    name_text.clone(),
+                    Style::default().fg(colors.command),
+                ));
+            }
+
+            // Right-align help text if present
+            if let Some(help) = &cmd.help {
+                // Calculate padding to right-align the description
+                // Area width minus borders (2) minus current content length
+                let current_len = spans.iter().map(|s| s.content.len()).sum::<usize>();
+                let help_with_sep = format!(" — {}", help);
+                let available_width = area.width.saturating_sub(2) as usize;
+
+                if current_len + help_with_sep.len() < available_width {
+                    let padding = available_width.saturating_sub(current_len + help_with_sep.len());
+                    spans.push(Span::raw(" ".repeat(padding)));
+                } else {
+                    spans.push(Span::raw(" "));
+                }
+
+                let help_style = if !is_match && !match_scores.is_empty() {
+                    Style::default().fg(colors.help).add_modifier(Modifier::DIM)
+                } else {
+                    Style::default().fg(colors.help)
+                };
+                spans.push(Span::styled("— ", help_style));
+                spans.push(Span::styled(help.as_str(), help_style));
             }
 
             ListItem::new(Line::from(spans))
@@ -589,14 +582,26 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
                 }
             }
 
-            // Help text
+            // Right-align help text if present
             if let Some(help) = &flag.help {
+                // Calculate padding to right-align the description
+                let current_len = spans.iter().map(|s| s.content.len()).sum::<usize>();
+                let help_with_sep = format!(" — {}", help);
+                let available_width = area.width.saturating_sub(2).saturating_sub(2) as usize; // borders + padding
+
+                if current_len + help_with_sep.len() < available_width {
+                    let padding = available_width.saturating_sub(current_len + help_with_sep.len());
+                    spans.push(Span::raw(" ".repeat(padding)));
+                } else {
+                    spans.push(Span::raw(" "));
+                }
+
                 let help_style = if !is_match {
                     Style::default().fg(colors.help).add_modifier(Modifier::DIM)
                 } else {
                     Style::default().fg(colors.help)
                 };
-                spans.push(Span::styled(" — ", help_style));
+                spans.push(Span::styled("— ", help_style));
                 spans.push(Span::styled(help.as_str(), help_style));
             }
 
