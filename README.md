@@ -194,7 +194,7 @@ cargo insta test --accept
 | [usage-lib](https://crates.io/crates/usage-lib) | Parse usage specs (KDL format) |
 | [ratatui](https://crates.io/crates/ratatui) | TUI framework |
 | [crossterm](https://crates.io/crates/crossterm) | Terminal backend & events |
-| [ratatui-interact](https://crates.io/crates/ratatui-interact) | UI components (TreeView, breadcrumb, input, focus management) |
+| [ratatui-interact](https://crates.io/crates/ratatui-interact) | UI components (TreeView, input, focus management) |
 | [ratatui-themes](https://crates.io/crates/ratatui-themes) | Color theming |
 | [nucleo-matcher](https://crates.io/crates/nucleo-matcher) | Fuzzy matching |
 | [portable-pty](https://crates.io/crates/portable-pty) | Cross-platform pseudo-terminal for command execution |

@@ -10,7 +10,7 @@ These are the preferred libraries for implementing TuiSage features, as specifie
 |---|---|---|
 | TUI framework | `ratatui` | Terminal UI rendering and layout |
 | Terminal backend | `crossterm` | Cross-platform terminal control and events |
-| UI components | `ratatui-interact` | Breadcrumb, Input, FocusManager, ListPickerState, TreeView |
+| UI components | `ratatui-interact` | Input, FocusManager, ListPickerState, TreeView |
 | Color theming | `ratatui-themes` | Consistent theme palettes |
 | Usage spec parsing | `usage-lib` | Parse `.usage.kdl` files (no default features) |
 | Fuzzy matching | `nucleo-matcher` | Pattern-based fzf-style scoring with multi-word and special character support |
@@ -79,7 +79,7 @@ The terminal is divided into the following regions, rendered top-to-bottom:
 
 The layout uses a 2-column design: Commands on the left (40% width), and Flags + Arguments stacked vertically on the right (60% width, with Flags taking 60% and Args 40% of that column). The help bar (2 rows) and command preview (3 rows) are fixed at the bottom. When there are no subcommands, the Commands panel is hidden and Flags + Arguments fill the full width.
 
-The selected command in the always-visible tree, combined with the live command preview at the bottom, provides constant visibility of the user's position in the command hierarchy — no dedicated breadcrumb bar is needed since the full tree is always displayed.
+The selected command in the always-visible tree, combined with the live command preview at the bottom, provides constant visibility of the user's position in the command hierarchy.
 
 ### Commands Panel
 

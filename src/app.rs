@@ -106,7 +106,7 @@ pub struct App {
     /// Current color theme.
     pub theme_name: ThemeName,
 
-    /// Breadcrumb path of subcommand names derived from the tree selection.
+    /// Path of subcommand names derived from the tree selection.
     /// Empty means we're at the root command.
     pub command_path: Vec<String>,
 

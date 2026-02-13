@@ -1766,7 +1766,7 @@ flag "-q --quiet" help="Quiet mode"
             );
             assert!(
                 output.contains("deploy"),
-                "Theme {:?} failed to render subcommand in breadcrumb",
+                "Theme {:?} failed to render subcommand",
                 theme
             );
             assert!(

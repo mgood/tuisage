@@ -266,7 +266,7 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 | `ListPickerState` from ratatui-interact | Provides selection index + scroll offset tracking for flags and args panels. |
 | `FocusManager` from ratatui-interact | Handles Tab/Shift-Tab cycling with dynamic panel availability, reducing boilerplate. |
 | Finishing edits on focus change | Prevents a class of bugs where the edit input text leaks into the wrong field when clicking elsewhere. |
-| Commands list always visible | The flat indented list shows the entire command hierarchy, not just subcommands of the current selection. It remains visible even when navigating to leaf commands with no children, providing constant wayfinding context that eliminates the need for a separate breadcrumb bar. |
+| Commands list always visible | The flat indented list shows the entire command hierarchy, not just subcommands of the current selection. It remains visible even when navigating to leaf commands with no children, providing constant wayfinding context. |
 | Arguments panel visibility based on spec | The arguments panel is shown whenever the current command defines arguments in the spec, ensuring consistent visibility regardless of whether arg values are populated. |
 
 ## Development Status
@@ -298,4 +298,3 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - **Embedded USAGE blocks** — verify and test support for script files with heredoc USAGE blocks via `--spec-file`
 - **Module splitting** — break `app.rs` into `state`, `input`, `builder` sub-modules; break `ui.rs` into widget modules
 - **CI pipeline** — GitHub Actions for `cargo test`, `cargo clippy`, and `insta` snapshot checks
-- **Breadcrumb bar** — optional dedicated breadcrumb widget above the panels (the tree + preview currently provide equivalent context)

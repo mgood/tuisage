@@ -112,4 +112,3 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Support script files with embedded `USAGE` heredoc blocks via `--spec-file`.
 - PTY resize support: dynamically resize the embedded terminal when the TUI window is resized during execution.
 - Send stdin input to the running process via a dedicated input bar.
-- Breadcrumb bar widget showing the command path above the main panels (currently the tree + preview provide equivalent context).

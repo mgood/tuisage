@@ -79,7 +79,7 @@ Only add dependencies when they provide clear value. Current key dependencies:
 | `usage-lib` | Parse usage specs (KDL format), no default features |
 | `ratatui` | TUI framework |
 | `crossterm` | Terminal backend and events |
-| `ratatui-interact` | UI components (Breadcrumb, Input, focus management) |
+| `ratatui-interact` | UI components (Input, focus management) |
 | `ratatui-themes` | Consistent color theming |
 | `nucleo-matcher` | Fuzzy matching (scored, ranked) |
 | `portable-pty` | Cross-platform pseudo-terminal for command execution |
