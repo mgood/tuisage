@@ -59,14 +59,19 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Activate filtering with a keyboard shortcut (`/`).
 - **Keep all items visible** — non-matching items are subdued using color (dimmed/grayed) rather than hidden, so users can see the full context and all available options without layout shift.
 - **Matching items stand out** — items that match the filter pattern are displayed in normal color with matching characters highlighted/emphasized.
+- **Separate name/help matching** — the command/flag name and help text are treated as independent fields for matching. Each field is scored separately; highlighting only appears in the field(s) that independently match. This prevents confusing partial highlights where a few characters match in the name and the rest match in the help text.
+- **Help text highlighting** — when the help text matches the filter, matching characters in the help text are highlighted using the same style as name highlights.
+- **Filtered navigation** — when a filter is active, `↑`/`↓` skip non-matching items and move directly to the previous/next matching item, making it fast to cycle through matches.
 - **Auto-select matching items** — if the currently selected item doesn't match the filter, automatically move the selection to the next matching item.
+- **Filter mode visual cues** — when filter mode is activated, the panel title immediately shows the `/` prompt (e.g., `Commands (/)`) even before any text is typed, and the panel border changes to the active color to clearly indicate filter mode is in progress.
 - **Clear filter when changing panels** — switching focus via Tab or mouse click clears the active filter to prevent confusion.
 - Use scored matching (powered by `nucleo-matcher`) to rank results by relevance.
-- Show the active filter query in the panel title (e.g., `Commands (/query)`).
 
 ### Command Preview
 
 - Show a live preview of the assembled command, updated on every interaction.
+- Global flags toggled from any subcommand level are correctly included in the built command.
+- On startup, the correct flags and arguments for the initially selected command are displayed immediately (no key press required).
 - Allow the user to accept and output the command.
 
 ### Command Execution & Output

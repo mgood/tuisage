@@ -190,13 +190,15 @@ During rendering, each panel's `Rect` is stored in `app.click_regions` as a `(Re
 
 When filtering is active (`app.filtering == true`):
 
-1. **Match Score Computation** — `compute_tree_match_scores()` and `compute_flag_match_scores()` use `nucleo-matcher::Pattern` to score all items against the filter pattern. Pattern-based matching properly handles multi-word patterns and fzf-style special characters.
-2. **Full-Path Matching** — Commands are scored against their full ancestor path (e.g. "config set") in addition to the command name, aliases, and help text. This means queries like "cfgset" will match "config set" where "set" is a subcommand of "config".
-3. **Visual Styling** — Items with score = 0 (non-matches) are rendered with `Modifier::DIM` to subdue them without shifting the layout. This applies to both commands and flags.
-4. **Character Highlighting** — `fuzzy_match_indices()` returns the positions of matched characters, and `build_highlighted_text()` creates styled spans. On unselected items, matches are bold+underlined. On selected items, matches use inverted colors (foreground↔background) for visibility against the selection background.
-5. **Auto-Selection** — When the filter changes, `auto_select_next_match()` moves the cursor to the first matching item if the current selection doesn't match. This operates on the full flat command list for commands, and the full flag list for flags.
-6. **Panel Switching** — `set_focus()` clears the filter when changing panels (via Tab or mouse) to prevent confusion.
-7. **Clean Headers** — Panel titles show just the panel name (e.g. "Commands", "Flags", "Arguments") without counts. When filtering is active, the filter query is shown (e.g. "Flags (/roll)").
+1. **Match Score Computation** — `compute_tree_match_scores()` and `compute_flag_match_scores()` use `nucleo-matcher::Pattern` to score all items against the filter pattern. Pattern-based matching properly handles multi-word patterns and fzf-style special characters. Each scoring function returns per-field scores (name score and help score separately) so that highlighting can be applied independently to each field.
+2. **Separate Name/Help Matching** — The command/flag name and help text are treated as independent fields. Each is scored separately against the filter pattern. An item matches if *either* field scores > 0, but highlighting is only shown in the field(s) that independently match. This prevents confusing partial highlights in the name when an item only matched via its help text (or vice versa).
+3. **Full-Path Matching** — Commands are scored against their full ancestor path (e.g. "config set") in addition to the command name, aliases, and help text. This means queries like "cfgset" will match "config set" where "set" is a subcommand of "config".
+4. **Visual Styling** — Items with score = 0 (non-matches) are rendered with `Modifier::DIM` to subdue them without shifting the layout. This applies to both commands and flags.
+5. **Character Highlighting** — `fuzzy_match_indices()` returns the positions of matched characters, and `build_highlighted_text()` creates styled spans. On unselected items, matches are bold+underlined. On selected items, matches use inverted colors (foreground↔background) for visibility against the selection background. Help text is also highlighted when it matches the filter, using the same styling approach.
+6. **Auto-Selection** — When the filter changes, `auto_select_next_match()` moves the cursor to the first matching item if the current selection doesn't match. This operates on the full flat command list for commands, and the full flag list for flags.
+7. **Filtered Navigation** — When a filter is active (non-empty filter text), `↑`/`↓` keys skip non-matching items and move directly to the previous/next matching item. `move_to_prev_match()` and `move_to_next_match()` scan in the appropriate direction and wrap around if needed.
+8. **Panel Switching** — `set_focus()` clears the filter when changing panels (via Tab or mouse) to prevent confusion.
+9. **Filter Mode Visual Cues** — When filter mode is activated, the panel title immediately shows the `/` prompt (e.g. "Commands (/)" even before any text is typed). The panel border color changes to the active border color during filter mode, making it visually obvious that filtering is in progress. Panel titles show the filter query as it's typed (e.g. "Flags (/roll)").
 
 ## Dependencies
 
@@ -259,6 +261,8 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 | Single-file modules (`app.rs`, `ui.rs`) | Keeps things simple while the codebase is small. Split when complexity warrants it. |
 | `Vec<String>` for command path | Simple push/pop navigation through the command tree. Joined with `>` for hash map keys. |
 | State preserved across navigation | Flag/arg values are stored per command-path key, so navigating away and back retains previous selections. |
+| Startup sync via `sync_command_path_from_tree()` | On construction, the tree selection and command path are synchronized so the correct flags/args are displayed on the first render without requiring a key press. |
+| Global flags collected from all levels | `build_command()` scans all command-path levels for global flag values (deepest wins), emitting them before subcommands. This ensures global flags toggled from any subcommand are included. |
 | Rendering to stderr, output to stdout | Enables composability: `eval "$(tuisage spec.kdl)"` works because TUI output doesn't mix with the command string. |
 | Crossterm backend | Best cross-platform terminal support (macOS, Linux, Windows). |
 | Theme palette mapping | Instead of hardcoding colors, derive semantic colors from the active theme. This makes all themes work automatically. |
@@ -282,8 +286,14 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - Full TUI rendering: 2-column layout (commands left, flags+args stacked right), preview, help bar
 - Keyboard navigation: vim keys, Tab cycling, Enter/Space/Backspace actions
 - Fuzzy filtering with scored ranking, subdued non-matches, character-level match highlighting, and full-path subcommand matching (nucleo-matcher Pattern API)
+- **Separate name/help matching** — name and help text are scored independently; highlighting only appears in the field that matched, preventing confusing cross-field partial highlights
+- **Help text highlighting** — filter matches in help text are highlighted with the same bold+underlined (or inverted) style used for name matches
+- **Filtered navigation** — `↑`/`↓` in filter mode skip non-matching items to move directly between matches
+- **Filter mode visual cues** — panel title shows `/` prompt immediately on activation (even before typing), and panel border changes to active color during filter mode
 - Mouse support: click, scroll, click-to-activate
 - Visual polish: theming, scrolling, default indicators, accessible symbols
+- **Startup sync** — tree selection and command path are synchronized on construction, so flags/args display correctly on the first render without requiring a key press
+- **Global flags from any level** — global flags toggled from any subcommand are correctly included in the built command (deepest level's value wins)
 - **Command tree display** — full command hierarchy shown as a flat indented list with depth-based indentation (2 spaces per level). All commands are always visible. Left/Right (h/l) navigate to parent/first-child. Enter navigates into the selected command (same as Right). The selected command determines which flags and arguments are displayed.
 - **Theme cycling** — `]`/`[` keys cycle through themes forward/backward, `T` also cycles forward. Current theme name shown in status bar.
 - **Print-only mode** — press `p` when the Preview panel is focused to output the command to stdout and exit, enabling piping and shell integration.

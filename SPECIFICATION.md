@@ -90,12 +90,14 @@ The selected command in the always-visible tree, combined with the live command 
 - Left arrow (←/h) moves selection to the parent command; Right arrow (→/l) moves to the first child.
 - Enter navigates into the selected command (moves to first child), same as Right arrow.
 - The selected command determines which flags and arguments are displayed in the other panels.
+- On startup, the tree selection and command state are synchronized so the correct flags and arguments are displayed immediately (no key press required).
 - When filtering is active, all commands remain visible:
   - **Non-matching commands** are displayed in a dimmed/subdued color
-  - **Matching commands** are displayed normally, with matching characters highlighted (bold+underlined on unselected items, inverted colors on the selected item)
+  - **Matching commands** are displayed normally, with matching characters highlighted independently in the name and help text (bold+underlined on unselected items, inverted colors on the selected item)
   - **Matching includes the full ancestor path** so that queries like "cfgset" match "config set"
   - **Selected command** is always shown with bold styling and cursor indicator
-- The panel title shows just "Commands" (no counts), or "Commands (/query)" when filtering is active.
+  - **Help text highlighting** — if the help text matches the filter, matching characters are highlighted with the same style as name matches
+- The panel title shows just "Commands" (no counts), or "Commands (/)" when filter mode is first activated, or "Commands (/query)" as the user types. The panel border changes to the active color during filter mode.
 
 ### Flags Panel
 
@@ -108,7 +110,9 @@ The selected command in the always-visible tree, combined with the live command 
   - `[G]` indicator for inherited global flags
   - Count value for count flags (e.g., `[3]`)
 - Flags with choices show the current selection.
-- The panel title shows just "Flags" (no counts), or "Flags (/query)" when filtering is active.
+- Global flags toggled from any subcommand level are correctly included in the built command.
+- When filtering is active, name and help text are matched independently — highlights only appear in the field that matched.
+- The panel title shows just "Flags" (no counts), or "Flags (/)" when filter mode is first activated, or "Flags (/query)" as the user types. The panel border changes to the active color during filter mode.
 
 ### Arguments Panel
 
@@ -188,7 +192,7 @@ The currently selected command in the flat tree list determines which flags and 
 - Which node is currently selected (cursor position)
 - Scroll offset for long lists
 
-The selected command's full path (e.g., `["config", "set"]`) is computed from the flat list structure to look up flag and argument values.
+The selected command's full path (e.g., `["config", "set"]`) is computed from the flat list structure to look up flag and argument values. On startup, the tree selection is synchronized with the command path so that the correct flags and arguments are displayed immediately without requiring any user input.
 
 ### Flag Values
 
@@ -274,7 +278,7 @@ When the fuzzy filter is active:
 | Any character | Append to the filter query; auto-select next matching item if current item doesn't match |
 | `Backspace` | Delete the last character from the query; auto-select next matching item if current item doesn't match |
 | `Esc` | Clear the filter and exit filter mode |
-| `↑` / `↓` | Navigate within all results (matching items displayed normally, non-matching items subdued) |
+| `↑` / `↓` | Navigate to the previous/next **matching** item (skips non-matching items) |
 | `Enter` | Apply the filter and exit filter mode |
 | `Tab` | Switch focus to the other panel and clear the filter |
 
@@ -335,33 +339,37 @@ If the user is currently editing a value and clicks on a different item or panel
 Filtering uses scored fuzzy-matching (powered by `nucleo-matcher::Pattern`):
 
 1. The user presses `/` to activate filter mode in the Commands or Flags panel.
-2. The panel title shows the filter query (e.g., `Commands (/query)` or `Flags (/roll)`). No counts are shown.
+2. **Filter mode visual cues**:
+   - The panel title immediately shows the `/` prompt (e.g., `Commands (/)` when the query is empty, `Commands (/query)` as the user types). No counts are shown.
+   - The panel border color changes to the active border color to clearly indicate filter mode is active, regardless of which panel has focus.
 3. As the user types, items are scored against the filter pattern using `Pattern::parse()`:
    - **Pattern matching** supports multi-word patterns (whitespace-separated) and fzf-style special characters (^, $, !, ')
    - **Matching items** (score > 0) are displayed in normal color with matching characters highlighted (bold+underlined on unselected items, inverted colors on the selected item)
    - **Non-matching items** (score = 0) are displayed in a dimmed/subdued color without shifting the layout
    - Match indices are sorted and deduplicated for accurate character-level highlighting
-4. **Full-path matching**: In the Commands panel, subcommands are matched against their full ancestor path (e.g. "config set") so that queries like "cfgset" match subcommands via their parent chain.
-5. All commands remain visible for context — the flat list structure is preserved.
-6. **Auto-selection**: If the currently selected item doesn't match the filter, the selection automatically moves to the first matching item.
-7. Navigation keys (`↑`/`↓`) operate on all items, but matching items stand out visually.
-8. `Enter` applies the filter and exits filter mode.
-9. `Esc` clears the filter and returns to the normal view.
-10. **Changing panels** (via `Tab` or mouse click) clears the filter and resets the filter state.
+4. **Separate name/help matching**: The command/flag name and the help text are treated as independent fields for matching. Each field is scored separately against the filter pattern. An item matches if *either* field scores > 0, but **highlighting is only shown in the field(s) that independently match**. This prevents confusing partial highlights in the name when the item only matched via its help text (or vice versa).
+5. **Help text highlighting**: When the help text matches the filter pattern, matching characters in the help text are highlighted using the same bold+underlined style (or inverted style on selected items) used for name highlighting.
+6. **Full-path matching**: In the Commands panel, subcommands are matched against their full ancestor path (e.g. "config set") so that queries like "cfgset" match subcommands via their parent chain.
+7. All commands remain visible for context — the flat list structure is preserved.
+8. **Auto-selection**: If the currently selected item doesn't match the filter, the selection automatically moves to the first matching item.
+9. **Filtered navigation**: When a filter is active, `↑`/`↓` skip non-matching items and move directly to the previous/next matching item. This makes it fast to cycle through matches without manually scrolling past dimmed non-matches.
+10. `Enter` applies the filter and exits filter mode.
+11. `Esc` clears the filter and returns to the normal view.
+12. **Changing panels** (via `Tab` or mouse click) clears the filter and resets the filter state.
 
 ## Command Building
 
 The `build_command()` method assembles the final command string (for display):
 
 1. Start with the binary name from the spec.
-2. Append each subcommand in the current command path.
-3. Append all active flags for the current command and its ancestors:
+2. Gather global flag values from **all** command levels (root and every subcommand in the current path). When a global flag is set at multiple levels, the deepest level's value is used. Global flags are emitted immediately after the binary name, before any subcommand names.
+3. Append each subcommand in the current command path.
+4. Append all active non-global flags for each subcommand level:
    - Boolean flags: `--flag-name`
    - Value flags: `--flag-name value` (or `--flag-name=value` for certain formats)
    - Count flags: repeated short flag (e.g., `-vvv` for count 3)
    - Flags with choices: `--flag-name selected-choice`
-4. Append all non-empty argument values in positional order.
-5. Include flags from parent commands (global flags) if they have been set.
+5. Append all non-empty argument values in positional order.
 
 ### Command Parts for Execution
 
