@@ -93,6 +93,21 @@ pub struct ArgValue {
     pub choices: Vec<String>,
 }
 
+/// State for the inline choice select box.
+#[derive(Debug, Clone)]
+pub struct ChoiceSelectState {
+    /// All available choices for the item.
+    pub choices: Vec<String>,
+    /// Current filter text.
+    pub filter_input: InputState,
+    /// Selected index in the filtered list (not the original choices list).
+    pub selected_index: usize,
+    /// Which panel opened the select box.
+    pub source_panel: Focus,
+    /// Index of the item (flag or arg) the select box belongs to.
+    pub source_index: usize,
+}
+
 /// Data stored in each tree node for a command.
 #[derive(Debug, Clone)]
 pub struct CmdData {
@@ -167,6 +182,9 @@ pub struct App {
 
     /// Click region registry for mouse hit-testing.
     pub click_regions: ClickRegionRegistry<Focus>,
+
+    /// State for the inline choice select box (None when closed).
+    pub choice_select: Option<ChoiceSelectState>,
 }
 
 impl App {
@@ -263,6 +281,7 @@ impl App {
             arg_list_state: ListPickerState::new(0),
             edit_input: InputState::empty(),
             click_regions: ClickRegionRegistry::new(),
+            choice_select: None,
         };
         app.sync_state();
         // Synchronize command_path with the tree's initial selection so the
@@ -323,7 +342,162 @@ impl App {
             self.filtering = false;
             self.filter_input.clear();
         }
+        // Close choice select when switching panels
+        self.choice_select = None;
         self.focus_manager.set(panel);
+    }
+
+    /// Whether the choice select box is open.
+    pub fn is_choosing(&self) -> bool {
+        self.choice_select.is_some()
+    }
+
+    /// Get the filtered (visible) choices for the select box.
+    /// Returns (original_index, choice_text) pairs for choices matching the filter.
+    pub fn filtered_choices(&self) -> Vec<(usize, String)> {
+        let Some(ref cs) = self.choice_select else {
+            return Vec::new();
+        };
+        let filter = cs.filter_input.text();
+        if filter.is_empty() {
+            return cs
+                .choices
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (i, c.clone()))
+                .collect();
+        }
+        let mut matcher = Matcher::new(Config::DEFAULT);
+        cs.choices
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| fuzzy_match_score(c, filter, &mut matcher) > 0)
+            .map(|(i, c)| (i, c.clone()))
+            .collect()
+    }
+
+    /// Open the choice select box for the current flag/arg.
+    pub fn open_choice_select(&mut self, choices: Vec<String>, current_value: &str) {
+        let source_panel = self.focus();
+        let source_index = match source_panel {
+            Focus::Flags => self.flag_index(),
+            Focus::Args => self.arg_index(),
+            _ => 0,
+        };
+        // Find the index of the current value in the choices list
+        let current_idx = choices
+            .iter()
+            .position(|c| c == current_value)
+            .unwrap_or(0);
+        self.choice_select = Some(ChoiceSelectState {
+            choices,
+            filter_input: InputState::empty(),
+            selected_index: current_idx,
+            source_panel,
+            source_index,
+        });
+    }
+
+    /// Close the choice select box without applying.
+    pub fn close_choice_select(&mut self) {
+        self.choice_select = None;
+    }
+
+    /// Confirm the selected choice and close the select box.
+    pub fn confirm_choice_select(&mut self) {
+        let filtered = self.filtered_choices();
+        let Some(ref cs) = self.choice_select else {
+            return;
+        };
+        let selected_index = cs.selected_index;
+        let source_panel = cs.source_panel;
+        let source_index = cs.source_index;
+
+        let Some((_, choice_text)) = filtered.get(selected_index) else {
+            self.choice_select = None;
+            return;
+        };
+        let choice_text = choice_text.clone();
+
+        match source_panel {
+            Focus::Flags => {
+                let values = self.current_flag_values_mut();
+                if let Some((name, FlagValue::String(ref mut s))) = values.get_mut(source_index) {
+                    let flag_name = name.clone();
+                    *s = choice_text;
+                    let new_val = FlagValue::String(s.clone());
+                    self.sync_global_flag(&flag_name, &new_val);
+                }
+            }
+            Focus::Args => {
+                if let Some(arg) = self.arg_values.get_mut(source_index) {
+                    arg.value = choice_text;
+                }
+            }
+            _ => {}
+        }
+
+        self.choice_select = None;
+    }
+
+    /// Handle key events when the choice select box is open.
+    fn handle_choice_select_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
+        use crossterm::event::KeyCode;
+
+        match key.code {
+            KeyCode::Esc => {
+                self.close_choice_select();
+                Action::None
+            }
+            KeyCode::Enter => {
+                self.confirm_choice_select();
+                Action::None
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(ref mut cs) = self.choice_select {
+                    if cs.selected_index > 0 {
+                        cs.selected_index -= 1;
+                    }
+                }
+                Action::None
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let filtered_len = self.filtered_choices().len();
+                if let Some(ref mut cs) = self.choice_select {
+                    if cs.selected_index + 1 < filtered_len {
+                        cs.selected_index += 1;
+                    }
+                }
+                Action::None
+            }
+            KeyCode::Backspace => {
+                if let Some(ref mut cs) = self.choice_select {
+                    cs.filter_input.delete_char_backward();
+                }
+                // Recompute selection bounds
+                let filtered_len = self.filtered_choices().len();
+                if let Some(ref mut cs) = self.choice_select {
+                    if cs.selected_index >= filtered_len {
+                        cs.selected_index = filtered_len.saturating_sub(1);
+                    }
+                }
+                Action::None
+            }
+            KeyCode::Char(c) => {
+                if let Some(ref mut cs) = self.choice_select {
+                    cs.filter_input.insert_char(c);
+                }
+                // Recompute selection bounds
+                let filtered_len = self.filtered_choices().len();
+                if let Some(ref mut cs) = self.choice_select {
+                    if cs.selected_index >= filtered_len {
+                        cs.selected_index = filtered_len.saturating_sub(1);
+                    }
+                }
+                Action::None
+            }
+            _ => Action::None,
+        }
     }
 
     /// Whether a filter is applied (filter text is non-empty), regardless of
@@ -773,6 +947,12 @@ impl App {
 
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // If choice select box is open, close it on any click
+                // (the overlay doesn't have click regions registered)
+                if self.is_choosing() {
+                    self.close_choice_select();
+                    return Action::None;
+                }
                 // Use click region registry for hit-testing
                 if let Some(&clicked_panel) = self.click_regions.handle_click(col, row) {
                     // Finish any in-progress editing before switching focus or item
@@ -930,6 +1110,11 @@ impl App {
                 .contains(crossterm::event::KeyModifiers::CONTROL)
         {
             return Action::Execute;
+        }
+
+        // If the choice select box is open, handle its keys
+        if self.is_choosing() {
+            return self.handle_choice_select_key(key);
         }
 
         // If we're editing a text field, handle that separately
@@ -1442,15 +1627,9 @@ impl App {
                         }
                         FlagValue::String(s) => {
                             if let Some(choices) = maybe_choices {
-                                // Cycle through choices
-                                let idx = choices
-                                    .iter()
-                                    .position(|c| c == s.as_str())
-                                    .map(|i| (i + 1) % choices.len())
-                                    .unwrap_or(0);
-                                *s = choices[idx].clone();
-                                let new_val = FlagValue::String(s.clone());
-                                self.sync_global_flag(&flag_name, &new_val);
+                                // Open choice select box instead of cycling
+                                let current = s.clone();
+                                self.open_choice_select(choices, &current);
                             } else {
                                 self.start_editing();
                             }
@@ -1463,15 +1642,10 @@ impl App {
                 let arg_idx = self.arg_index();
                 let arg = &self.arg_values[arg_idx];
                 if !arg.choices.is_empty() {
-                    // Cycle through choices
-                    let current = arg.value.clone();
+                    // Open choice select box instead of cycling
                     let choices = arg.choices.clone();
-                    let idx = choices
-                        .iter()
-                        .position(|c| c == &current)
-                        .map(|i| (i + 1) % choices.len())
-                        .unwrap_or(0);
-                    self.arg_values[arg_idx].value = choices[idx].clone();
+                    let current = arg.value.clone();
+                    self.open_choice_select(choices, &current);
                 } else {
                     self.start_editing();
                 }
@@ -4279,5 +4453,321 @@ mod tests {
             "selected arg '{}' should match 'val'",
             selected_name
         );
+    }
+
+    // ── Choice select box tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_enter_on_choice_flag_opens_select_box() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["init"]);
+        app.set_focus(Focus::Flags);
+
+        // Find the "template" flag which has choices
+        let fidx = app
+            .current_flag_values()
+            .iter()
+            .position(|(n, _)| n == "template")
+            .unwrap();
+        app.set_flag_index(fidx);
+
+        assert!(!app.is_choosing(), "Should not be choosing before Enter");
+
+        // Press Enter
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+
+        assert!(app.is_choosing(), "Enter on choice flag should open select box");
+        let cs = app.choice_select.as_ref().unwrap();
+        assert_eq!(cs.choices, vec!["basic", "full", "minimal"]);
+        assert_eq!(cs.source_panel, Focus::Flags);
+        assert_eq!(cs.source_index, fidx);
+    }
+
+    #[test]
+    fn test_enter_on_choice_arg_opens_select_box() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0); // <environment> has choices
+
+        assert!(!app.is_choosing());
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+
+        assert!(app.is_choosing(), "Enter on choice arg should open select box");
+        let cs = app.choice_select.as_ref().unwrap();
+        assert_eq!(cs.choices, vec!["dev", "staging", "prod"]);
+        assert_eq!(cs.source_panel, Focus::Args);
+    }
+
+    #[test]
+    fn test_choice_select_enter_confirms() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+
+        // Open select box
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.is_choosing());
+
+        // Navigate down to "staging" (index 1)
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(down);
+
+        // Confirm selection
+        app.handle_key(enter);
+        assert!(!app.is_choosing(), "Enter should close select box");
+        assert_eq!(app.arg_values[0].value, "staging", "Should have selected staging");
+    }
+
+    #[test]
+    fn test_choice_select_esc_cancels() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+
+        // Open select box
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.is_choosing());
+
+        // Navigate down
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(down);
+
+        // Cancel with Esc
+        let esc = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(esc);
+        assert!(!app.is_choosing(), "Esc should close select box");
+        // Value should remain unchanged (was empty/default)
+        assert_eq!(app.arg_values[0].value, "", "Esc should not change value");
+    }
+
+    #[test]
+    fn test_choice_select_filter_narrows_choices() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0); // <environment> choices: dev, staging, prod
+
+        // Open select box
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.is_choosing());
+
+        // All 3 choices visible initially
+        assert_eq!(app.filtered_choices().len(), 3);
+
+        // Type "d" to filter
+        let d_key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('d'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(d_key);
+
+        // "d" should match "dev" and "prod" (both contain 'd')
+        let filtered = app.filtered_choices();
+        assert!(filtered.len() < 3, "Filter should narrow choices");
+        assert!(
+            filtered.iter().any(|(_, c)| c == "dev"),
+            "dev should match 'd'"
+        );
+
+        // Type "ev" to narrow further → "dev" only
+        let e_key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('e'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(e_key);
+        let v_key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('v'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(v_key);
+
+        let filtered = app.filtered_choices();
+        assert_eq!(filtered.len(), 1, "Only 'dev' should match 'dev'");
+        assert_eq!(filtered[0].1, "dev");
+
+        // Confirm — should select "dev"
+        app.handle_key(enter);
+        assert!(!app.is_choosing());
+        assert_eq!(app.arg_values[0].value, "dev");
+    }
+
+    #[test]
+    fn test_choice_select_preselects_current_value() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+
+        // Pre-set the value to "staging"
+        app.arg_values[0].value = "staging".to_string();
+
+        // Open select box
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.is_choosing());
+
+        let cs = app.choice_select.as_ref().unwrap();
+        // "staging" is at index 1 in ["dev", "staging", "prod"]
+        assert_eq!(cs.selected_index, 1, "Should pre-select 'staging'");
+    }
+
+    #[test]
+    fn test_choice_select_flag_confirms_value() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["init"]);
+        app.set_focus(Focus::Flags);
+
+        // Find "template" flag
+        let fidx = app
+            .current_flag_values()
+            .iter()
+            .position(|(n, _)| n == "template")
+            .unwrap();
+        app.set_flag_index(fidx);
+
+        // Open select box
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.is_choosing());
+
+        // Navigate to "full" (index 1)
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(down);
+
+        // Confirm
+        app.handle_key(enter);
+        assert!(!app.is_choosing());
+
+        // Check flag value was set
+        let val = &app.current_flag_values()[fidx].1;
+        assert_eq!(
+            val,
+            &FlagValue::String("full".to_string()),
+            "Flag value should be 'full'"
+        );
+    }
+
+    #[test]
+    fn test_choice_select_mouse_click_closes() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+
+        // Open select box
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.is_choosing());
+
+        // Click outside
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 5,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse);
+        assert!(!app.is_choosing(), "Mouse click should close select box");
+    }
+
+    #[test]
+    fn test_choice_select_navigation_bounds() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0); // choices: dev, staging, prod
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+
+        // Navigate up from index 0 — should stay at 0
+        let up = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Up,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(up);
+        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, 0);
+
+        // Navigate down twice to index 2
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(down);
+        app.handle_key(down);
+        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, 2);
+
+        // Navigate down again — should stay at 2 (last item)
+        app.handle_key(down);
+        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, 2);
+    }
+
+    #[test]
+    fn test_choice_select_set_focus_closes() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.is_choosing());
+
+        // Switch focus should close the select box
+        app.set_focus(Focus::Flags);
+        assert!(!app.is_choosing(), "Switching focus should close select box");
     }
 }

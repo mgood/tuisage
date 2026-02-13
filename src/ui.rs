@@ -172,6 +172,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Register preview area for click hit-testing
     app.click_regions.register(outer[0], Focus::Preview);
+
+    // Render choice select overlay on top of everything
+    if app.choice_select.is_some() {
+        render_choice_select(frame, app, area, &colors);
+    }
 }
 
 /// Render the execution view: command at top, terminal output in middle, status at bottom.
@@ -1005,10 +1010,155 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
     frame.render_stateful_widget(list, area, &mut state);
 }
 
+/// Render the choice select box as an overlay.
+fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, colors: &UiColors) {
+    let Some(ref cs) = app.choice_select else {
+        return;
+    };
+
+    let filtered = app.filtered_choices();
+    if filtered.is_empty() {
+        // Still show the box with a "no matches" message
+    }
+
+    // Determine the panel area and item position
+    let panel_area = match cs.source_panel {
+        Focus::Flags => app
+            .click_regions
+            .regions()
+            .iter()
+            .find(|r| r.data == Focus::Flags)
+            .map(|r| r.area),
+        Focus::Args => app
+            .click_regions
+            .regions()
+            .iter()
+            .find(|r| r.data == Focus::Args)
+            .map(|r| r.area),
+        _ => None,
+    };
+
+    let Some(panel_area) = panel_area else {
+        return;
+    };
+
+    // Calculate the y position of the item within the panel
+    let scroll_offset = match cs.source_panel {
+        Focus::Flags => app.flag_scroll(),
+        Focus::Args => app.arg_scroll(),
+        _ => 0,
+    };
+
+    let inner_y = panel_area.y + 1; // skip border
+    let item_y = inner_y + (cs.source_index as u16).saturating_sub(scroll_offset as u16);
+
+    // Position the overlay below the item
+    let overlay_y = item_y + 1;
+
+    // Calculate dimensions
+    let max_choice_len = filtered
+        .iter()
+        .map(|(_, c)| c.chars().count())
+        .max()
+        .unwrap_or(10) as u16;
+    let overlay_width = (max_choice_len + 6).min(terminal_area.width.saturating_sub(2)); // padding + border + selector
+    let max_visible = 10u16;
+    let visible_count = if filtered.is_empty() {
+        1
+    } else {
+        (filtered.len() as u16).min(max_visible)
+    };
+    let overlay_height = visible_count + 2; // borders
+
+    // Position x at the panel's inner left
+    let overlay_x = (panel_area.x + 2).min(terminal_area.width.saturating_sub(overlay_width));
+
+    // Clamp to terminal bounds
+    let overlay_x = overlay_x.min(terminal_area.width.saturating_sub(overlay_width));
+    let overlay_y = overlay_y.min(terminal_area.height.saturating_sub(overlay_height));
+
+    let overlay_rect = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
+
+    // Build the title with filter text
+    let filter_text = cs.filter_input.text();
+    let title = if filter_text.is_empty() {
+        " Select ".to_string()
+    } else {
+        format!(" {} ", filter_text)
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(colors.active_border))
+        .title(title)
+        .title_style(
+            Style::default()
+                .fg(colors.active_border)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    // Build list items
+    let selected_index = cs.selected_index;
+    let items: Vec<ListItem> = if filtered.is_empty() {
+        vec![ListItem::new(Line::from(Span::styled(
+            "(no matches)",
+            Style::default().fg(colors.help).italic(),
+        )))]
+    } else {
+        filtered
+            .iter()
+            .enumerate()
+            .map(|(i, (_, choice))| {
+                let is_selected = i == selected_index;
+                let prefix = if is_selected { "▶ " } else { "  " };
+                let style = if is_selected {
+                    Style::default()
+                        .fg(colors.choice)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(colors.choice)
+                };
+                let mut item = ListItem::new(Line::from(vec![
+                    Span::styled(
+                        prefix,
+                        if is_selected {
+                            Style::default()
+                                .fg(colors.active_border)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default()
+                        },
+                    ),
+                    Span::styled(choice.clone(), style),
+                ]));
+                if is_selected {
+                    item = item.style(Style::default().bg(colors.selected_bg));
+                }
+                item
+            })
+            .collect()
+    };
+
+    // Clear the area behind the overlay
+    let clear = ratatui::widgets::Clear;
+    frame.render_widget(clear, overlay_rect);
+
+    // Render the list
+    let mut state = ListState::default().with_selected(if filtered.is_empty() {
+        None
+    } else {
+        Some(selected_index)
+    });
+    let list = List::new(items).block(block);
+    frame.render_stateful_widget(list, overlay_rect, &mut state);
+}
+
 fn render_help_bar(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) {
     let help_text = app.current_help().unwrap_or_default();
 
-    let keybinds = if app.editing {
+    let keybinds = if app.is_choosing() {
+        "↑↓: navigate  Enter: confirm  Esc: cancel  type to filter"
+    } else if app.editing {
         "Enter: confirm  Esc: cancel"
     } else if app.filtering {
         "Enter: apply  Esc: clear  ↑↓: navigate"
@@ -1349,6 +1499,52 @@ mod tests {
     fn snapshot_deep_navigation() {
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["plugin", "install"]);
+        let output = render_to_string(&mut app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_choice_select_open() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0); // <environment> with choices dev, staging, prod
+
+        // Open the choice select box
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.is_choosing());
+
+        let output = render_to_string(&mut app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_choice_select_filtered() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+
+        // Open the choice select box
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+
+        // Type "st" to filter
+        for c in "st".chars() {
+            let key = crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(c),
+                crossterm::event::KeyModifiers::NONE,
+            );
+            app.handle_key(key);
+        }
+
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
