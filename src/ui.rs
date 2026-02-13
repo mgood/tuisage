@@ -151,27 +151,27 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
     // Top-level vertical layout:
+    //   [command preview]
     //   [main content area]
     //   [help / status bar]
-    //   [command preview]
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(3), // command preview
             Constraint::Min(6),    // main content
             Constraint::Length(2), // help text
-            Constraint::Length(3), // command preview
         ])
         .split(area);
 
     // Clear click regions each frame so they're rebuilt from current layout
     app.click_regions.clear();
 
-    render_main_content(frame, app, outer[0], &colors);
-    render_help_bar(frame, app, outer[1], &colors);
-    render_preview(frame, app, outer[2], &colors);
+    render_preview(frame, app, outer[0], &colors);
+    render_main_content(frame, app, outer[1], &colors);
+    render_help_bar(frame, app, outer[2], &colors);
 
     // Register preview area for click hit-testing
-    app.click_regions.register(outer[2], Focus::Preview);
+    app.click_regions.register(outer[0], Focus::Preview);
 }
 
 /// Render the execution view: command at top, terminal output in middle, status at bottom.
