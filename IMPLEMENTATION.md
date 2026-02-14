@@ -61,10 +61,10 @@ The entry point. Responsibilities:
 - Initialize the ratatui `DefaultTerminal`.
 - Run the event loop (`run_event_loop`), which draws frames and dispatches events.
 - Spawn commands in a PTY via `spawn_command()` when the `Execute` action is triggered.
-- On exit, restore the terminal, disable mouse capture, and optionally print the accepted command to stdout.
+- On exit, restore the terminal, disable mouse capture, and exit.
 
 The event loop has two modes:
-- **Builder mode**: Blocking event read — delegates to `app.handle_key()` or `app.handle_mouse()`, which return an `Action` enum (`None`, `Quit`, `Accept`, or `Execute`).
+- **Builder mode**: Blocking event read — delegates to `app.handle_key()` or `app.handle_mouse()`, which return an `Action` enum (`None`, `Quit`, or `Execute`).
 - **Execution mode**: Polling event read (16ms interval) — forwards keyboard input to the PTY, continuously redraws to show live terminal output.
 
 The `spawn_command()` function:
@@ -80,12 +80,12 @@ The core state and logic module (~2900 lines including ~1200 lines of tests).
 
 #### Key Types
 
-- **`Action`** — return value from event handlers: `None`, `Quit`, `Accept`, `Execute`.
+- **`Action`** — return value from event handlers: `None`, `Quit`, `Execute`.
 - **`AppMode`** — enum: `Builder` (normal command-building UI) or `Executing` (embedded terminal running).
 - **`ExecutionState`** — struct holding PTY state: `command_display`, `parser` (vt100), `pty_writer`, `pty_master`, `exited` flag, `exit_status`.
 - **`Focus`** — enum of focusable panels: `Commands`, `Flags`, `Args`, `Preview`.
 - **`FlagValue`** — discriminated union: `Bool(bool)`, `String(String)`, `Count(u32)`.
-- **`ArgValue`** — struct with `name`, `value`, `required`, `choices` fields.
+- **`ArgValue`** — struct with `name`, `value`, `required`, `choices`, `help` fields.
 - **`CmdData`** — data stored in each tree node: `name`, `help`, `aliases`.
 - **`ChoiceSelectState`** — state for the inline choice select box: `choices`, `filter_input`, `selected_index`, `source_panel`, `source_index`.
 - **`App`** — the main application state struct.
@@ -182,7 +182,7 @@ A semantic color palette derived from the active `ThemePalette`. Maps abstract r
 - **`render_flag_list()`** — renders flags with checkbox indicators (✓/○), values, defaults, global tags, and count badges.
 - **`render_arg_list()`** — renders arguments with required indicators, current values, choices, and inline editing.
 - **`render_preview()`** — renders the colorized command preview with `▶ RUN` or `$` prefix based on focus.
-- **`render_help_bar()`** — renders contextual help and key hints at the bottom.
+- **`render_help_bar()`** — renders keybinding hints and theme indicator in a single row at the bottom.
 - **`colorize_command()`** — parses the built command string and applies per-token coloring.
 - **`flag_display_string()`** — formats a single flag's display text for the list.
 
@@ -231,9 +231,9 @@ The `usage-lib` crate includes optional features for generating documentation, m
 
 ### Test Count
 
-148 tests total:
-- **88 tests** in `app.rs` — state logic, command building, command parts, tree navigation, key handling, mouse handling, filtering, editing, tree expand/collapse, execution state management, execution key handling, global flag sync, filtered navigation, startup sync, separate name/help matching
-- **60 tests** in `ui.rs` — rendering assertions, snapshot tests, theming, click regions, filter display, filter mode visual cues
+177 tests total:
+- **109 tests** in `app.rs` — state logic, command building, command parts, tree navigation, key handling, mouse handling, filtering, editing, tree expand/collapse, execution state management, execution key handling, global flag sync, filtered navigation, startup sync, separate name/help matching, choice select box, theme picker
+- **68 tests** in `ui.rs` — rendering assertions, snapshot tests, theming, click regions, filter display, filter mode visual cues, choice select rendering, theme picker rendering
 
 ### Test Fixtures
 
@@ -301,15 +301,15 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - **Global flags from any level** — global flags toggled from any subcommand are correctly included in the built command (deepest level's value wins)
 - **Command tree display** — full command hierarchy shown as a flat indented list with depth-based indentation (2 spaces per level). All commands are always visible. Left/Right (h/l) navigate to parent/first-child. Enter navigates into the selected command (same as Right). The selected command determines which flags and arguments are displayed.
 - **Theme picker** — `T` opens a theme picker overlay listing all 15 themes. Themes are previewed live as the user navigates with Up/Down/j/k. Enter confirms; Esc restores the original theme. Clicking the `[ThemeName]` indicator in the help bar also opens the picker. Mouse click on a theme confirms it; click outside cancels. The `]`/`[` keys still cycle themes directly without opening the picker.
-- **Print-only mode** — press `p` when the Preview panel is focused to output the command to stdout and exit, enabling piping and shell integration.
-- Comprehensive test suite (178+ tests)
+- **Print-only mode removed** — the `p` key and `Accept` action were removed; all execution happens via `Ctrl+R` or Enter on Preview.
+- Comprehensive test suite (177+ tests)
 - **Command execution** — execute built commands in an embedded PTY terminal directly within the TUI. Commands are spawned with separate process arguments (not shell-stringified) via `portable-pty`. Terminal output is rendered in real-time using `tui-term::PseudoTerminal`. Keyboard input is forwarded to the running process. The execution view shows the command at the top, terminal output in the middle, and a status bar at the bottom. After the process exits, the user closes the view to return to the command builder for building and running additional commands.
 - **PTY resize** — dynamically resize the embedded terminal when the TUI window is resized during execution. The PTY master is stored in `ExecutionState` and resized via `app.resize_pty()` when `Event::Resize` is received during execution mode. The vt100 parser screen is resized in place via `screen_mut().set_size()`, preserving content without flashing, while the child process receives SIGWINCH to redraw.
 - **Command Preview at top** — the command preview pane is positioned at the top of the screen (matching the execution view layout), providing visual stability when switching between builder and execution modes.
 - **Ctrl+R execute shortcut** — execute the built command from any panel via `Ctrl+R` (replaces `Ctrl+Enter` which could be intercepted by terminal emulators). Works regardless of edit or filter mode.
 - **Args filter auto-select** — when filtering in the Arguments panel, the cursor automatically moves to the first matching argument if the current selection doesn't match the filter.
 - **Inline choice select box** — flags and arguments with predefined choices open an inline select box overlay instead of cycling through options. The select box supports fuzzy filtering (non-matching choices are hidden), navigation with Up/Down, confirmation with Enter, and cancellation with Esc. The current value is pre-selected when the box opens.
-- Comprehensive test suite (163+ tests)
+- Comprehensive test suite (177+ tests)
 - Zero clippy warnings
 
 ### Remaining Work

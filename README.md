@@ -105,7 +105,6 @@ One of `--spec-cmd` or `--spec-file` is required (but not both).
 | `Ctrl+R` | Execute command (works from any panel) |
 | `]` / `[` | Next / previous color theme (quick cycle) |
 | `T` | Open theme picker (live preview, Enter to confirm, Esc to cancel) |
-| `p` | Print command to stdout and exit (when Preview is focused) |
 | `q` | Quit |
 | `Ctrl-C` | Quit |
 
@@ -166,7 +165,7 @@ See `fixtures/sample.usage.kdl` for a more comprehensive example.
 ## Testing
 
 ```sh
-# Run all tests (127 tests: unit + rendering + snapshots)
+# Run all tests (177 tests: unit + rendering + snapshots)
 cargo test
 
 # Review snapshot changes interactively

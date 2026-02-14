@@ -83,7 +83,6 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - When the process exits, the terminal output remains visible. The user presses Esc/Enter/q to close the execution view and return to the command builder.
 - Remain open after execution to allow building and running additional commands.
 - Execute commands from any panel via `Ctrl+R` keyboard shortcut.
-- Provide a print-only mode: when the command preview is focused, a dedicated keybinding (`p`) outputs the command to stdout and exits, enabling piping or integration with external tools.
 - Exit cleanly with no output when the user quits the application.
 - Support `--usage` flag to output TuiSage's own usage spec and exit, enabling self-describing CLI integration.
 

@@ -72,12 +72,11 @@ The terminal is divided into the following regions, rendered top-to-bottom:
 │                 │     (60% bottom)               │
 │                 │                                │
 ├─────────────────┴────────────────────────────────┤
-│ 💡 Help text for current item                    │
 │ Keybinding hints                      [Theme]    │
 └──────────────────────────────────────────────────┘
 ```
 
-The layout uses a 2-column design: Commands on the left (40% width), and Flags + Arguments stacked vertically on the right (60% width, with Flags taking 60% and Args 40% of that column). The Command Preview (3 rows) is fixed at the top, and the help bar (2 rows) is fixed at the bottom. When there are no subcommands, the Commands panel is hidden and Flags + Arguments fill the full width.
+The layout uses a 2-column design: Commands on the left (40% width), and Flags + Arguments stacked vertically on the right (60% width, with Flags taking 60% and Args 40% of that column). The Command Preview (3 rows) is fixed at the top, and the help bar (1 row) is fixed at the bottom. When there are no subcommands, the Commands panel is hidden and Flags + Arguments fill the full width.
 
 The Command Preview is at the top so it remains in the same position when switching to execution mode (where the command is also displayed at the top), providing visual stability.
 
@@ -135,11 +134,10 @@ The selected command in the always-visible tree, combined with the live command 
 - When focused: displays a `▶` prefix to signal that Enter will execute the command.
 - When unfocused: displays a `$` prompt prefix.
 - The command is colorized: binary name, subcommands, flags, and values each get distinct colors.
-- When focused, pressing `p` prints the command to stdout and exits (print-only mode for piping).
+
 
 ### Help / Status Bar
 
-- Shows contextual help text for the currently hovered item.
 - Displays available keyboard shortcuts.
 - Shows the current theme name (clickable to open theme picker).
 
@@ -258,7 +256,6 @@ When the user navigates to a new command, the state is synchronized:
 | `Space` | Flags panel (boolean) | Toggle the flag |
 | `Space` | Flags panel (count) | Increment the count |
 | `Backspace` | Flags panel (count) | Decrement the count (floor at 0) |
-| `p` | Preview panel | Print the command to stdout and exit (print-only mode) |
 | `/` | Commands, Flags, or Args panel | Activate fuzzy filter mode (no effect in Preview panel) |
 | `Ctrl+R` | Any panel | Execute the built command in an embedded PTY |
 
@@ -351,7 +348,6 @@ Mouse support is enabled via crossterm's `EnableMouseCapture`.
 |---|---|
 | Left click on a panel | Focus that panel and select the clicked item |
 | Left click on an already-selected item | Activate it (same as Enter for the focused panel) |
-| Left click on already-focused Preview | Print the command to stdout and exit (Accept) |
 | Scroll wheel up | Move selection up in the panel under the cursor |
 | Scroll wheel down | Move selection down in the panel under the cursor |
 
@@ -482,8 +478,6 @@ Themes can be cycled at runtime with `]`/`[` keys for quick switching, or `T` to
 6. **Return to builder**: Execution state is dropped (PTY writer and master cleaned up) → app mode switches back to `Builder` → normal event loop resumes.
 7. **Quit**: User presses `q`/`Ctrl-C`/`Esc` at root → restore terminal → disable mouse capture → exit 0 (no output).
 8. **Error**: Parsing or terminal errors → report error via `color-eyre` → exit non-zero.
-
-The TUI is **long-running** by design, allowing repeated command building and execution within a single session. An optional print-only mode may be added to output commands to stdout for integration with shell tools.
 
 ## Command Execution Architecture
 
