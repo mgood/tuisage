@@ -90,6 +90,7 @@ pub struct ArgValue {
     pub value: String,
     pub required: bool,
     pub choices: Vec<String>,
+    pub help: Option<String>,
 }
 
 /// State for the inline choice select box.
@@ -702,6 +703,7 @@ impl App {
                     value: default,
                     required: a.required,
                     choices,
+                    help: a.help.clone(),
                 }
             })
             .collect();

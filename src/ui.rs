@@ -159,7 +159,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         .constraints([
             Constraint::Length(3), // command preview
             Constraint::Min(6),    // main content
-            Constraint::Length(2), // help text
+            Constraint::Length(1), // help text
         ])
         .split(area);
 
@@ -1003,6 +1003,37 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
                 ));
             }
 
+            // Right-align help text if present
+            if let Some(ref help) = arg_val.help {
+                if !help.is_empty() {
+                    let current_len = spans
+                        .iter()
+                        .map(|s| s.content.chars().count())
+                        .sum::<usize>();
+                    let available_width = area.width.saturating_sub(2) as usize;
+
+                    if current_len + help.chars().count() + 1 < available_width {
+                        let padding =
+                            available_width.saturating_sub(current_len + help.chars().count());
+                        spans.push(Span::raw(" ".repeat(padding)));
+                    } else {
+                        spans.push(Span::raw(" "));
+                    }
+
+                    if !is_match && !match_scores.is_empty() {
+                        spans.push(Span::styled(
+                            help.clone(),
+                            Style::default().fg(colors.help).add_modifier(Modifier::DIM),
+                        ));
+                    } else {
+                        spans.push(Span::styled(
+                            help.clone(),
+                            Style::default().fg(colors.help),
+                        ));
+                    }
+                }
+            }
+
             let line = Line::from(spans);
             let mut item = ListItem::new(line);
             if is_selected {
@@ -1178,8 +1209,6 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
 }
 
 fn render_help_bar(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) {
-    let help_text = app.current_help().unwrap_or_default();
-
     let keybinds = if app.is_choosing() {
         "↑↓: navigate  Enter: confirm  Esc: cancel  type to filter"
     } else if app.editing {
@@ -1201,18 +1230,6 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) 
         }
     };
 
-    let layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(1)])
-        .split(area);
-
-    // Help text for current item
-    let help = Paragraph::new(Line::from(vec![
-        Span::styled(" 💡 ", Style::default()),
-        Span::styled(help_text, Style::default().fg(colors.help).italic()),
-    ]));
-    frame.render_widget(help, layout[0]);
-
     // Keybinding hints with theme name
     let theme_indicator = format!(" [{}]", app.theme_name.display_name());
     let hints = Paragraph::new(Line::from(vec![
@@ -1223,7 +1240,7 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) 
         ),
     ]))
     .style(Style::default().bg(colors.bar_bg));
-    frame.render_widget(hints, layout[1]);
+    frame.render_widget(hints, area);
 }
 
 /// Render the command preview bar at the bottom with colorized parts.
