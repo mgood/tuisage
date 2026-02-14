@@ -38,11 +38,23 @@ This document describes how TuiSage is built — its architecture, code structur
 │                   ui.rs                         │
 │  - Layout computation (panels, preview, help    │
 │    bar)                                         │
-│  - Semantic color derivation from theme palette │
 │  - Component rendering (commands, flags, args)  │
 │  - Command preview colorization                 │
 │  - Execution view (PseudoTerminal + status)     │
 │  - Click region registration                    │
+│  - Delegates to widgets.rs for shared patterns  │
+└─────────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────┐
+│                 widgets.rs                      │
+│  - UiColors (semantic color palette)            │
+│  - PanelState (shared panel rendering context)  │
+│  - Panel chrome (title, block, borders)         │
+│  - Selection cursor, highlighted names          │
+│  - Help text, edit cursor, selection bg         │
+│  - Fuzzy match highlighting (build_highlighted_ │
+│    text)                                        │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -76,7 +88,7 @@ The `spawn_command()` function:
 
 ### `src/app.rs`
 
-The core state and logic module (~2900 lines including ~1200 lines of tests).
+The core state and logic module (~5200 lines including ~1200 lines of tests).
 
 #### Key Types
 
@@ -133,7 +145,9 @@ The core state and logic module (~2900 lines including ~1200 lines of tests).
 - **`fuzzy_match_indices()`** — returns both score and match indices for character-level highlighting. Indices are sorted and deduplicated as recommended by nucleo-matcher docs.
 - **`compute_tree_match_scores()`** — computes match scores for all commands in the flat list when filtering is active; matches against the command name, aliases, help text, and the full ancestor path (e.g. "config set") so queries like "cfgset" work. Returns map of node ID → score.
 - **`compute_flag_match_scores()`** — computes match scores for all flags when filtering is active; returns map of flag name → score.
-- **`auto_select_next_match()`** — automatically moves selection to the first matching item when current selection doesn’t match filter. Operates on the full flat command list for commands, the full flag list for flags, and the arg list for arguments.
+- **`auto_select_next_match()`** — automatically moves selection to the first matching item when current selection doesn’t match filter. Uses the generic `find_first_match()` helper for consistent behavior across all panels.
+- **`find_adjacent_match()`** — generic helper for `move_to_next_match()` / `move_to_prev_match()`. Searches forward or backward through a scored item list, wrapping around.
+- **`find_first_match()`** — generic helper for `auto_select_next_match()`. Returns the current index if it already matches, or the first matching index.
 - **`tree_expand_or_enter()`** — moves selection to first child of the selected command (Right/l/Enter key).
 - **`tree_collapse_or_parent()`** — moves selection to the parent command (Left/h key).
 - **`navigate_to_command()`** — selects a specific command by path in the flat list (used in tests).
@@ -167,24 +181,48 @@ When `sync_command_path_from_tree()` is called (on tree selection change):
 
 ### `src/ui.rs`
 
-The rendering module (~2070 lines including ~1065 lines of tests).
-
-#### `UiColors` Struct
-
-A semantic color palette derived from the active `ThemePalette`. Maps abstract roles (command, flag, arg, value, active border, etc.) to concrete `Color` values. Constructed via `UiColors::from_palette()`.
+The rendering module (~2200 lines including ~1150 lines of tests). Uses helpers from `widgets.rs` for consistent panel rendering across all three list panels.
 
 #### Rendering Functions
 
 - **`render()`** — top-level entry point called by the event loop. Computes layout (preview at top, main content in middle, help bar at bottom), derives colors, and delegates to sub-renderers. When in execution mode, delegates entirely to `render_execution_view()`.
 - **`render_execution_view()`** — renders the execution UI: command display at top (3 rows), `PseudoTerminal` widget in the middle (fills remaining space), and status bar at bottom (1 row). Uses `tui-term::PseudoTerminal` to render the `vt100::Parser`'s screen. Shows running/finished state with appropriate border colors and status text.
 - **`render_main_content()`** — splits the area into a 2-column layout: commands on the left (40%) and flags + args stacked vertically on the right (60%). When there are no subcommands, the commands panel is hidden and flags + args fill the full width.
-- **`render_command_list()`** — renders the command list as a flat `List` widget with depth-based indentation (2 spaces per level). Supports per-item styling: selected items get bold text, non-matching items are dimmed during filtering, and matching characters are highlighted with inverted colors on selected items or bold+underlined on unselected items.
+- **`render_command_list()`** — renders the command list as a flat `List` widget with depth-based indentation (2 spaces per level). Delegates panel chrome, selection cursors, and text highlighting to `widgets.rs` helpers.
 - **`render_flag_list()`** — renders flags with checkbox indicators (✓/○), values, defaults, global tags, and count badges.
 - **`render_arg_list()`** — renders arguments with required indicators, current values, choices, and inline editing.
 - **`render_preview()`** — renders the colorized command preview with `▶ RUN` or `$` prefix based on focus.
 - **`render_help_bar()`** — renders keybinding hints and theme indicator in a single row at the bottom.
 - **`colorize_command()`** — parses the built command string and applies per-token coloring.
 - **`flag_display_string()`** — formats a single flag's display text for the list.
+
+### `src/widgets.rs`
+
+Reusable UI widget helpers (~400 lines) that eliminate duplication across the three list panel renderers. Extracted from repeated patterns in `ui.rs` to ensure consistent behavior.
+
+#### `UiColors` Struct
+
+A semantic color palette derived from the active `ThemePalette`. Maps abstract roles (command, flag, arg, value, active border, etc.) to concrete `Color` values. Constructed via `UiColors::from_palette()`. Used by both `ui.rs` and `widgets.rs`.
+
+#### `PanelState` Struct
+
+Captures the shared rendering context for any list panel: focus state, scroll offset, selected index, filter text, match scores, colors, and panel area. Constructed from `App` state via `PanelState::from_app()`.
+
+#### `ItemContext` Struct
+
+Per-item rendering context bundling: `is_selected`, `is_match`, `name_matches` (character indices), and `help_matches` (character indices). Avoids function parameter bloat.
+
+#### Helper Functions
+
+- **`panel_title()`** — generates the panel title `Line`, including the 🔍 emoji and filter query when filtering is active.
+- **`panel_block()`** — creates a styled `Block` with focus-aware border color, title, and optional horizontal padding.
+- **`push_selection_cursor()`** — appends `▶ ` or `  ` prefix spans consistently across all panels.
+- **`push_highlighted_name()`** — appends item name spans with filter-aware styling (dimmed, bold+underlined, or inverted).
+- **`push_help_text()`** — appends right-aligned help text spans with filter-aware styling and padding calculation.
+- **`push_edit_cursor()`** — appends inline edit cursor spans (before_cursor + ▎ + after_cursor).
+- **`selection_bg()`** — returns the appropriate background color for selected/editing items.
+- **`item_match_state()`** — computes whether an item matches the filter and retrieves match indices for both name and help fields.
+- **`build_highlighted_text()`** — creates styled `Span` vectors from text with highlighted match character positions.
 
 #### Click Region Registration
 
@@ -262,7 +300,8 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 
 | Decision | Rationale |
 |---|---|
-| Single-file modules (`app.rs`, `ui.rs`) | Keeps things simple while the codebase is small. Split when complexity warrants it. |
+| Shared widget helpers (`widgets.rs`) | Extracts common panel rendering patterns (borders, selection cursors, text highlighting) into reusable helpers. Eliminates ~100 lines of duplication across the three list renderers and ensures consistent behavior. |
+| Core modules (`app.rs`, `ui.rs`) with helpers | Core state and rendering logic stays in focused modules. Shared UI patterns extracted to `widgets.rs`, navigation helpers extracted as free functions. |
 | `Vec<String>` for command path | Simple push/pop navigation through the command tree. Joined with `>` for hash map keys. |
 | State preserved across navigation | Flag/arg values are stored per command-path key, so navigating away and back retains previous selections. |
 | Startup sync via `sync_command_path_from_tree()` | On construction, the tree selection and command path are synchronized so the correct flags/args are displayed on the first render without requiring a key press. |
