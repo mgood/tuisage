@@ -2,141 +2,22 @@ use std::sync::atomic::Ordering;
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Padding, Paragraph, Wrap},
     Frame,
 };
-use ratatui_themes::{ThemeName, ThemePalette};
+use ratatui_themes::ThemeName;
 use tui_term::widget::PseudoTerminal;
 
 #[cfg(test)]
 extern crate insta;
 
 use crate::app::{flatten_command_tree, App, AppMode, FlagValue, Focus};
-
-/// Derive a semantic color palette for our UI elements from the theme palette.
-/// This maps semantic theme colors to our specific UI roles.
-struct UiColors {
-    command: Color,
-    flag: Color,
-    arg: Color,
-    value: Color,
-    required: Color,
-    help: Color,
-    active_border: Color,
-    inactive_border: Color,
-    selected_bg: Color,
-    editing_bg: Color,
-    preview_cmd: Color,
-    choice: Color,
-    default_val: Color,
-    count: Color,
-    bg: Color,
-    bar_bg: Color,
-}
-
-impl UiColors {
-    fn from_palette(p: &ThemePalette) -> Self {
-        // Derive a slightly lighter/darker shade for bar backgrounds
-        let bar_bg = match p.bg {
-            Color::Rgb(r, g, b) => Color::Rgb(
-                r.saturating_add(10),
-                g.saturating_add(10),
-                b.saturating_add(15),
-            ),
-            _ => Color::Rgb(30, 30, 40),
-        };
-
-        // Derive selection background from the theme selection color
-        let selected_bg = match p.selection {
-            Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
-            _ => Color::Rgb(40, 40, 60),
-        };
-
-        // Derive editing background: a warm-tinted version of selection
-        let editing_bg = match p.selection {
-            Color::Rgb(r, g, b) => Color::Rgb(
-                r.saturating_add(15),
-                g.saturating_sub(5),
-                b.saturating_sub(10),
-            ),
-            _ => Color::Rgb(50, 30, 30),
-        };
-
-        Self {
-            command: p.info,   // Commands are informational navigation targets
-            flag: p.warning,   // Flags draw attention like warnings
-            arg: p.success,    // Arguments are green/positive inputs
-            value: p.accent,   // Values are the primary highlighted data
-            required: p.error, // Required indicators are critical/red
-            help: p.muted,     // Help text is secondary/muted
-            active_border: p.accent,
-            inactive_border: p.muted,
-            selected_bg,
-            editing_bg,
-            preview_cmd: p.fg,
-            choice: p.info,
-            default_val: p.muted,
-            count: p.secondary,
-            bg: p.bg,
-            bar_bg,
-        }
-    }
-}
-
-/// Build spans with highlighted characters based on fuzzy match indices.
-/// Returns a Vec<Span> where matching characters are styled with highlight_style.
-fn build_highlighted_text(
-    text: &str,
-    pattern: &str,
-    normal_style: Style,
-    highlight_style: Style,
-) -> Vec<Span<'static>> {
-    use crate::app::fuzzy_match_indices;
-    use nucleo_matcher::{Config, Matcher};
-
-    let mut matcher = Matcher::new(Config::DEFAULT);
-    let (_score, indices) = fuzzy_match_indices(text, pattern, &mut matcher);
-
-    if indices.is_empty() {
-        // No matches, return whole text with normal style
-        return vec![Span::styled(text.to_string(), normal_style)];
-    }
-
-    let mut spans = Vec::new();
-    let chars: Vec<char> = text.chars().collect();
-    let mut last_idx = 0;
-
-    for &match_idx in &indices {
-        let idx = match_idx as usize;
-        if idx >= chars.len() {
-            continue;
-        }
-
-        // Add normal text before this match
-        if last_idx < idx {
-            let before: String = chars[last_idx..idx].iter().collect();
-            if !before.is_empty() {
-                spans.push(Span::styled(before, normal_style));
-            }
-        }
-
-        // Add highlighted match character
-        spans.push(Span::styled(chars[idx].to_string(), highlight_style));
-        last_idx = idx + 1;
-    }
-
-    // Add remaining text after last match
-    if last_idx < chars.len() {
-        let after: String = chars[last_idx..].iter().collect();
-        if !after.is_empty() {
-            spans.push(Span::styled(after, normal_style));
-        }
-    }
-
-    spans
-}
+use crate::widgets::{
+    panel_block, panel_title, push_edit_cursor, push_help_text, push_highlighted_name,
+    push_selection_cursor, selection_bg, ItemContext, PanelState, UiColors,
+};
 
 /// Render the full UI: command panel, flag panel, arg panel, preview, help bar.
 pub fn render(frame: &mut Frame, app: &mut App) {
@@ -321,39 +202,25 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
     // Register area for click hit-testing
     app.click_regions.register(area, Focus::Commands);
 
-    let is_focused = app.focus() == Focus::Commands;
-    let is_filtering = app.filtering && app.focus() == Focus::Commands;
-    let has_filter = app.filter_active() && app.focus() == Focus::Commands;
-    let border_color = if is_focused || is_filtering {
-        colors.active_border
-    } else {
-        colors.inactive_border
+    let ps = {
+        let base = PanelState::from_app(app, Focus::Commands, colors);
+        let scores = if !base.filter_text.is_empty() {
+            app.compute_tree_match_scores()
+        } else {
+            std::collections::HashMap::new()
+        };
+        base.with_scores(scores)
     };
 
     // Flatten the tree for display
     let flat_commands = flatten_command_tree(&app.command_tree_nodes);
 
-    let title = if (app.filtering || has_filter) && app.focus() == Focus::Commands {
-        format!(" Commands 🔍 {} ", app.filter())
-    } else {
-        " Commands ".to_string()
-    };
-
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color));
+    let title = panel_title("Commands", &ps);
+    let block = panel_block(title, &ps, false);
 
     // Calculate inner height for scroll offset (area minus borders)
     let inner_height = area.height.saturating_sub(2) as usize;
     app.ensure_visible(Focus::Commands, inner_height);
-
-    // Compute match scores if filtering (with per-field scores)
-    let match_scores = if !app.filter().is_empty() && app.focus() == Focus::Commands {
-        app.compute_tree_match_scores()
-    } else {
-        std::collections::HashMap::new()
-    };
 
     // Get selected index
     let selected_index = app.command_index();
@@ -364,24 +231,12 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
         .enumerate()
         .map(|(i, cmd)| {
             let is_selected = i == selected_index;
-            let scores = match_scores.get(&cmd.id);
-            let is_match = scores.map(|s| s.overall()).unwrap_or(0) > 0;
-            let name_matches = scores.map(|s| s.name_score).unwrap_or(0) > 0;
-            let help_matches = scores.map(|s| s.help_score).unwrap_or(0) > 0;
+            let ctx = ItemContext::new(&cmd.id, is_selected, &ps);
 
             let mut spans = Vec::new();
 
             // Selection cursor
-            if is_selected {
-                spans.push(Span::styled(
-                    "▶ ",
-                    Style::default()
-                        .fg(colors.active_border)
-                        .add_modifier(Modifier::BOLD),
-                ));
-            } else {
-                spans.push(Span::raw("  "));
-            }
+            push_selection_cursor(&mut spans, is_selected, colors);
 
             // Depth-based indentation with vertical line prefix
             if cmd.depth > 0 {
@@ -390,113 +245,33 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
                 spans.push(Span::styled("│ ", Style::default().fg(colors.help)));
             }
 
-            // Command name (without help text for now)
+            // Command name (with aliases)
             let name_text = if !cmd.aliases.is_empty() {
                 format!("{} ({})", cmd.name, cmd.aliases.join(", "))
             } else {
                 cmd.name.clone()
             };
 
-            // Apply styling based on selection and match
-            if is_selected {
-                // Selected - apply highlighting only if name independently matches
-                if !match_scores.is_empty() && name_matches {
-                    let pattern = app.filter();
-                    let normal_style = Style::default()
-                        .fg(colors.command)
-                        .add_modifier(Modifier::BOLD);
-                    let highlight_style = Style::default()
-                        .fg(colors.bg)
-                        .bg(colors.command)
-                        .add_modifier(Modifier::BOLD);
-                    let highlighted =
-                        build_highlighted_text(&name_text, pattern, normal_style, highlight_style);
-                    spans.extend(highlighted);
-                } else {
-                    spans.push(Span::styled(
-                        name_text.clone(),
-                        Style::default()
-                            .fg(colors.command)
-                            .add_modifier(Modifier::BOLD),
-                    ));
-                }
-            } else if !is_match && !match_scores.is_empty() {
-                // Non-matching when filtering - dim
-                spans.push(Span::styled(
-                    name_text.clone(),
-                    Style::default().fg(colors.help).add_modifier(Modifier::DIM),
-                ));
-            } else if !match_scores.is_empty() && name_matches {
-                // Matching via name - highlight characters in name
-                let pattern = app.filter();
-                let normal_style = Style::default().fg(colors.command);
-                let highlight_style = Style::default()
-                    .fg(colors.command)
-                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
-                let highlighted =
-                    build_highlighted_text(&name_text, pattern, normal_style, highlight_style);
-                spans.extend(highlighted);
-            } else if !match_scores.is_empty() && help_matches {
-                // Matching via help only - show name normally (no confusing partial highlights)
-                spans.push(Span::styled(
-                    name_text.clone(),
-                    Style::default().fg(colors.command),
-                ));
-            } else {
-                // Normal display
-                spans.push(Span::styled(
-                    name_text.clone(),
-                    Style::default().fg(colors.command),
-                ));
-            }
+            push_highlighted_name(
+                &mut spans,
+                &name_text,
+                colors.command,
+                &ctx,
+                &ps,
+                colors,
+            );
 
             // Right-align help text if present
             if let Some(help) = &cmd.help {
-                // Calculate padding based on actual display width
-                let current_len = spans
-                    .iter()
-                    .map(|s| s.content.chars().count())
-                    .sum::<usize>();
                 let available_width = area.width.saturating_sub(2) as usize;
-
-                if current_len + help.chars().count() + 1 < available_width {
-                    let padding =
-                        available_width.saturating_sub(current_len + help.chars().count());
-                    spans.push(Span::raw(" ".repeat(padding)));
-                } else {
-                    spans.push(Span::raw(" "));
-                }
-
-                if !is_match && !match_scores.is_empty() {
-                    // Non-matching - dim help text
-                    spans.push(Span::styled(
-                        help,
-                        Style::default().fg(colors.help).add_modifier(Modifier::DIM),
-                    ));
-                } else if !match_scores.is_empty() && help_matches {
-                    // Help text matches the filter - highlight matched characters
-                    let pattern = app.filter();
-                    if is_selected {
-                        let normal_style = Style::default().fg(colors.help);
-                        let highlight_style = Style::default()
-                            .fg(colors.bg)
-                            .bg(colors.help)
-                            .add_modifier(Modifier::BOLD);
-                        let highlighted =
-                            build_highlighted_text(help, pattern, normal_style, highlight_style);
-                        spans.extend(highlighted);
-                    } else {
-                        let normal_style = Style::default().fg(colors.help);
-                        let highlight_style = Style::default()
-                            .fg(colors.help)
-                            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
-                        let highlighted =
-                            build_highlighted_text(help, pattern, normal_style, highlight_style);
-                        spans.extend(highlighted);
-                    }
-                } else {
-                    spans.push(Span::styled(help, Style::default().fg(colors.help)));
-                }
+                push_help_text(
+                    &mut spans,
+                    help,
+                    available_width,
+                    &ctx,
+                    &ps,
+                    colors,
+                );
             }
 
             ListItem::new(Line::from(spans))
@@ -505,7 +280,7 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
 
     let selected_index = app.command_index();
     let mut state = ListState::default()
-        .with_selected(if is_focused {
+        .with_selected(if ps.is_focused {
             Some(selected_index)
         } else {
             None
@@ -521,37 +296,21 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
     // Register area for click hit-testing
     app.click_regions.register(area, Focus::Flags);
 
-    let is_focused = app.focus() == Focus::Flags;
-    let is_filtering = app.filtering && app.focus() == Focus::Flags;
-    let has_filter = app.filter_active() && app.focus() == Focus::Flags;
-    let border_color = if is_focused || is_filtering {
-        colors.active_border
-    } else {
-        colors.inactive_border
+    let ps = {
+        let base = PanelState::from_app(app, Focus::Flags, colors);
+        let scores = if !base.filter_text.is_empty() {
+            app.compute_flag_match_scores()
+        } else {
+            std::collections::HashMap::new()
+        };
+        base.with_scores(scores)
     };
 
     // Compute index for scroll visibility
     let flag_index = app.flag_index();
 
-    // Compute match scores for filtering (with per-field scores)
-    let match_scores = if !app.filter().is_empty() && app.focus() == Focus::Flags {
-        app.compute_flag_match_scores()
-    } else {
-        std::collections::HashMap::new()
-    };
-
-    let title = if (app.filtering || has_filter) && app.focus() == Focus::Flags {
-        format!(" Flags 🔍 {} ", app.filter())
-    } else {
-        " Flags ".to_string()
-    };
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color))
-        .title(title)
-        .title_style(Style::default().fg(border_color).bold())
-        .padding(Padding::horizontal(1));
+    let title = panel_title("Flags", &ps);
+    let block = panel_block(title, &ps, true);
 
     // Calculate inner height for scroll offset
     let inner_height = area.height.saturating_sub(2) as usize;
@@ -569,30 +328,17 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
         .iter()
         .enumerate()
         .map(|(i, flag)| {
-            let is_selected = is_focused && i == flag_index;
+            let is_selected = ps.is_focused && i == flag_index;
             let is_editing = is_selected && app.editing;
             let value = flag_values.iter().find(|(n, _)| n == &flag.name);
             let default_val = flag_defaults.get(i).and_then(|d| d.as_ref());
 
-            // Check if this flag matches the filter (per-field scores)
-            let scores = match_scores.get(&flag.name);
-            let is_match = scores.map(|s| s.overall()).unwrap_or(1) > 0 || match_scores.is_empty();
-            let name_matches = scores.map(|s| s.name_score).unwrap_or(0) > 0;
-            let help_matches = scores.map(|s| s.help_score).unwrap_or(0) > 0;
+            let ctx = ItemContext::new(&flag.name, is_selected, &ps);
 
             let mut spans = Vec::new();
 
-            // Selection cursor indicator (prominent triangle)
-            if is_selected {
-                spans.push(Span::styled(
-                    "▶ ",
-                    Style::default()
-                        .fg(colors.active_border)
-                        .add_modifier(Modifier::BOLD),
-                ));
-            } else {
-                spans.push(Span::styled("  ", Style::default()));
-            }
+            // Selection cursor indicator
+            push_selection_cursor(&mut spans, is_selected, colors);
 
             // Checkbox / toggle indicator using checkmark style (✓/○)
             let indicator = match value.map(|(_, v)| v) {
@@ -624,59 +370,18 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
             // Flag display (short + long) with highlighting
             let flag_display = flag_display_string(flag);
 
-            if is_selected {
-                // Selected flag - apply highlighting only if name independently matches
-                if !match_scores.is_empty() && name_matches {
-                    let pattern = app.filter();
-                    let normal_style = Style::default()
-                        .fg(colors.flag)
-                        .add_modifier(Modifier::BOLD);
-                    // Use inverted colors for matched characters to stand out against selection bg
-                    let highlight_style = Style::default()
-                        .fg(colors.bg)
-                        .bg(colors.flag)
-                        .add_modifier(Modifier::BOLD);
-                    let highlighted_spans = build_highlighted_text(
-                        &flag_display,
-                        pattern,
-                        normal_style,
-                        highlight_style,
-                    );
-                    spans.extend(highlighted_spans);
-                } else {
-                    // No filter active or name doesn't independently match - just bold
-                    let flag_style = Style::default()
-                        .fg(colors.flag)
-                        .add_modifier(Modifier::BOLD);
-                    spans.push(Span::styled(flag_display, flag_style));
-                }
-            } else if !is_match {
-                // Non-matching flag - subdued/dimmed
-                let flag_style = Style::default().fg(colors.help).add_modifier(Modifier::DIM);
-                spans.push(Span::styled(flag_display, flag_style));
-            } else if !match_scores.is_empty() && name_matches {
-                // Matching via name - highlight matched characters in name
-                let pattern = app.filter();
-                let normal_style = Style::default().fg(colors.flag);
-                let highlight_style = Style::default()
-                    .fg(colors.flag)
-                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
-                let highlighted_spans =
-                    build_highlighted_text(&flag_display, pattern, normal_style, highlight_style);
-                spans.extend(highlighted_spans);
-            } else if !match_scores.is_empty() && help_matches {
-                // Matching via help only - show name normally (no confusing partial highlights)
-                let flag_style = Style::default().fg(colors.flag);
-                spans.push(Span::styled(flag_display, flag_style));
-            } else {
-                // Normal display
-                let flag_style = Style::default().fg(colors.flag);
-                spans.push(Span::styled(flag_display, flag_style));
-            }
+            push_highlighted_name(
+                &mut spans,
+                &flag_display,
+                colors.flag,
+                &ctx,
+                &ps,
+                colors,
+            );
 
             // Global indicator
             if flag.global {
-                let global_style = if !is_match {
+                let global_style = if !ctx.is_match && !ps.match_scores.is_empty() {
                     Style::default().fg(colors.help).add_modifier(Modifier::DIM)
                 } else {
                     Style::default().fg(colors.help)
@@ -686,7 +391,7 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
 
             // Required indicator
             if flag.required {
-                let required_style = if !is_match {
+                let required_style = if !ctx.is_match && !ps.match_scores.is_empty() {
                     Style::default().fg(colors.help).add_modifier(Modifier::DIM)
                 } else {
                     Style::default().fg(colors.required)
@@ -698,7 +403,7 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
             if let Some((_, FlagValue::String(s))) = value {
                 spans.push(Span::styled(" = ", Style::default().fg(colors.help)));
 
-                // Check if the choice select box is open for this flag — suppress value display
+                // Check if the choice select box is open for this flag
                 let is_choice_selecting = app.choice_select.as_ref().is_some_and(|cs| {
                     cs.source_panel == Focus::Flags && cs.source_index == i
                 });
@@ -706,28 +411,9 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
                 if is_choice_selecting {
                     // Don't render value or choices hint — the select box will overlay here
                 } else if is_editing {
-                    // Show the edit_input text with cursor at correct position
                     let before_cursor = app.edit_input.text_before_cursor();
                     let after_cursor = app.edit_input.text_after_cursor();
-
-                    spans.push(Span::styled(
-                        before_cursor,
-                        Style::default()
-                            .fg(colors.value)
-                            .add_modifier(Modifier::UNDERLINED),
-                    ));
-                    spans.push(Span::styled(
-                        "▎",
-                        Style::default()
-                            .fg(colors.value)
-                            .add_modifier(Modifier::SLOW_BLINK),
-                    ));
-                    spans.push(Span::styled(
-                        after_cursor,
-                        Style::default()
-                            .fg(colors.value)
-                            .add_modifier(Modifier::UNDERLINED),
-                    ));
+                    push_edit_cursor(&mut spans, before_cursor, after_cursor, colors);
                 } else if s.is_empty() {
                     // Show choices hint or default
                     if let Some(ref arg) = flag.arg {
@@ -745,7 +431,7 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
                         }
                     }
                 } else {
-                    spans.push(Span::styled(s.as_str(), Style::default().fg(colors.value)));
+                    spans.push(Span::styled(s.to_string(), Style::default().fg(colors.value)));
                     // Show "(default)" if value matches the spec default
                     if let Some(def) = default_val {
                         if s == def {
@@ -760,69 +446,28 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
 
             // Right-align help text if present
             if let Some(help) = &flag.help {
-                // Calculate padding based on actual display width
-                let current_len = spans
-                    .iter()
-                    .map(|s| s.content.chars().count())
-                    .sum::<usize>();
-                let available_width = area.width.saturating_sub(2).saturating_sub(2) as usize; // borders + padding
-
-                if current_len + help.chars().count() + 1 < available_width {
-                    let padding =
-                        available_width.saturating_sub(current_len + help.chars().count());
-                    spans.push(Span::raw(" ".repeat(padding)));
-                } else {
-                    spans.push(Span::raw(" "));
-                }
-
-                if !is_match && !match_scores.is_empty() {
-                    // Non-matching - dim help text
-                    spans.push(Span::styled(
-                        help,
-                        Style::default().fg(colors.help).add_modifier(Modifier::DIM),
-                    ));
-                } else if !match_scores.is_empty() && help_matches {
-                    // Help text matches the filter - highlight matched characters
-                    let pattern = app.filter();
-                    if is_selected {
-                        let normal_style = Style::default().fg(colors.help);
-                        let highlight_style = Style::default()
-                            .fg(colors.bg)
-                            .bg(colors.help)
-                            .add_modifier(Modifier::BOLD);
-                        let highlighted =
-                            build_highlighted_text(help, pattern, normal_style, highlight_style);
-                        spans.extend(highlighted);
-                    } else {
-                        let normal_style = Style::default().fg(colors.help);
-                        let highlight_style = Style::default()
-                            .fg(colors.help)
-                            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
-                        let highlighted =
-                            build_highlighted_text(help, pattern, normal_style, highlight_style);
-                        spans.extend(highlighted);
-                    }
-                } else {
-                    spans.push(Span::styled(help, Style::default().fg(colors.help)));
-                }
+                let available_width = area.width.saturating_sub(2).saturating_sub(2) as usize;
+                push_help_text(
+                    &mut spans,
+                    help,
+                    available_width,
+                    &ctx,
+                    &ps,
+                    colors,
+                );
             }
 
             let line = Line::from(spans);
             let mut item = ListItem::new(line);
             if is_selected {
-                let bg = if is_editing {
-                    colors.editing_bg
-                } else {
-                    colors.selected_bg
-                };
-                item = item.style(Style::default().bg(bg));
+                item = item.style(selection_bg(is_editing, colors));
             }
             item
         })
         .collect();
 
     let mut state = ListState::default()
-        .with_selected(if is_focused { Some(flag_index) } else { None })
+        .with_selected(if ps.is_focused { Some(flag_index) } else { None })
         .with_offset(app.flag_scroll());
     let list = List::new(items).block(block);
     frame.render_stateful_widget(list, area, &mut state);
@@ -832,36 +477,20 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
     // Register area for click hit-testing
     app.click_regions.register(area, Focus::Args);
 
-    let is_focused = app.focus() == Focus::Args;
-    let is_filtering = app.filtering && app.focus() == Focus::Args;
-    let has_filter = app.filter_active() && app.focus() == Focus::Args;
-    let border_color = if is_focused || is_filtering {
-        colors.active_border
-    } else {
-        colors.inactive_border
+    let ps = {
+        let base = PanelState::from_app(app, Focus::Args, colors);
+        let scores = if !base.filter_text.is_empty() {
+            app.compute_arg_match_scores()
+        } else {
+            std::collections::HashMap::new()
+        };
+        base.with_scores(scores)
     };
 
     let arg_index = app.arg_index();
 
-    // Compute match scores for filtering (with per-field scores)
-    let match_scores = if !app.filter().is_empty() && app.focus() == Focus::Args {
-        app.compute_arg_match_scores()
-    } else {
-        std::collections::HashMap::new()
-    };
-
-    let title = if (app.filtering || has_filter) && app.focus() == Focus::Args {
-        format!(" Arguments 🔍 {} ", app.filter())
-    } else {
-        " Arguments ".to_string()
-    };
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color))
-        .title(title)
-        .title_style(Style::default().fg(border_color).bold())
-        .padding(Padding::horizontal(1));
+    let title = panel_title("Arguments", &ps);
+    let block = panel_block(title, &ps, true);
 
     // Calculate inner height for scroll offset (must happen before borrowing app.arg_values)
     let inner_height = area.height.saturating_sub(2) as usize;
@@ -872,27 +501,15 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
         .iter()
         .enumerate()
         .map(|(i, arg_val)| {
-            let is_selected = is_focused && i == arg_index;
+            let is_selected = ps.is_focused && i == arg_index;
             let is_editing = is_selected && app.editing;
 
-            // Check if this arg matches the filter (per-field scores)
-            let scores = match_scores.get(&arg_val.name);
-            let is_match = scores.map(|s| s.overall()).unwrap_or(1) > 0 || match_scores.is_empty();
-            let name_matches = scores.map(|s| s.name_score).unwrap_or(0) > 0;
+            let ctx = ItemContext::new(&arg_val.name, is_selected, &ps);
 
             let mut spans = Vec::new();
 
-            // Selection cursor indicator (prominent triangle)
-            if is_selected {
-                spans.push(Span::styled(
-                    "▶ ",
-                    Style::default()
-                        .fg(colors.active_border)
-                        .add_modifier(Modifier::BOLD),
-                ));
-            } else {
-                spans.push(Span::styled("  ", Style::default()));
-            }
+            // Selection cursor indicator
+            push_selection_cursor(&mut spans, is_selected, colors);
 
             // Required/optional indicator
             if arg_val.required {
@@ -905,52 +522,19 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
             let bracket = if arg_val.required { "<>" } else { "[]" };
             let arg_display = format!("{}{}{}", &bracket[..1], arg_val.name, &bracket[1..]);
 
-            if is_selected {
-                // Selected arg - apply highlighting only if name independently matches
-                if !match_scores.is_empty() && name_matches {
-                    let pattern = app.filter();
-                    let normal_style = Style::default().fg(colors.arg).add_modifier(Modifier::BOLD);
-                    // Use inverted colors for matched characters
-                    let highlight_style = Style::default()
-                        .fg(colors.bg)
-                        .bg(colors.arg)
-                        .add_modifier(Modifier::BOLD);
-                    let highlighted_spans = build_highlighted_text(
-                        &arg_display,
-                        pattern,
-                        normal_style,
-                        highlight_style,
-                    );
-                    spans.extend(highlighted_spans);
-                } else {
-                    // No filter active or name doesn't independently match - just bold
-                    let name_style = Style::default().fg(colors.arg).add_modifier(Modifier::BOLD);
-                    spans.push(Span::styled(arg_display, name_style));
-                }
-            } else if !is_match {
-                // Non-matching arg - subdued/dimmed
-                let name_style = Style::default().fg(colors.help).add_modifier(Modifier::DIM);
-                spans.push(Span::styled(arg_display, name_style));
-            } else if !match_scores.is_empty() && name_matches {
-                // Matching via name - highlight matched characters
-                let pattern = app.filter();
-                let normal_style = Style::default().fg(colors.arg);
-                let highlight_style = Style::default()
-                    .fg(colors.arg)
-                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
-                let highlighted_spans =
-                    build_highlighted_text(&arg_display, pattern, normal_style, highlight_style);
-                spans.extend(highlighted_spans);
-            } else {
-                // No filter or doesn't match name - normal style
-                let name_style = Style::default().fg(colors.arg);
-                spans.push(Span::styled(arg_display, name_style));
-            }
+            push_highlighted_name(
+                &mut spans,
+                &arg_display,
+                colors.arg,
+                &ctx,
+                &ps,
+                colors,
+            );
 
             // Value display
             spans.push(Span::styled(" = ", Style::default().fg(colors.help)));
 
-            // Check if the choice select box is open for this arg — suppress value display
+            // Check if the choice select box is open for this arg
             let is_choice_selecting = app.choice_select.as_ref().is_some_and(|cs| {
                 cs.source_panel == Focus::Args && cs.source_index == i
             });
@@ -958,28 +542,9 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
             if is_choice_selecting {
                 // Don't render value or choices hint — the select box will overlay here
             } else if is_editing {
-                // Show edit_input text with cursor at correct position
                 let before_cursor = app.edit_input.text_before_cursor();
                 let after_cursor = app.edit_input.text_after_cursor();
-
-                spans.push(Span::styled(
-                    before_cursor,
-                    Style::default()
-                        .fg(colors.value)
-                        .add_modifier(Modifier::UNDERLINED),
-                ));
-                spans.push(Span::styled(
-                    "▎",
-                    Style::default()
-                        .fg(colors.value)
-                        .add_modifier(Modifier::SLOW_BLINK),
-                ));
-                spans.push(Span::styled(
-                    after_cursor,
-                    Style::default()
-                        .fg(colors.value)
-                        .add_modifier(Modifier::UNDERLINED),
-                ));
+                push_edit_cursor(&mut spans, before_cursor, after_cursor, colors);
             } else if arg_val.value.is_empty() {
                 if !arg_val.choices.is_empty() {
                     let hint = arg_val.choices.join("|");
@@ -995,7 +560,7 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
                 }
             } else {
                 spans.push(Span::styled(
-                    &arg_val.value,
+                    arg_val.value.clone(),
                     Style::default().fg(colors.value),
                 ));
             }
@@ -1011,50 +576,29 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
             // Right-align help text if present
             if let Some(ref help) = arg_val.help {
                 if !help.is_empty() {
-                    let current_len = spans
-                        .iter()
-                        .map(|s| s.content.chars().count())
-                        .sum::<usize>();
                     let available_width = area.width.saturating_sub(2) as usize;
-
-                    if current_len + help.chars().count() + 1 < available_width {
-                        let padding =
-                            available_width.saturating_sub(current_len + help.chars().count());
-                        spans.push(Span::raw(" ".repeat(padding)));
-                    } else {
-                        spans.push(Span::raw(" "));
-                    }
-
-                    if !is_match && !match_scores.is_empty() {
-                        spans.push(Span::styled(
-                            help.clone(),
-                            Style::default().fg(colors.help).add_modifier(Modifier::DIM),
-                        ));
-                    } else {
-                        spans.push(Span::styled(
-                            help.clone(),
-                            Style::default().fg(colors.help),
-                        ));
-                    }
+                    push_help_text(
+                        &mut spans,
+                        help,
+                        available_width,
+                        &ctx,
+                        &ps,
+                        colors,
+                    );
                 }
             }
 
             let line = Line::from(spans);
             let mut item = ListItem::new(line);
             if is_selected {
-                let bg = if is_editing {
-                    colors.editing_bg
-                } else {
-                    colors.selected_bg
-                };
-                item = item.style(Style::default().bg(bg));
+                item = item.style(selection_bg(is_editing, colors));
             }
             item
         })
         .collect();
 
     let mut state = ListState::default()
-        .with_selected(if is_focused { Some(arg_index) } else { None })
+        .with_selected(if ps.is_focused { Some(arg_index) } else { None })
         .with_offset(app.arg_scroll());
     let list = List::new(items).block(block);
     frame.render_stateful_widget(list, area, &mut state);

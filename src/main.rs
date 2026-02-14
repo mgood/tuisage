@@ -10,6 +10,7 @@ use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 
 mod app;
 mod ui;
+mod widgets;
 
 use app::{App, ExecutionState};
 

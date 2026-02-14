@@ -1631,57 +1631,28 @@ impl App {
             Focus::Commands => {
                 let scores = self.compute_tree_match_scores();
                 let flat = flatten_command_tree(&self.command_tree_nodes);
+                let keys: Vec<String> = flat.iter().map(|c| c.id.clone()).collect();
                 let current = self.command_tree_state.selected_index;
-                let total = flat.len();
-                if total == 0 {
-                    return;
-                }
-                // Search backwards, wrapping around
-                for offset in 1..total {
-                    let idx = (current + total - offset) % total;
-                    if let Some(cmd) = flat.get(idx) {
-                        if scores.get(&cmd.id).map(|s| s.overall()).unwrap_or(0) > 0 {
-                            self.command_tree_state.selected_index = idx;
-                            self.sync_command_path_from_tree();
-                            return;
-                        }
-                    }
+                if let Some(idx) = find_adjacent_match(&keys, &scores, current, false) {
+                    self.command_tree_state.selected_index = idx;
+                    self.sync_command_path_from_tree();
                 }
             }
             Focus::Flags => {
                 let scores = self.compute_flag_match_scores();
                 let flags = self.visible_flags();
+                let keys: Vec<String> = flags.iter().map(|f| f.name.clone()).collect();
                 let current = self.flag_list_state.selected_index;
-                let total = flags.len();
-                if total == 0 {
-                    return;
-                }
-                for offset in 1..total {
-                    let idx = (current + total - offset) % total;
-                    if let Some(flag) = flags.get(idx) {
-                        if scores.get(&flag.name).map(|s| s.overall()).unwrap_or(0) > 0 {
-                            self.flag_list_state.select(idx);
-                            return;
-                        }
-                    }
+                if let Some(idx) = find_adjacent_match(&keys, &scores, current, false) {
+                    self.flag_list_state.select(idx);
                 }
             }
             Focus::Args => {
                 let scores = self.compute_arg_match_scores();
-                let args = self.visible_args();
+                let keys: Vec<String> = self.arg_values.iter().map(|a| a.name.clone()).collect();
                 let current = self.arg_list_state.selected_index;
-                let total = args.len();
-                if total == 0 {
-                    return;
-                }
-                for offset in 1..total {
-                    let idx = (current + total - offset) % total;
-                    if let Some(arg) = args.get(idx) {
-                        if scores.get(&arg.name).map(|s| s.overall()).unwrap_or(0) > 0 {
-                            self.arg_list_state.select(idx);
-                            return;
-                        }
-                    }
+                if let Some(idx) = find_adjacent_match(&keys, &scores, current, false) {
+                    self.arg_list_state.select(idx);
                 }
             }
             _ => {}
@@ -1695,57 +1666,28 @@ impl App {
             Focus::Commands => {
                 let scores = self.compute_tree_match_scores();
                 let flat = flatten_command_tree(&self.command_tree_nodes);
+                let keys: Vec<String> = flat.iter().map(|c| c.id.clone()).collect();
                 let current = self.command_tree_state.selected_index;
-                let total = flat.len();
-                if total == 0 {
-                    return;
-                }
-                // Search forwards, wrapping around
-                for offset in 1..total {
-                    let idx = (current + offset) % total;
-                    if let Some(cmd) = flat.get(idx) {
-                        if scores.get(&cmd.id).map(|s| s.overall()).unwrap_or(0) > 0 {
-                            self.command_tree_state.selected_index = idx;
-                            self.sync_command_path_from_tree();
-                            return;
-                        }
-                    }
+                if let Some(idx) = find_adjacent_match(&keys, &scores, current, true) {
+                    self.command_tree_state.selected_index = idx;
+                    self.sync_command_path_from_tree();
                 }
             }
             Focus::Flags => {
                 let scores = self.compute_flag_match_scores();
                 let flags = self.visible_flags();
+                let keys: Vec<String> = flags.iter().map(|f| f.name.clone()).collect();
                 let current = self.flag_list_state.selected_index;
-                let total = flags.len();
-                if total == 0 {
-                    return;
-                }
-                for offset in 1..total {
-                    let idx = (current + offset) % total;
-                    if let Some(flag) = flags.get(idx) {
-                        if scores.get(&flag.name).map(|s| s.overall()).unwrap_or(0) > 0 {
-                            self.flag_list_state.select(idx);
-                            return;
-                        }
-                    }
+                if let Some(idx) = find_adjacent_match(&keys, &scores, current, true) {
+                    self.flag_list_state.select(idx);
                 }
             }
             Focus::Args => {
                 let scores = self.compute_arg_match_scores();
-                let args = self.visible_args();
+                let keys: Vec<String> = self.arg_values.iter().map(|a| a.name.clone()).collect();
                 let current = self.arg_list_state.selected_index;
-                let total = args.len();
-                if total == 0 {
-                    return;
-                }
-                for offset in 1..total {
-                    let idx = (current + offset) % total;
-                    if let Some(arg) = args.get(idx) {
-                        if scores.get(&arg.name).map(|s| s.overall()).unwrap_or(0) > 0 {
-                            self.arg_list_state.select(idx);
-                            return;
-                        }
-                    }
+                if let Some(idx) = find_adjacent_match(&keys, &scores, current, true) {
+                    self.arg_list_state.select(idx);
                 }
             }
             _ => {}
@@ -1904,83 +1846,35 @@ impl App {
             Focus::Commands => {
                 let scores = self.compute_tree_match_scores();
                 let flat = flatten_command_tree(&self.command_tree_nodes);
-                let current_idx = self.command_tree_state.selected_index;
-
-                // Check if current selection matches
-                if let Some(cmd) = flat.get(current_idx) {
-                    if let Some(score) = scores.get(&cmd.id) {
-                        if score.overall() > 0 {
-                            // Current selection matches, keep it
-                            return;
-                        }
+                let keys: Vec<String> = flat.iter().map(|c| c.id.clone()).collect();
+                let current = self.command_tree_state.selected_index;
+                if let Some(idx) = find_first_match(&keys, &scores, current) {
+                    if idx != current {
+                        self.command_tree_state.selected_index = idx;
+                        self.sync_command_path_from_tree();
                     }
                 }
-
-                // Current doesn't match, find next matching item
-                for (idx, cmd) in flat.iter().enumerate() {
-                    if let Some(score) = scores.get(&cmd.id) {
-                        if score.overall() > 0 {
-                            self.command_tree_state.selected_index = idx;
-                            self.sync_command_path_from_tree();
-                            return;
-                        }
-                    }
-                }
-
-                // No matches found, stay at current position
             }
             Focus::Flags => {
                 let scores = self.compute_flag_match_scores();
                 let flags = self.visible_flags();
-                let current_idx = self.flag_list_state.selected_index;
-
-                // Check if current selection matches
-                if let Some(flag) = flags.get(current_idx) {
-                    if let Some(score) = scores.get(&flag.name) {
-                        if score.overall() > 0 {
-                            // Current selection matches, keep it
-                            return;
-                        }
+                let keys: Vec<String> = flags.iter().map(|f| f.name.clone()).collect();
+                let current = self.flag_list_state.selected_index;
+                if let Some(idx) = find_first_match(&keys, &scores, current) {
+                    if idx != current {
+                        self.flag_list_state.select(idx);
                     }
                 }
-
-                // Current doesn't match, find next matching item
-                for (idx, flag) in flags.iter().enumerate() {
-                    if let Some(score) = scores.get(&flag.name) {
-                        if score.overall() > 0 {
-                            self.flag_list_state.select(idx);
-                            return;
-                        }
-                    }
-                }
-
-                // No matches found, stay at current position
             }
             Focus::Args => {
                 let scores = self.compute_arg_match_scores();
-                let current_idx = self.arg_list_state.selected_index;
-
-                // Check if current selection matches
-                if let Some(av) = self.arg_values.get(current_idx) {
-                    if let Some(score) = scores.get(&av.name) {
-                        if score.overall() > 0 {
-                            // Current selection matches, keep it
-                            return;
-                        }
+                let keys: Vec<String> = self.arg_values.iter().map(|a| a.name.clone()).collect();
+                let current = self.arg_list_state.selected_index;
+                if let Some(idx) = find_first_match(&keys, &scores, current) {
+                    if idx != current {
+                        self.arg_list_state.select(idx);
                     }
                 }
-
-                // Current doesn't match, find next matching item
-                for (idx, av) in self.arg_values.iter().enumerate() {
-                    if let Some(score) = scores.get(&av.name) {
-                        if score.overall() > 0 {
-                            self.arg_list_state.select(idx);
-                            return;
-                        }
-                    }
-                }
-
-                // No matches found, stay at current position
             }
             _ => {}
         }
@@ -2346,6 +2240,58 @@ fn parent_id(id: &str) -> Option<String> {
     } else {
         Some(String::new()) // parent is root
     }
+}
+
+/// Find the next or previous matching item in a scored list, wrapping around.
+/// `keys` are the score lookup keys for each item.
+/// `forward` controls the search direction.
+/// Returns the index of the match, or `None` if no match is found.
+fn find_adjacent_match(
+    keys: &[String],
+    scores: &std::collections::HashMap<String, MatchScores>,
+    current: usize,
+    forward: bool,
+) -> Option<usize> {
+    let total = keys.len();
+    if total == 0 {
+        return None;
+    }
+    for offset in 1..total {
+        let idx = if forward {
+            (current + offset) % total
+        } else {
+            (current + total - offset) % total
+        };
+        if let Some(key) = keys.get(idx) {
+            if scores.get(key).map(|s| s.overall()).unwrap_or(0) > 0 {
+                return Some(idx);
+            }
+        }
+    }
+    None
+}
+
+/// Find the first matching item in a scored list, keeping the current selection
+/// if it already matches. Returns the current index if it matches, or the first
+/// matching index, or `None` if nothing matches.
+fn find_first_match(
+    keys: &[String],
+    scores: &std::collections::HashMap<String, MatchScores>,
+    current: usize,
+) -> Option<usize> {
+    // Check if current selection already matches
+    if let Some(key) = keys.get(current) {
+        if scores.get(key).map(|s| s.overall()).unwrap_or(0) > 0 {
+            return Some(current);
+        }
+    }
+    // Find first matching item
+    for (idx, key) in keys.iter().enumerate() {
+        if scores.get(key).map(|s| s.overall()).unwrap_or(0) > 0 {
+            return Some(idx);
+        }
+    }
+    None
 }
 
 /// Flatten the tree structure into a list of commands with depth-based indentation.
