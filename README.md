@@ -15,7 +15,7 @@ Point TuiSage at a usage spec — from a file or by running a command — and it
 - **Mouse support** — click to select, scroll wheel to navigate, click-to-activate
 - **Scrolling** — long lists scroll automatically to keep the selection visible
 - **Default indicators** — flags with default values are clearly marked
-- **Color themes** — multiple built-in themes, switchable at runtime with `[` and `]`
+- **Color themes** — multiple built-in themes, switchable at runtime with `[`/`]` or via the `T` theme picker with live preview
 - **Usage spec output** — generate TuiSage's own usage spec with `--usage`
 
 ## Installation
@@ -103,8 +103,8 @@ One of `--spec-cmd` or `--spec-file` is required (but not both).
 | `/` | Start fuzzy filter (works in Commands, Flags, and Args panels) |
 | `Esc` | Cancel filter / stop editing |
 | `Ctrl+R` | Execute command (works from any panel) |
-| `]` / `[` | Next / previous color theme |
-| `T` | Next color theme (alias for `]`) |
+| `]` / `[` | Next / previous color theme (quick cycle) |
+| `T` | Open theme picker (live preview, Enter to confirm, Esc to cancel) |
 | `p` | Print command to stdout and exit (when Preview is focused) |
 | `q` | Quit |
 | `Ctrl-C` | Quit |

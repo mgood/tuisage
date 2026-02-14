@@ -102,7 +102,7 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 ### Visual Design
 
 - Use terminal colors effectively to distinguish commands, flags, arguments, and values.
-- Support multiple color themes, switchable at runtime with `]` (next) and `[` (previous).
+- Support multiple color themes, switchable at runtime with `]` (next), `[` (previous), or `T` (theme picker with live preview).
 - Use clear, accessible symbols that render well across terminal emulators.
 - Scroll long lists automatically to keep the selection visible.
 

@@ -97,7 +97,9 @@ The core state and logic module (~2900 lines including ~1200 lines of tests).
 | `spec` | `usage::Spec` | The parsed usage specification |
 | `mode` | `AppMode` | Current app mode (Builder or Executing) |
 | `execution` | `Option<ExecutionState>` | Execution state when a command is running |
-| `theme_name` | `String` | Current color theme name |
+| `theme_name` | `ThemeName` | Current color theme name |
+| `theme_picker` | `Option<ThemePickerState>` | State for the theme picker overlay (None when closed) |
+| `theme_indicator_rect` | `Option<Rect>` | Area of theme indicator in help bar (for mouse clicks) |
 | `command_path` | `Vec<String>` | Current position in the command tree (derived from tree selection) |
 | `flag_values` | `HashMap<String, Vec<(String, FlagValue)>>` | Flag state keyed by command path |
 | `arg_values` | `Vec<ArgValue>` | Arg values for the current command |
@@ -298,8 +300,9 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - **Startup sync** — tree selection and command path are synchronized on construction, so flags/args display correctly on the first render without requiring a key press
 - **Global flags from any level** — global flags toggled from any subcommand are correctly included in the built command (deepest level's value wins)
 - **Command tree display** — full command hierarchy shown as a flat indented list with depth-based indentation (2 spaces per level). All commands are always visible. Left/Right (h/l) navigate to parent/first-child. Enter navigates into the selected command (same as Right). The selected command determines which flags and arguments are displayed.
-- **Theme cycling** — `]`/`[` keys cycle through themes forward/backward, `T` also cycles forward. Current theme name shown in status bar.
+- **Theme picker** — `T` opens a theme picker overlay listing all 15 themes. Themes are previewed live as the user navigates with Up/Down/j/k. Enter confirms; Esc restores the original theme. Clicking the `[ThemeName]` indicator in the help bar also opens the picker. Mouse click on a theme confirms it; click outside cancels. The `]`/`[` keys still cycle themes directly without opening the picker.
 - **Print-only mode** — press `p` when the Preview panel is focused to output the command to stdout and exit, enabling piping and shell integration.
+- Comprehensive test suite (178+ tests)
 - **Command execution** — execute built commands in an embedded PTY terminal directly within the TUI. Commands are spawned with separate process arguments (not shell-stringified) via `portable-pty`. Terminal output is rendered in real-time using `tui-term::PseudoTerminal`. Keyboard input is forwarded to the running process. The execution view shows the command at the top, terminal output in the middle, and a status bar at the bottom. After the process exits, the user closes the view to return to the command builder for building and running additional commands.
 - **PTY resize** — dynamically resize the embedded terminal when the TUI window is resized during execution. The PTY master is stored in `ExecutionState` and resized via `app.resize_pty()` when `Event::Resize` is received during execution mode. The vt100 parser screen is resized in place via `screen_mut().set_size()`, preserving content without flashing, while the child process receives SIGWINCH to redraw.
 - **Command Preview at top** — the command preview pane is positioned at the top of the screen (matching the execution view layout), providing visual stability when switching between builder and execution modes.

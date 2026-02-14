@@ -141,7 +141,7 @@ The selected command in the always-visible tree, combined with the live command 
 
 - Shows contextual help text for the currently hovered item.
 - Displays available keyboard shortcuts.
-- Shows the current theme name.
+- Shows the current theme name (clickable to open theme picker).
 
 ### Execution View (during command execution)
 
@@ -301,9 +301,23 @@ When a filter is **applied** (after pressing `Enter`):
 
 | Key | Action |
 |---|---|
-| `]` | Switch to the next theme |
-| `[` | Switch to the previous theme |
-| `T` | Switch to the next theme (alias) |
+| `]` | Switch to the next theme (quick cycle) |
+| `[` | Switch to the previous theme (quick cycle) |
+| `T` | Open the theme picker overlay |
+
+#### Theme Picker
+
+When `T` is pressed (or the theme name in the help bar is clicked), a theme picker overlay appears above the help bar, right-aligned. The picker lists all available themes.
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` / `j` / `k` | Navigate themes (wraps around). The UI immediately previews the selected theme. |
+| `Enter` | Confirm the previewed theme and close the picker |
+| `Esc` | Cancel and restore the original theme |
+| Mouse click on theme | Select and confirm that theme |
+| Mouse click outside | Cancel and restore the original theme |
+
+The `]` and `[` keys continue to cycle themes directly without opening the picker.
 
 ### Execution Mode Keys
 
@@ -456,7 +470,7 @@ TuiSage uses `ratatui-themes` for color theming. The theme provides a `ThemePale
 | Count indicators | `palette.secondary` |
 | Bar background | Derived from `palette.bg` (slightly lighter) |
 
-Themes can be cycled at runtime with `]`/`[` keys (or `T` for next). The current theme name is displayed in the status bar.
+Themes can be cycled at runtime with `]`/`[` keys for quick switching, or `T` to open a theme picker overlay with live preview. Clicking the theme name `[ThemeName]` in the help bar also opens the picker. The current theme name is displayed in the status bar.
 
 ## Terminal Lifecycle
 
