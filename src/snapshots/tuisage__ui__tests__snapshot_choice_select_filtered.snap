@@ -17,10 +17,10 @@ expression: output
 │  plugin                Manage plugins││                                                          │
 │  │ install (i)       Install a plugin│└──────────────────────────────────────────────────────────┘
 │  │ uninstall (rm)  Uninstall a plugin│┌ Arguments ───────────────────────────────────────────────┐
-│  │ list (ls)   List installed plugins││ ▶ ● <environment> = <dev|staging|prod>                   │
-│  │ update              Update plugins││ ┌ st ───────┐                                            │
-│  version        Print the CLI version││ │▶ staging  │                                            │
-│  help          Print help information││ └───────────┘                                            │
+│  │ list (ls)   List installed plugins││ ▶ ● <environment> = ┌ st ───────┐                        │
+│  │ update              Update plugins││                     │▶ staging  │                        │
+│  version        Print the CLI version││                     └───────────┘                        │
+│  help          Print help information││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘

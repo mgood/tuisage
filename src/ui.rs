@@ -693,7 +693,14 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
             if let Some((_, FlagValue::String(s))) = value {
                 spans.push(Span::styled(" = ", Style::default().fg(colors.help)));
 
-                if is_editing {
+                // Check if the choice select box is open for this flag — suppress value display
+                let is_choice_selecting = app.choice_select.as_ref().is_some_and(|cs| {
+                    cs.source_panel == Focus::Flags && cs.source_index == i
+                });
+
+                if is_choice_selecting {
+                    // Don't render value or choices hint — the select box will overlay here
+                } else if is_editing {
                     // Show the edit_input text with cursor at correct position
                     let before_cursor = app.edit_input.text_before_cursor();
                     let after_cursor = app.edit_input.text_after_cursor();
@@ -938,7 +945,14 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
             // Value display
             spans.push(Span::styled(" = ", Style::default().fg(colors.help)));
 
-            if is_editing {
+            // Check if the choice select box is open for this arg — suppress value display
+            let is_choice_selecting = app.choice_select.as_ref().is_some_and(|cs| {
+                cs.source_panel == Focus::Args && cs.source_index == i
+            });
+
+            if is_choice_selecting {
+                // Don't render value or choices hint — the select box will overlay here
+            } else if is_editing {
                 // Show edit_input text with cursor at correct position
                 let before_cursor = app.edit_input.text_before_cursor();
                 let after_cursor = app.edit_input.text_after_cursor();
@@ -981,8 +995,8 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
                 ));
             }
 
-            // Show choices if arg has them and we're not editing
-            if !arg_val.choices.is_empty() && !arg_val.value.is_empty() && !is_editing {
+            // Show choices if arg has them and we're not editing (and not choice-selecting)
+            if !arg_val.choices.is_empty() && !arg_val.value.is_empty() && !is_editing && !is_choice_selecting {
                 spans.push(Span::styled(
                     format!(" [{}]", arg_val.choices.join("|")),
                     Style::default().fg(colors.choice),
@@ -1016,13 +1030,20 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
         return;
     };
 
+    // Extract values before calling filtered_choices (which borrows app)
+    let source_panel = cs.source_panel;
+    let source_index = cs.source_index;
+    let value_column = cs.value_column;
+    let selected_index = cs.selected_index;
+    let filter_text = cs.filter_input.text().to_string();
+
     let filtered = app.filtered_choices();
     if filtered.is_empty() {
         // Still show the box with a "no matches" message
     }
 
     // Determine the panel area and item position
-    let panel_area = match cs.source_panel {
+    let panel_area = match source_panel {
         Focus::Flags => app
             .click_regions
             .regions()
@@ -1043,17 +1064,17 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
     };
 
     // Calculate the y position of the item within the panel
-    let scroll_offset = match cs.source_panel {
+    let scroll_offset = match source_panel {
         Focus::Flags => app.flag_scroll(),
         Focus::Args => app.arg_scroll(),
         _ => 0,
     };
 
     let inner_y = panel_area.y + 1; // skip border
-    let item_y = inner_y + (cs.source_index as u16).saturating_sub(scroll_offset as u16);
+    let item_y = inner_y + (source_index as u16).saturating_sub(scroll_offset as u16);
 
-    // Position the overlay below the item
-    let overlay_y = item_y + 1;
+    // Position the overlay on the SAME row as the item (top border shares the row)
+    let overlay_y = item_y;
 
     // Calculate dimensions
     let max_choice_len = filtered
@@ -1070,8 +1091,8 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
     };
     let overlay_height = visible_count + 2; // borders
 
-    // Position x at the panel's inner left
-    let overlay_x = (panel_area.x + 2).min(terminal_area.width.saturating_sub(overlay_width));
+    // Position x at the value column (where the value text would appear)
+    let overlay_x = (panel_area.x + value_column).min(terminal_area.width.saturating_sub(overlay_width));
 
     // Clamp to terminal bounds
     let overlay_x = overlay_x.min(terminal_area.width.saturating_sub(overlay_width));
@@ -1079,8 +1100,12 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
 
     let overlay_rect = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
 
+    // Store overlay_rect for mouse hit-testing
+    if let Some(ref mut cs) = app.choice_select {
+        cs.overlay_rect = Some(overlay_rect);
+    }
+
     // Build the title with filter text
-    let filter_text = cs.filter_input.text();
     let title = if filter_text.is_empty() {
         " Select ".to_string()
     } else {
@@ -1098,7 +1123,6 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
         );
 
     // Build list items
-    let selected_index = cs.selected_index;
     let items: Vec<ListItem> = if filtered.is_empty() {
         vec![ListItem::new(Line::from(Span::styled(
             "(no matches)",

@@ -106,6 +106,10 @@ pub struct ChoiceSelectState {
     pub source_panel: Focus,
     /// Index of the item (flag or arg) the select box belongs to.
     pub source_index: usize,
+    /// Column offset from panel left edge where the value starts (used for overlay positioning).
+    pub value_column: u16,
+    /// The rendered overlay area (set during rendering, used for mouse hit-testing).
+    pub overlay_rect: Option<Rect>,
 }
 
 /// Data stored in each tree node for a command.
@@ -384,6 +388,59 @@ impl App {
             Focus::Args => self.arg_index(),
             _ => 0,
         };
+
+        // Compute x offset from panel left edge to where the value starts.
+        // Layout: border(1) + padding(1) + cursor "▶ "(2) + indicator(varies) + name(varies) + " = "(3)
+        let value_column: u16 = match source_panel {
+            Focus::Args => {
+                let arg = &self.arg_values[source_index];
+                // indicator "● " or "○ " = 2 chars
+                // arg_display = "<name>" or "[name]" = name.len() + 2
+                let arg_display_len = arg.name.chars().count() + 2;
+                (1 + 1 + 2 + 2 + arg_display_len + 3) as u16
+            }
+            Focus::Flags => {
+                let flags = self.visible_flags();
+                let flag = &flags[source_index];
+                let flag_values = self.current_flag_values();
+                let value = flag_values.iter().find(|(n, _)| n == &flag.name);
+
+                // indicator width: "✓ "=2, "○ "=2, "[n] "=varies, "[·] "=4, "[•] "=4
+                let indicator_width = match value.map(|(_, v)| v) {
+                    Some(FlagValue::Count(n)) => format!("[{}] ", n).chars().count(),
+                    Some(FlagValue::String(_)) => 4, // "[·] " or "[•] "
+                    _ => 2, // "✓ " or "○ "
+                };
+
+                let flag_display = {
+                    let mut parts = Vec::new();
+                    for s in &flag.short {
+                        parts.push(format!("-{s}"));
+                    }
+                    for l in &flag.long {
+                        parts.push(format!("--{l}"));
+                    }
+                    if parts.is_empty() {
+                        flag.name.clone()
+                    } else {
+                        parts.join(", ")
+                    }
+                };
+                let flag_display_len = flag_display.chars().count();
+
+                let mut extra = 0usize;
+                if flag.global {
+                    extra += 4; // " [G]"
+                }
+                if flag.required {
+                    extra += 2; // " *"
+                }
+
+                (1 + 1 + 2 + indicator_width + flag_display_len + extra + 3) as u16
+            }
+            _ => 4,
+        };
+
         // Find the index of the current value in the choices list
         let current_idx = choices
             .iter()
@@ -395,6 +452,8 @@ impl App {
             selected_index: current_idx,
             source_panel,
             source_index,
+            value_column,
+            overlay_rect: None,
         });
     }
 
@@ -947,9 +1006,32 @@ impl App {
 
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // If choice select box is open, close it on any click
-                // (the overlay doesn't have click regions registered)
+                // If choice select box is open, check if click is within the overlay
                 if self.is_choosing() {
+                    let overlay_rect = self
+                        .choice_select
+                        .as_ref()
+                        .and_then(|cs| cs.overlay_rect);
+                    if let Some(rect) = overlay_rect {
+                        // Check if click is within the overlay area (inner content, not border)
+                        let inner_top = rect.y + 1; // skip top border
+                        let inner_bottom = rect.y + rect.height.saturating_sub(1);
+                        if col >= rect.x && col < rect.x + rect.width
+                            && row >= inner_top && row < inner_bottom
+                        {
+                            // Compute which choice was clicked
+                            let clicked_index = (row - inner_top) as usize;
+                            let filtered_len = self.filtered_choices().len();
+                            if clicked_index < filtered_len {
+                                if let Some(ref mut cs) = self.choice_select {
+                                    cs.selected_index = clicked_index;
+                                }
+                                self.confirm_choice_select();
+                            }
+                            return Action::None;
+                        }
+                    }
+                    // Click outside the overlay — close it
                     self.close_choice_select();
                     return Action::None;
                 }
