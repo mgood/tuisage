@@ -2237,32 +2237,6 @@ impl App {
         }
     }
 
-    /// Get the help text for the currently highlighted item.
-    pub fn current_help(&self) -> Option<String> {
-        match self.focus() {
-            Focus::Commands => {
-                // Get help from the selected command in the flat list
-                let flat = flatten_command_tree(&self.command_tree_nodes);
-                flat.get(self.command_tree_state.selected_index)
-                    .and_then(|cmd| cmd.help.clone())
-            }
-            Focus::Flags => {
-                let flags = self.visible_flags();
-                flags.get(self.flag_index()).and_then(|f| f.help.clone())
-            }
-            Focus::Args => self.arg_values.get(self.arg_index()).and_then(|_| {
-                let cmd = self.current_command();
-                cmd.args
-                    .iter()
-                    .filter(|a| !a.hide)
-                    .nth(self.arg_index())
-                    .and_then(|a| a.help.clone())
-            }),
-            Focus::Preview => {
-                Some("Enter: run command  Esc: go back".to_string())
-            }
-        }
-    }
 }
 
 // --- Tree building functions ---
@@ -2689,18 +2663,6 @@ mod tests {
 
         app.navigate_to_command(&["config", "set"]);
         assert_eq!(app.command_path, vec!["config", "set"]);
-    }
-
-    #[test]
-    fn test_current_help() {
-        let mut app = App::new(sample_spec());
-        app.set_focus(Focus::Commands);
-        // Select a command that has help text
-        app.navigate_to_command(&["init"]);
-
-        // Should return help for the selected command
-        let help = app.current_help();
-        assert!(help.is_some());
     }
 
     #[test]
