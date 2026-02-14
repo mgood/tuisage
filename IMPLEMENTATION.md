@@ -231,8 +231,8 @@ The `usage-lib` crate includes optional features for generating documentation, m
 
 ### Test Count
 
-177 tests total:
-- **109 tests** in `app.rs` — state logic, command building, command parts, tree navigation, key handling, mouse handling, filtering, editing, tree expand/collapse, execution state management, execution key handling, global flag sync, filtered navigation, startup sync, separate name/help matching, choice select box, theme picker
+180 tests total:
+- **112 tests** in `app.rs` — state logic, command building, command parts, tree navigation, key handling, mouse handling, filtering, editing, tree expand/collapse, execution state management, execution key handling, global flag sync, filtered navigation, startup sync, separate name/help matching, choice select box, theme picker, backspace clear/remove
 - **68 tests** in `ui.rs` — rendering assertions, snapshot tests, theming, click regions, filter display, filter mode visual cues, choice select rendering, theme picker rendering
 
 ### Test Fixtures
@@ -309,7 +309,7 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - **Ctrl+R execute shortcut** — execute the built command from any panel via `Ctrl+R` (replaces `Ctrl+Enter` which could be intercepted by terminal emulators). Works regardless of edit or filter mode.
 - **Args filter auto-select** — when filtering in the Arguments panel, the cursor automatically moves to the first matching argument if the current selection doesn't match the filter.
 - **Inline choice select box** — flags and arguments with predefined choices open an inline select box overlay instead of cycling through options. The select box supports fuzzy filtering (non-matching choices are hidden), navigation with Up/Down, confirmation with Enter, and cancellation with Esc. The current value is pre-selected when the box opens.
-- Comprehensive test suite (177+ tests)
+- Comprehensive test suite (180+ tests)
 - Zero clippy warnings
 
 ### Remaining Work

@@ -165,7 +165,7 @@ See `fixtures/sample.usage.kdl` for a more comprehensive example.
 ## Testing
 
 ```sh
-# Run all tests (177 tests: unit + rendering + snapshots)
+# Run all tests (180 tests: unit + rendering + snapshots)
 cargo test
 
 # Review snapshot changes interactively
