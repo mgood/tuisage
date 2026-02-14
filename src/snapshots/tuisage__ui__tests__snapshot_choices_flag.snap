@@ -21,4 +21,4 @@ expression: output
 │                              ││                                              │
 │                              ││                                              │
 └──────────────────────────────┘└──────────────────────────────────────────────┘
- ↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  T: theme  q: quit [Dracula]
+ ↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  q: quit          T: [Dracula]

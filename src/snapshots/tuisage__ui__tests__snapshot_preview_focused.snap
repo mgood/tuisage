@@ -25,4 +25,4 @@ expression: output
 │                                      ││                                                          │
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
- Enter: run  Tab: next  T: theme  q: quit [Dracula]
+ Enter: run  Tab: next  q: quit                                                        T: [Dracula]

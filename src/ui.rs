@@ -1318,30 +1318,40 @@ fn render_help_bar(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
     } else {
         match app.focus() {
             Focus::Commands => {
-                "↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  T: theme  q: quit"
+                "↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  q: quit"
             }
             Focus::Flags => {
-                "Enter/Space: toggle  ↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  T: theme  q: quit"
+                "Enter/Space: toggle  ↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  q: quit"
             }
-            Focus::Args => "Enter: edit  ↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  T: theme  q: quit",
-            Focus::Preview => "Enter: run  Tab: next  T: theme  q: quit",
+            Focus::Args => {
+                "Enter: edit  ↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  q: quit"
+            }
+            Focus::Preview => "Enter: run  Tab: next  q: quit",
         }
     };
 
-    // Keybinding hints with theme name
-    let theme_indicator = format!(" [{}]", app.theme_name.display_name());
+    // Theme indicator right-aligned with "T:" prefix
+    let theme_indicator = format!("T: [{}] ", app.theme_name.display_name());
     let theme_indicator_len = theme_indicator.len() as u16;
+
+    // Calculate padding to right-align the theme indicator
+    let keybinds_text = format!(" {keybinds}");
+    let keybinds_len = keybinds_text.chars().count() as u16;
+    let padding_len = area.width.saturating_sub(keybinds_len + theme_indicator_len);
+    let padding = " ".repeat(padding_len as usize);
+
     let hints = Paragraph::new(Line::from(vec![
-        Span::styled(format!(" {keybinds}"), Style::default().fg(colors.help)),
+        Span::styled(keybinds_text, Style::default().fg(colors.help)),
+        Span::styled(padding, Style::default()),
         Span::styled(
-            theme_indicator,
+            theme_indicator.clone(),
             Style::default().fg(colors.active_border).italic(),
         ),
     ]))
     .style(Style::default().bg(colors.bar_bg));
     frame.render_widget(hints, area);
 
-    // Store the theme indicator rect for mouse click detection
+    // Store the theme indicator rect for mouse click detection (right-aligned)
     let indicator_x = area.x + area.width.saturating_sub(theme_indicator_len);
     app.theme_indicator_rect = Some(Rect::new(
         indicator_x,

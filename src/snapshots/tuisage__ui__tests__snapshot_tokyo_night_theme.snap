@@ -25,4 +25,4 @@ expression: output
 │                                      ││                                                          │
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
- ↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  T: theme  q: quit [Tokyo Night]
+ ↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  q: quit                          T: [Tokyo Night]

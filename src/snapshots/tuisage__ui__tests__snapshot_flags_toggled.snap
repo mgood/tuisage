@@ -25,4 +25,4 @@ expression: output
 │                                      ││                                                          │
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
- Enter/Space: toggle  ↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  T: theme  q: quit [Dracula]
+ Enter/Space: toggle  ↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  q: quit         T: [Dracula]

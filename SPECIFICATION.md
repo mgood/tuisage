@@ -138,8 +138,8 @@ The selected command in the always-visible tree, combined with the live command 
 
 ### Help / Status Bar
 
-- Displays available keyboard shortcuts.
-- Shows the current theme name (clickable to open theme picker).
+- Displays available keyboard shortcuts on the left side.
+- Shows the theme indicator right-aligned: `T: [ThemeName]` (clickable to open theme picker). The `T:` prefix reminds users of the keyboard shortcut.
 
 ### Execution View (during command execution)
 
@@ -256,6 +256,9 @@ When the user navigates to a new command, the state is synchronized:
 | `Space` | Flags panel (boolean) | Toggle the flag |
 | `Space` | Flags panel (count) | Increment the count |
 | `Backspace` | Flags panel (count) | Decrement the count (floor at 0) |
+| `Backspace` | Flags panel (bool) | Turn the flag off |
+| `Backspace` | Flags panel (string/choices) | Clear the flag value |
+| `Backspace` | Args panel | Clear the argument value |
 | `/` | Commands, Flags, or Args panel | Activate fuzzy filter mode (no effect in Preview panel) |
 | `Ctrl+R` | Any panel | Execute the built command in an embedded PTY |
 

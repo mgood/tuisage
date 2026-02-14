@@ -1350,9 +1350,10 @@ impl App {
         match key.code {
             KeyCode::Char('q') => Action::Quit,
             KeyCode::Backspace => {
-                // Decrement count flags
-                if self.focus() == Focus::Flags {
-                    self.handle_decrement();
+                match self.focus() {
+                    Focus::Flags => self.handle_flag_backspace(),
+                    Focus::Args => self.handle_arg_backspace(),
+                    _ => {}
                 }
                 Action::None
             }
@@ -1985,15 +1986,37 @@ impl App {
         }
     }
 
-    /// Decrement a count flag (floor at 0).
-    fn handle_decrement(&mut self) {
+    /// Handle Backspace on a flag: decrement counts, turn off bools, clear string/choice values.
+    fn handle_flag_backspace(&mut self) {
         let flag_idx = self.flag_index();
         let values = self.current_flag_values_mut();
-        if let Some((name, FlagValue::Count(c))) = values.get_mut(flag_idx) {
+        if let Some((name, value)) = values.get_mut(flag_idx) {
             let flag_name = name.clone();
-            *c = c.saturating_sub(1);
-            let new_val = FlagValue::Count(*c);
-            self.sync_global_flag(&flag_name, &new_val);
+            match value {
+                FlagValue::Count(c) => {
+                    *c = c.saturating_sub(1);
+                    let new_val = FlagValue::Count(*c);
+                    self.sync_global_flag(&flag_name, &new_val);
+                }
+                FlagValue::Bool(b) => {
+                    *b = false;
+                    let new_val = FlagValue::Bool(false);
+                    self.sync_global_flag(&flag_name, &new_val);
+                }
+                FlagValue::String(s) => {
+                    s.clear();
+                    let new_val = FlagValue::String(String::new());
+                    self.sync_global_flag(&flag_name, &new_val);
+                }
+            }
+        }
+    }
+
+    /// Handle Backspace on an argument: clear the argument value.
+    fn handle_arg_backspace(&mut self) {
+        let arg_idx = self.arg_index();
+        if let Some(arg) = self.arg_values.get_mut(arg_idx) {
+            arg.value.clear();
         }
     }
 
@@ -3534,12 +3557,12 @@ mod tests {
     }
 
     #[test]
-    fn test_backspace_only_affects_count_flags() {
+    fn test_backspace_clears_bool_flag() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
         let mut app = App::new(sample_spec());
 
-        // quiet is a boolean flag — backspace should not change it
+        // quiet is a boolean flag — backspace should turn it off
         app.set_focus(Focus::Flags);
         let fidx = app
             .current_flag_values()
@@ -3552,13 +3575,102 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
         assert_eq!(app.current_flag_values()[fidx].1, FlagValue::Bool(true));
 
-        // Backspace should not toggle it off (only affects count flags)
+        // Backspace should turn it off
         app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         assert_eq!(
             app.current_flag_values()[fidx].1,
-            FlagValue::Bool(true),
-            "Backspace should not affect boolean flags"
+            FlagValue::Bool(false),
+            "Backspace should turn off boolean flags"
         );
+    }
+
+    #[test]
+    fn test_backspace_clears_string_flag() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Flags);
+
+        // Find the --tag flag (a string flag)
+        let fidx = app
+            .current_flag_values()
+            .iter()
+            .position(|(n, _)| n == "tag")
+            .unwrap();
+        app.set_flag_index(fidx);
+
+        // Set a value by editing
+        app.start_editing();
+        app.edit_input.insert_char('v');
+        app.edit_input.insert_char('1');
+        app.sync_edit_to_value();
+        app.finish_editing();
+        assert_eq!(
+            app.current_flag_values()[fidx].1,
+            FlagValue::String("v1".to_string())
+        );
+
+        // Backspace should clear the value
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(
+            app.current_flag_values()[fidx].1,
+            FlagValue::String(String::new()),
+            "Backspace should clear string flag values"
+        );
+    }
+
+    #[test]
+    fn test_backspace_clears_arg_value() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["run"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0); // <task>
+
+        // Set a value by editing
+        app.start_editing();
+        app.edit_input.insert_char('t');
+        app.edit_input.insert_char('e');
+        app.edit_input.insert_char('s');
+        app.edit_input.insert_char('t');
+        app.sync_edit_to_value();
+        app.finish_editing();
+        assert_eq!(app.arg_values[0].value, "test");
+
+        // Backspace should clear the value
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(
+            app.arg_values[0].value, "",
+            "Backspace should clear argument values"
+        );
+    }
+
+    #[test]
+    fn test_backspace_decrements_count_flag() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Flags);
+
+        // Find verbose (count flag)
+        let fidx = app
+            .current_flag_values()
+            .iter()
+            .position(|(n, _)| n == "verbose")
+            .unwrap();
+        app.set_flag_index(fidx);
+
+        // Increment to 3
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert_eq!(app.current_flag_values()[fidx].1, FlagValue::Count(3));
+
+        // Backspace should decrement to 2
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(app.current_flag_values()[fidx].1, FlagValue::Count(2));
     }
 
     #[test]
@@ -3701,7 +3813,7 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_decrement_only_on_flags_focus() {
+    fn test_backspace_noop_on_non_flag_arg_focus() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
         let mut app = App::new(sample_spec());

@@ -99,7 +99,7 @@ One of `--spec-cmd` or `--spec-file` is required (but not both).
 | `Tab` / `Shift-Tab` | Cycle focus between panels |
 | `Enter` | Navigate into command / toggle flag / edit arg / execute command |
 | `Space` | Toggle boolean flag / increment count flag |
-| `Backspace` | Decrement count flag (floor at 0) |
+| `Backspace` | Remove/clear: decrement count flag, turn off bool flag, clear value flag or arg |
 | `/` | Start fuzzy filter (works in Commands, Flags, and Args panels) |
 | `Esc` | Cancel filter / stop editing |
 | `Ctrl+R` | Execute command (works from any panel) |

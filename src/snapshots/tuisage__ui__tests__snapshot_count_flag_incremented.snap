@@ -21,4 +21,4 @@ expression: output
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- Enter/Space: toggle  ↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  T: theme
+ Enter/Space: toggle  ↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  q: quitT:

@@ -41,6 +41,7 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Display all flags available for the currently selected command, including inherited global flags.
 - Support boolean flags (toggle on/off).
 - Support count flags (increment/decrement, e.g., `-vvv`).
+- Support clearing/removing flag and argument values via Backspace: decrements count flags, turns off boolean flags, and clears string/choice flag values and argument values.
 - Support flags that take string values (free-text input).
 - Support flags with predefined choices via an **inline select box** that appears below the flag when activated. The select box supports fuzzy filtering to narrow options by typing, and hides non-matching choices.
 - Display default values clearly when a flag has one.
