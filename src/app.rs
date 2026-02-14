@@ -93,6 +93,17 @@ pub struct ArgValue {
     pub help: Option<String>,
 }
 
+/// State for the theme picker overlay.
+#[derive(Debug, Clone)]
+pub struct ThemePickerState {
+    /// The theme that was active before opening the picker (to restore on Esc).
+    pub original_theme: ThemeName,
+    /// Selected index in the theme list.
+    pub selected_index: usize,
+    /// The rendered overlay area (for mouse hit-testing).
+    pub overlay_rect: Option<Rect>,
+}
+
 /// State for the inline choice select box.
 #[derive(Debug, Clone)]
 pub struct ChoiceSelectState {
@@ -189,6 +200,12 @@ pub struct App {
 
     /// State for the inline choice select box (None when closed).
     pub choice_select: Option<ChoiceSelectState>,
+
+    /// State for the theme picker overlay (None when closed).
+    pub theme_picker: Option<ThemePickerState>,
+
+    /// Area of the theme indicator in the help bar (for mouse click detection).
+    pub theme_indicator_rect: Option<Rect>,
 }
 
 impl App {
@@ -286,6 +303,8 @@ impl App {
             edit_input: InputState::empty(),
             click_regions: ClickRegionRegistry::new(),
             choice_select: None,
+            theme_picker: None,
+            theme_indicator_rect: None,
         };
         app.sync_state();
         // Synchronize command_path with the tree's initial selection so the
@@ -349,6 +368,76 @@ impl App {
         // Close choice select when switching panels
         self.choice_select = None;
         self.focus_manager.set(panel);
+    }
+
+    /// Whether the theme picker is open.
+    pub fn is_theme_picking(&self) -> bool {
+        self.theme_picker.is_some()
+    }
+
+    /// Open the theme picker overlay.
+    pub fn open_theme_picker(&mut self) {
+        let all = ThemeName::all();
+        let current_idx = all.iter().position(|t| *t == self.theme_name).unwrap_or(0);
+        self.theme_picker = Some(ThemePickerState {
+            original_theme: self.theme_name,
+            selected_index: current_idx,
+            overlay_rect: None,
+        });
+    }
+
+    /// Close the theme picker, restoring the original theme.
+    pub fn close_theme_picker(&mut self) {
+        if let Some(ref tp) = self.theme_picker {
+            self.theme_name = tp.original_theme;
+        }
+        self.theme_picker = None;
+    }
+
+    /// Confirm the currently previewed theme and close the picker.
+    pub fn confirm_theme_picker(&mut self) {
+        self.theme_picker = None;
+    }
+
+    /// Handle key events when the theme picker is open.
+    fn handle_theme_picker_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
+        use crossterm::event::KeyCode;
+        let all = ThemeName::all();
+        let len = all.len();
+
+        match key.code {
+            KeyCode::Esc => {
+                self.close_theme_picker();
+                Action::None
+            }
+            KeyCode::Enter => {
+                self.confirm_theme_picker();
+                Action::None
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(ref mut tp) = self.theme_picker {
+                    if tp.selected_index > 0 {
+                        tp.selected_index -= 1;
+                    } else {
+                        tp.selected_index = len - 1;
+                    }
+                    self.theme_name = all[tp.selected_index];
+                }
+                Action::None
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(ref mut tp) = self.theme_picker {
+                    if tp.selected_index + 1 < len {
+                        tp.selected_index += 1;
+                    } else {
+                        tp.selected_index = 0;
+                    }
+                    self.theme_name = all[tp.selected_index];
+                }
+                Action::None
+            }
+            _ => Action::None,
+        }
     }
 
     /// Whether the choice select box is open.
@@ -1007,6 +1096,49 @@ impl App {
 
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // If theme picker is open, handle its clicks
+                if self.is_theme_picking() {
+                    let overlay_rect = self
+                        .theme_picker
+                        .as_ref()
+                        .and_then(|tp| tp.overlay_rect);
+                    if let Some(rect) = overlay_rect {
+                        let inner_top = rect.y + 1;
+                        let inner_bottom = rect.y + rect.height.saturating_sub(1);
+                        if col >= rect.x
+                            && col < rect.x + rect.width
+                            && row >= inner_top
+                            && row < inner_bottom
+                        {
+                            let clicked_index = (row - inner_top) as usize;
+                            let all = ThemeName::all();
+                            if clicked_index < all.len() {
+                                if let Some(ref mut tp) = self.theme_picker {
+                                    tp.selected_index = clicked_index;
+                                }
+                                self.theme_name = all[clicked_index];
+                                self.confirm_theme_picker();
+                            }
+                            return Action::None;
+                        }
+                    }
+                    // Click outside the overlay — close (restore original)
+                    self.close_theme_picker();
+                    return Action::None;
+                }
+
+                // Check if click is on the theme indicator in the help bar
+                if let Some(rect) = self.theme_indicator_rect {
+                    if col >= rect.x
+                        && col < rect.x + rect.width
+                        && row >= rect.y
+                        && row < rect.y + rect.height
+                    {
+                        self.open_theme_picker();
+                        return Action::None;
+                    }
+                }
+
                 // If choice select box is open, check if click is within the overlay
                 if self.is_choosing() {
                     let overlay_rect = self
@@ -1195,6 +1327,11 @@ impl App {
             return Action::Execute;
         }
 
+        // If the theme picker is open, handle its keys
+        if self.is_theme_picking() {
+            return self.handle_theme_picker_key(key);
+        }
+
         // If the choice select box is open, handle its keys
         if self.is_choosing() {
             return self.handle_choice_select_key(key);
@@ -1219,7 +1356,11 @@ impl App {
                 }
                 Action::None
             }
-            KeyCode::Char('T') | KeyCode::Char(']') => {
+            KeyCode::Char('T') => {
+                self.open_theme_picker();
+                Action::None
+            }
+            KeyCode::Char(']') => {
                 self.next_theme();
                 Action::None
             }
@@ -3995,18 +4136,17 @@ mod tests {
         let result = app.handle_key(key);
         assert_eq!(result, Action::None);
         assert_ne!(app.theme_name, initial_theme, "Theme should have changed");
+        assert_eq!(app.theme_name, ThemeName::OneDarkPro);
 
-        // T should also cycle forward to the same next theme
+        // T opens theme picker instead of cycling
         let mut app2 = App::new(sample_spec());
         let t_key = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Char('T'),
             crossterm::event::KeyModifiers::NONE,
         );
         app2.handle_key(t_key);
-        assert_eq!(
-            app.theme_name, app2.theme_name,
-            "] and T should both cycle to same theme"
-        );
+        assert!(app2.is_theme_picking(), "T should open theme picker");
+        assert_eq!(app2.theme_name, ThemeName::Dracula, "Theme shouldn't change until navigated");
     }
 
     #[test]
@@ -4834,5 +4974,226 @@ mod tests {
         // Switch focus should close the select box
         app.set_focus(Focus::Flags);
         assert!(!app.is_choosing(), "Switching focus should close select box");
+    }
+
+    // ── Theme picker tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_t_opens_theme_picker() {
+        let mut app = App::new(sample_spec());
+        assert!(!app.is_theme_picking());
+
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('T'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(key);
+        assert!(app.is_theme_picking());
+        assert_eq!(app.theme_picker.as_ref().unwrap().selected_index, 0);
+        assert_eq!(app.theme_picker.as_ref().unwrap().original_theme, ThemeName::Dracula);
+    }
+
+    #[test]
+    fn test_theme_picker_esc_restores_original() {
+        let mut app = App::new(sample_spec());
+        app.open_theme_picker();
+
+        // Navigate down to preview a different theme
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(down);
+        assert_eq!(app.theme_name, ThemeName::OneDarkPro);
+
+        // Esc should restore original theme
+        let esc = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(esc);
+        assert!(!app.is_theme_picking());
+        assert_eq!(app.theme_name, ThemeName::Dracula);
+    }
+
+    #[test]
+    fn test_theme_picker_enter_confirms() {
+        let mut app = App::new(sample_spec());
+        app.open_theme_picker();
+
+        // Navigate to Nord (index 2)
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(down);
+        app.handle_key(down);
+        assert_eq!(app.theme_name, ThemeName::Nord);
+
+        // Enter confirms the preview
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(!app.is_theme_picking());
+        assert_eq!(app.theme_name, ThemeName::Nord);
+    }
+
+    #[test]
+    fn test_theme_picker_up_down_navigates() {
+        let mut app = App::new(sample_spec());
+        app.open_theme_picker();
+
+        // Down moves to next theme and previews it
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(down);
+        assert_eq!(app.theme_picker.as_ref().unwrap().selected_index, 1);
+        assert_eq!(app.theme_name, ThemeName::OneDarkPro);
+
+        // Up moves back
+        let up = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Up,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(up);
+        assert_eq!(app.theme_picker.as_ref().unwrap().selected_index, 0);
+        assert_eq!(app.theme_name, ThemeName::Dracula);
+
+        // Up from first wraps to last
+        app.handle_key(up);
+        assert_eq!(
+            app.theme_picker.as_ref().unwrap().selected_index,
+            ThemeName::all().len() - 1
+        );
+        assert_eq!(app.theme_name, ThemeName::Cyberpunk);
+    }
+
+    #[test]
+    fn test_theme_picker_jk_navigates() {
+        let mut app = App::new(sample_spec());
+        app.open_theme_picker();
+
+        let j = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('j'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(j);
+        assert_eq!(app.theme_name, ThemeName::OneDarkPro);
+
+        let k = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('k'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(k);
+        assert_eq!(app.theme_name, ThemeName::Dracula);
+    }
+
+    #[test]
+    fn test_theme_picker_t_does_not_nest() {
+        let mut app = App::new(sample_spec());
+        app.open_theme_picker();
+        assert!(app.is_theme_picking());
+
+        // Pressing T while picker is open should be ignored (not open another picker)
+        let t = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('T'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(t);
+        // Should still be in the same picker
+        assert!(app.is_theme_picking());
+        assert_eq!(app.theme_picker.as_ref().unwrap().original_theme, ThemeName::Dracula);
+    }
+
+    #[test]
+    fn test_bracket_keys_still_cycle_without_picker() {
+        let mut app = App::new(sample_spec());
+
+        // ] cycles forward without opening picker
+        let rb = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char(']'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(rb);
+        assert!(!app.is_theme_picking());
+        assert_eq!(app.theme_name, ThemeName::OneDarkPro);
+
+        // [ cycles backward without opening picker
+        let lb = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('['),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(lb);
+        assert!(!app.is_theme_picking());
+        assert_eq!(app.theme_name, ThemeName::Dracula);
+    }
+
+    #[test]
+    fn test_theme_picker_mouse_click_outside_closes() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+        let mut app = App::new(sample_spec());
+        app.open_theme_picker();
+
+        // Set a fake overlay rect
+        if let Some(ref mut tp) = app.theme_picker {
+            tp.overlay_rect = Some(Rect::new(60, 5, 20, 17));
+        }
+
+        // Click outside the overlay
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 5,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse);
+        assert!(!app.is_theme_picking(), "Click outside should close picker");
+        assert_eq!(app.theme_name, ThemeName::Dracula, "Should restore original theme");
+    }
+
+    #[test]
+    fn test_theme_picker_mouse_click_on_indicator_opens() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+        let mut app = App::new(sample_spec());
+        // Simulate the theme indicator rect being set by rendering
+        app.theme_indicator_rect = Some(Rect::new(85, 23, 10, 1));
+        assert!(!app.is_theme_picking());
+
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 88,
+            row: 23,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse);
+        assert!(app.is_theme_picking(), "Click on theme indicator should open picker");
+    }
+
+    #[test]
+    fn test_theme_picker_down_wraps_at_end() {
+        let mut app = App::new(sample_spec());
+        app.open_theme_picker();
+        let all = ThemeName::all();
+
+        // Navigate to the last theme
+        if let Some(ref mut tp) = app.theme_picker {
+            tp.selected_index = all.len() - 1;
+        }
+        app.theme_name = *all.last().unwrap();
+
+        // Down should wrap to the first theme
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(down);
+        assert_eq!(app.theme_picker.as_ref().unwrap().selected_index, 0);
+        assert_eq!(app.theme_name, ThemeName::Dracula);
     }
 }

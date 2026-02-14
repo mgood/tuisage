@@ -7,7 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Padding, Paragraph, Wrap},
     Frame,
 };
-use ratatui_themes::ThemePalette;
+use ratatui_themes::{ThemeName, ThemePalette};
 use tui_term::widget::PseudoTerminal;
 
 #[cfg(test)]
@@ -176,6 +176,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Render choice select overlay on top of everything
     if app.choice_select.is_some() {
         render_choice_select(frame, app, area, &colors);
+    }
+
+    // Render theme picker overlay on top of everything
+    if app.theme_picker.is_some() {
+        render_theme_picker(frame, app, area, &colors);
     }
 }
 
@@ -1208,8 +1213,101 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
     frame.render_stateful_widget(list, overlay_rect, &mut state);
 }
 
-fn render_help_bar(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) {
-    let keybinds = if app.is_choosing() {
+/// Render the theme picker overlay, positioned above the help bar, right-aligned.
+fn render_theme_picker(frame: &mut Frame, app: &mut App, terminal_area: Rect, colors: &UiColors) {
+    let Some(ref tp) = app.theme_picker else {
+        return;
+    };
+    let selected_index = tp.selected_index;
+    let all = ThemeName::all();
+
+    // Dimensions
+    let max_name_len = all
+        .iter()
+        .map(|t| t.display_name().len())
+        .max()
+        .unwrap_or(10) as u16;
+    let overlay_width = max_name_len + 6; // "▶ " prefix (2) + padding (2) + borders (2)
+    let num_themes = all.len() as u16;
+    let overlay_height = (num_themes + 2).min(terminal_area.height.saturating_sub(2)); // +2 for borders
+
+    // Position: right-aligned, above the help bar (last row)
+    let overlay_x = terminal_area
+        .right()
+        .saturating_sub(overlay_width)
+        .max(terminal_area.x);
+    let help_bar_y = terminal_area.bottom().saturating_sub(1);
+    let overlay_y = help_bar_y.saturating_sub(overlay_height).max(terminal_area.y);
+
+    let overlay_rect = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
+
+    // Store overlay_rect for mouse hit-testing
+    if let Some(ref mut tp) = app.theme_picker {
+        tp.overlay_rect = Some(overlay_rect);
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(colors.active_border))
+        .title(" Theme ")
+        .title_style(
+            Style::default()
+                .fg(colors.active_border)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let items: Vec<ListItem> = all
+        .iter()
+        .enumerate()
+        .map(|(i, theme)| {
+            let is_selected = i == selected_index;
+            let prefix = if is_selected { "▶ " } else { "  " };
+            let style = if is_selected {
+                Style::default()
+                    .fg(colors.value)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(colors.choice)
+            };
+            let mut item = ListItem::new(Line::from(vec![
+                Span::styled(
+                    prefix,
+                    if is_selected {
+                        Style::default()
+                            .fg(colors.active_border)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    },
+                ),
+                Span::styled(theme.display_name().to_string(), style),
+            ]));
+            if is_selected {
+                item = item.style(Style::default().bg(colors.selected_bg));
+            }
+            item
+        })
+        .collect();
+
+    // Clear the area behind the overlay
+    frame.render_widget(ratatui::widgets::Clear, overlay_rect);
+
+    let visible_items = (overlay_height.saturating_sub(2)) as usize; // inner height
+    let mut state = ListState::default().with_selected(Some(selected_index));
+
+    // Ensure the selected item is visible by adjusting offset
+    if selected_index >= visible_items {
+        state = state.with_offset(selected_index.saturating_sub(visible_items - 1));
+    }
+
+    let list = List::new(items).block(block);
+    frame.render_stateful_widget(list, overlay_rect, &mut state);
+}
+
+fn render_help_bar(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
+    let keybinds = if app.is_theme_picking() {
+        "↑↓: navigate  Enter: confirm  Esc: cancel"
+    } else if app.is_choosing() {
         "↑↓: navigate  Enter: confirm  Esc: cancel  type to filter"
     } else if app.editing {
         "Enter: confirm  Esc: cancel"
@@ -1232,6 +1330,7 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) 
 
     // Keybinding hints with theme name
     let theme_indicator = format!(" [{}]", app.theme_name.display_name());
+    let theme_indicator_len = theme_indicator.len() as u16;
     let hints = Paragraph::new(Line::from(vec![
         Span::styled(format!(" {keybinds}"), Style::default().fg(colors.help)),
         Span::styled(
@@ -1241,6 +1340,15 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) 
     ]))
     .style(Style::default().bg(colors.bar_bg));
     frame.render_widget(hints, area);
+
+    // Store the theme indicator rect for mouse click detection
+    let indicator_x = area.x + area.width.saturating_sub(theme_indicator_len);
+    app.theme_indicator_rect = Some(Rect::new(
+        indicator_x,
+        area.y,
+        theme_indicator_len,
+        1,
+    ));
 }
 
 /// Render the command preview bar at the bottom with colorized parts.
@@ -1919,10 +2027,11 @@ flag "-q --quiet" help="Quiet mode"
         let mut app = App::new(sample_spec());
         assert_eq!(app.theme_name, ThemeName::Dracula);
 
-        // Shift+T cycles the theme
+        // T opens the theme picker instead of cycling
         let key = KeyEvent::new(KeyCode::Char('T'), KeyModifiers::NONE);
         app.handle_key(key);
-        assert_eq!(app.theme_name, ThemeName::OneDarkPro);
+        assert!(app.is_theme_picking(), "T should open theme picker");
+        assert_eq!(app.theme_name, ThemeName::Dracula, "Theme should not change yet");
     }
 
     #[test]
@@ -2436,6 +2545,88 @@ flag "-q --quiet" help="Quiet mode"
         assert!(
             output.contains("he▎llo"),
             "Should show cursor in middle of text"
+        );
+    }
+
+    // ── Theme picker rendering tests ────────────────────────────────────
+
+    #[test]
+    fn snapshot_theme_picker_open() {
+        let mut app = App::new(sample_spec());
+        app.open_theme_picker();
+        let output = render_to_string(&mut app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_theme_picker_navigated() {
+        let mut app = App::new(sample_spec());
+        app.open_theme_picker();
+
+        // Navigate down to Nord (index 2)
+        let down = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+        app.handle_key(down);
+        app.handle_key(down);
+
+        let output = render_to_string(&mut app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn test_theme_picker_shows_all_themes() {
+        let mut app = App::new(sample_spec());
+        app.open_theme_picker();
+        let output = render_to_string(&mut app, 100, 24);
+
+        // All theme display names should appear in the overlay
+        for theme in ThemeName::all() {
+            assert!(
+                output.contains(theme.display_name()),
+                "Theme picker should show '{}' but output was:\n{}",
+                theme.display_name(),
+                output
+            );
+        }
+    }
+
+    #[test]
+    fn test_theme_picker_help_bar_shows_picker_keybinds() {
+        let mut app = App::new(sample_spec());
+        app.open_theme_picker();
+        let output = render_to_string(&mut app, 100, 24);
+
+        assert!(
+            output.contains("Enter: confirm") && output.contains("Esc: cancel"),
+            "Help bar should show theme picker keybinds"
+        );
+    }
+
+    #[test]
+    fn test_theme_picker_previews_theme() {
+        let mut app = App::new(sample_spec());
+        app.open_theme_picker();
+
+        // Navigate to Nord
+        let down = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+        app.handle_key(down);
+        app.handle_key(down);
+
+        let output = render_to_string(&mut app, 100, 24);
+        // The help bar should show [Nord] since theme_name changed to preview
+        assert!(
+            output.contains("[Nord]"),
+            "Theme indicator should show the previewed theme"
+        );
+    }
+
+    #[test]
+    fn test_theme_indicator_rect_set_after_render() {
+        let mut app = App::new(sample_spec());
+        assert!(app.theme_indicator_rect.is_none());
+        let _output = render_to_string(&mut app, 100, 24);
+        assert!(
+            app.theme_indicator_rect.is_some(),
+            "theme_indicator_rect should be set after rendering"
         );
     }
 }
