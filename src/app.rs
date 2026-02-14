@@ -35,7 +35,6 @@ impl MatchScores {
 pub enum Action {
     None,
     Quit,
-    Accept,
     Execute,
 }
 
@@ -1096,7 +1095,7 @@ impl App {
                         }
                         Focus::Preview => {
                             if was_focused {
-                                return Action::Accept;
+                                return self.handle_enter();
                             }
                         }
                     }
@@ -1226,12 +1225,7 @@ impl App {
                 self.prev_theme();
                 Action::None
             }
-            KeyCode::Char('p') => {
-                if self.focus() == Focus::Preview {
-                    return Action::Accept;
-                }
-                Action::None
-            }
+            KeyCode::Char('p') => Action::None,
             KeyCode::Char('/') => {
                 // Only activate filter mode for panels that support filtering
                 if matches!(self.focus(), Focus::Commands | Focus::Flags | Focus::Args) {
@@ -2122,7 +2116,7 @@ impl App {
                     .and_then(|a| a.help.clone())
             }),
             Focus::Preview => {
-                Some("Enter: run command  p: print to stdout  Esc: go back".to_string())
+                Some("Enter: run command  Esc: go back".to_string())
             }
         }
     }
@@ -4129,19 +4123,6 @@ mod tests {
             init_idx,
             "Enter on leaf should not move"
         );
-    }
-
-    #[test]
-    fn test_p_on_preview_returns_accept() {
-        let mut app = App::new(sample_spec());
-        app.set_focus(Focus::Preview);
-
-        let p = crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Char('p'),
-            crossterm::event::KeyModifiers::NONE,
-        );
-        let result = app.handle_key(p);
-        assert_eq!(result, Action::Accept);
     }
 
     #[test]

@@ -1197,7 +1197,7 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) 
                 "Enter/Space: toggle  ↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  T: theme  q: quit"
             }
             Focus::Args => "Enter: edit  ↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  T: theme  q: quit",
-            Focus::Preview => "Enter: run  p: print  Tab: next  T: theme  q: quit",
+            Focus::Preview => "Enter: run  Tab: next  T: theme  q: quit",
         }
     };
 

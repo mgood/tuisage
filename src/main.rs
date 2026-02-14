@@ -105,14 +105,7 @@ fn main() -> color_eyre::Result<()> {
     ratatui::restore();
     crossterm::execute!(std::io::stderr(), crossterm::event::DisableMouseCapture)?;
 
-    match result {
-        Ok(Some(command)) => {
-            println!("{command}");
-            Ok(())
-        }
-        Ok(None) => Ok(()),
-        Err(e) => Err(e),
-    }
+    result
 }
 
 /// Run a shell command and return its stdout as a string.
@@ -294,7 +287,7 @@ fn spawn_command(app: &mut App, terminal_size: ratatui::layout::Size) -> color_e
 fn run_event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut App,
-) -> color_eyre::Result<Option<String>> {
+) -> color_eyre::Result<()> {
     use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 
     loop {
@@ -336,18 +329,12 @@ fn run_event_loop(
 
                 // Global quit shortcuts
                 if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-                    return Ok(None);
+                    return Ok(());
                 }
 
                 match app.handle_key(key) {
                     app::Action::None => {}
-                    app::Action::Quit => return Ok(None),
-                    app::Action::Accept => {
-                        let cmd = app.build_command();
-                        if !cmd.is_empty() {
-                            return Ok(Some(cmd));
-                        }
-                    }
+                    app::Action::Quit => return Ok(()),
                     app::Action::Execute => {
                         let size = terminal.size()?;
                         let term_size = ratatui::layout::Size {
@@ -364,13 +351,7 @@ fn run_event_loop(
             }
             Event::Mouse(mouse) => match app.handle_mouse(mouse) {
                 app::Action::None => {}
-                app::Action::Quit => return Ok(None),
-                app::Action::Accept => {
-                    let cmd = app.build_command();
-                    if !cmd.is_empty() {
-                        return Ok(Some(cmd));
-                    }
-                }
+                app::Action::Quit => return Ok(()),
                 app::Action::Execute => {
                     let size = terminal.size()?;
                     let term_size = ratatui::layout::Size {
