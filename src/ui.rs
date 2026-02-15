@@ -15,9 +15,9 @@ extern crate insta;
 
 use crate::app::{flatten_command_tree, App, AppMode, FlagValue, Focus};
 use crate::widgets::{
-    panel_block, panel_title, push_edit_cursor, push_help_text, push_highlighted_name,
-    push_selection_cursor, selection_bg, CommandPreview, HelpBar, ItemContext, PanelState,
-    SelectList, UiColors,
+    build_help_line, panel_block, panel_title, push_edit_cursor, push_highlighted_name,
+    push_selection_cursor, render_help_overlays, selection_bg, CommandPreview, HelpBar,
+    ItemContext, PanelState, SelectList, UiColors,
 };
 
 /// Render the full UI: command panel, flag panel, arg panel, preview, help bar.
@@ -227,6 +227,7 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
     let selected_index = app.command_index();
 
     // Build list items with indentation markers
+    let mut help_entries: Vec<(usize, Line<'static>)> = Vec::new();
     let items: Vec<ListItem> = flat_commands
         .iter()
         .enumerate()
@@ -262,17 +263,9 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
                 colors,
             );
 
-            // Right-align help text if present
+            // Collect help text for overlay rendering
             if let Some(help) = &cmd.help {
-                let available_width = area.width.saturating_sub(2) as usize;
-                push_help_text(
-                    &mut spans,
-                    help,
-                    available_width,
-                    &ctx,
-                    &ps,
-                    colors,
-                );
+                help_entries.push((i, build_help_line(help, &ctx, &ps, colors)));
             }
 
             ListItem::new(Line::from(spans))
@@ -290,9 +283,11 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
 
     let list = List::new(items).block(block);
     frame.render_stateful_widget(list, area, &mut state);
-}
 
-/// Render the flag list panel.
+    // Render right-aligned help text overlays
+    let inner = area.inner(ratatui::layout::Margin::new(1, 1));
+    render_help_overlays(frame.buffer_mut(), &help_entries, app.command_scroll(), inner);
+}
 fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
     // Register area for click hit-testing
     app.click_regions.register(area, Focus::Flags);
@@ -325,6 +320,7 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
     let flag_defaults: Vec<Option<String>> =
         flags.iter().map(|f| f.default.first().cloned()).collect();
 
+    let mut help_entries: Vec<(usize, Line<'static>)> = Vec::new();
     let items: Vec<ListItem> = flags
         .iter()
         .enumerate()
@@ -444,17 +440,9 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
                 }
             }
 
-            // Right-align help text if present
+            // Collect help text for overlay rendering
             if let Some(help) = &flag.help {
-                let available_width = area.width.saturating_sub(2).saturating_sub(2) as usize;
-                push_help_text(
-                    &mut spans,
-                    help,
-                    available_width,
-                    &ctx,
-                    &ps,
-                    colors,
-                );
+                help_entries.push((i, build_help_line(help, &ctx, &ps, colors)));
             }
 
             let line = Line::from(spans);
@@ -471,6 +459,10 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
         .with_offset(app.flag_scroll());
     let list = List::new(items).block(block);
     frame.render_stateful_widget(list, area, &mut state);
+
+    // Render right-aligned help text overlays
+    let inner = area.inner(ratatui::layout::Margin::new(1, 1));
+    render_help_overlays(frame.buffer_mut(), &help_entries, app.flag_scroll(), inner);
 }
 
 fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
@@ -496,6 +488,7 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
     let inner_height = area.height.saturating_sub(2) as usize;
     app.ensure_visible(Focus::Args, inner_height);
 
+    let mut help_entries: Vec<(usize, Line<'static>)> = Vec::new();
     let items: Vec<ListItem> = app
         .arg_values
         .iter()
@@ -572,18 +565,10 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
                 ));
             }
 
-            // Right-align help text if present
+            // Collect help text for overlay rendering
             if let Some(ref help) = arg_val.help {
                 if !help.is_empty() {
-                    let available_width = area.width.saturating_sub(2) as usize;
-                    push_help_text(
-                        &mut spans,
-                        help,
-                        available_width,
-                        &ctx,
-                        &ps,
-                        colors,
-                    );
+                    help_entries.push((i, build_help_line(help, &ctx, &ps, colors)));
                 }
             }
 
@@ -601,6 +586,10 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
         .with_offset(app.arg_scroll());
     let list = List::new(items).block(block);
     frame.render_stateful_widget(list, area, &mut state);
+
+    // Render right-aligned help text overlays
+    let inner = area.inner(ratatui::layout::Margin::new(1, 1));
+    render_help_overlays(frame.buffer_mut(), &help_entries, app.arg_scroll(), inner);
 }
 
 /// Render the choice select box as an overlay.

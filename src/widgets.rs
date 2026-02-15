@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Padding, Paragraph, Widget, Wrap},
@@ -277,39 +277,81 @@ pub fn push_highlighted_name(
 
 /// Push right-aligned help text onto spans with optional filter highlighting.
 /// Handles padding calculation, dim for non-matches, and character highlighting.
-pub fn push_help_text(
-    spans: &mut Vec<Span<'static>>,
+/// Build a styled `Line` for help text, suitable for right-aligned overlay rendering.
+///
+/// Returns styled spans with filter highlighting and dim support.
+pub fn build_help_line(
     help: &str,
-    available_width: usize,
     ctx: &ItemContext,
     ps: &PanelState,
     colors: &UiColors,
-) {
-    // Calculate padding based on current span width
-    let current_len: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-
-    if current_len + help.chars().count() + 1 < available_width {
-        let padding = available_width.saturating_sub(current_len + help.chars().count());
-        spans.push(Span::raw(" ".repeat(padding)));
-    } else {
-        spans.push(Span::raw(" "));
-    }
-
+) -> Line<'static> {
     let has_scores = !ps.match_scores.is_empty();
 
-    if !ctx.is_match && has_scores {
+    let spans = if !ctx.is_match && has_scores {
         // Non-matching → dim help text
-        spans.push(Span::styled(
+        vec![Span::styled(
             help.to_string(),
             Style::default().fg(colors.help).add_modifier(Modifier::DIM),
-        ));
+        )]
     } else if has_scores && ctx.help_matches {
         // Help text matches the filter → highlight matched characters
         let (normal, highlight) = highlight_styles(colors.help, colors.bg, ctx.is_selected);
-        let highlighted = build_highlighted_text(help, &ps.filter_text, normal, highlight);
-        spans.extend(highlighted);
+        build_highlighted_text(help, &ps.filter_text, normal, highlight)
     } else {
-        spans.push(Span::styled(help.to_string(), Style::default().fg(colors.help)));
+        vec![Span::styled(
+            help.to_string(),
+            Style::default().fg(colors.help),
+        )]
+    };
+
+    Line::from(spans)
+}
+
+/// Render right-aligned help text overlays on top of a rendered List.
+///
+/// After the List widget has been rendered, this function writes help text
+/// directly to the frame buffer at the correct row positions, right-aligned
+/// within the panel's inner area. This avoids manual space-padding and
+/// prevents truncation issues.
+///
+/// `help_entries` maps item index → styled help Line.
+/// `scroll_offset` is the List's current scroll position.
+/// `inner` is the inner rect of the panel (after borders).
+pub fn render_help_overlays(
+    buf: &mut Buffer,
+    help_entries: &[(usize, Line<'static>)],
+    scroll_offset: usize,
+    inner: Rect,
+) {
+    let visible_rows = inner.height as usize;
+
+    for &(item_idx, ref help_line) in help_entries {
+        // Skip items above the scroll viewport
+        if item_idx < scroll_offset {
+            continue;
+        }
+        let row_in_view = item_idx - scroll_offset;
+        if row_in_view >= visible_rows {
+            continue;
+        }
+
+        let y = inner.y + row_in_view as u16;
+        // Leave 1 char margin on right to prevent truncation at border
+        let help_width = help_line.width() as u16;
+        if help_width == 0 || help_width >= inner.width {
+            continue;
+        }
+
+        let help_rect = Rect::new(
+            inner.x,
+            y,
+            inner.width,
+            1,
+        );
+
+        let para = Paragraph::new(help_line.clone()).alignment(Alignment::Right);
+        para.render(help_rect, buf);
     }
 }
 

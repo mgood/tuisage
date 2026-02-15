@@ -6,8 +6,8 @@ expression: output
 │ $ mycli -vvv                                                                 │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌ Flags ───────────────────────────────────────────────────────────────────────┐
-│ ▶ [3] -v, --verbose                                       Increase verbosity │
-│   ○ -q, --quiet                                                   Quiet mode │
+│ ▶ [3] -v, --verbose                                        Increase verbosity│
+│   ○ -q, --quiet                                                    Quiet mode│
 │                                                                              │
 │                                                                              │
 │                                                                              │

@@ -6,8 +6,8 @@ expression: output
 │ $ mycli config                                                                                   │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ Commands ────────────────────────────┐┌ Flags ───────────────────────────────────────────────────┐
-│  init        Initialize a new project││   [0] -v, --verbose [G]           Enable verbose logging │
-│▶ config          Manage configuration││   ○ -q, --quiet [G]                    Enable quiet mode │
+│  init        Initialize a new project││   [0] -v, --verbose [G]            Enable verbose logging│
+│▶ config          Manage configuration││   ○ -q, --quiet [G]                     Enable quiet mode│
 │  │ set (add)       Set a config value││                                                          │
 │  │ get             Get a config value││                                                          │
 │  │ list (ls)   List all config values││                                                          │
