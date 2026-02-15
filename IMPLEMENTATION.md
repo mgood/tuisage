@@ -99,7 +99,7 @@ The core state and logic module (~5600 lines including ~1400 lines of tests).
 - **`FlagValue`** — discriminated union: `Bool(bool)`, `String(String)`, `Count(u32)`.
 - **`ArgValue`** — struct with `name`, `value`, `required`, `choices`, `help` fields.
 - **`CmdData`** — data stored in each tree node: `name`, `help`, `aliases`.
-- **`ChoiceSelectState`** — state for the inline choice select box: `choices`, `descriptions` (optional per-choice descriptions), `selected_index` (`Option<usize>`, None = no selection), `source_panel`, `source_index`. When open, `editing` is also true and `edit_input` serves as both the text value and the filter.
+- **`ChoiceSelectState`** — state for the inline choice select box: `choices`, `descriptions` (optional per-choice descriptions), `selected_index` (`Option<usize>`, None = no selection), `source_panel`, `source_index`, `filter_active` (starts false so all choices are visible on open; activates on first keystroke). When open, `editing` is also true and `edit_input` serves as both the text value and the filter.
 - **`App`** — the main application state struct.
 
 #### `App` Struct Fields
@@ -240,7 +240,7 @@ Per-item rendering context bundling: `is_selected`, `is_match`, `name_matches` (
 #### Helper Functions
 
 - **`panel_title()`** — generates the panel title `Line`, including the 🔍 emoji and filter query when filtering is active.
-- **`panel_block()`** — creates a styled `Block` with focus-aware border color, title, and optional horizontal padding.
+- **`panel_block()`** — creates a styled `Block` with focus-aware border color and title. All panels use consistent styling without horizontal padding.
 - **`push_selection_cursor()`** — appends `▶ ` or `  ` prefix spans consistently across all panels.
 - **`push_highlighted_name()`** — appends item name spans with filter-aware styling (dimmed, bold+underlined, or inverted).
 - **`build_help_line()`** — builds a styled `Line` for help text with filter-aware styling, for use with right-aligned overlay rendering.
@@ -295,7 +295,7 @@ The `usage-lib` crate includes optional features for generating documentation, m
 
 ### Test Count
 
-197 tests total:
+199 tests total:
 - **129 tests** in `app.rs` — state logic, command building, command parts, tree navigation, key handling, mouse handling, filtering, editing, tree expand/collapse, execution state management, execution key handling, global flag sync, filtered navigation, startup sync, separate name/help matching, choice select box, theme picker, backspace clear/remove, dynamic completions (parsing, execution, caching, UI flow, unified input/selection)
 - **68 tests** in `ui.rs` — rendering assertions, snapshot tests, theming, click regions, filter display, filter mode visual cues, choice select rendering, theme picker rendering
 
