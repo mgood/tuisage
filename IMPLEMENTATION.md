@@ -244,7 +244,7 @@ Per-item rendering context bundling: `is_selected`, `is_match`, `name_matches` (
 - **`push_selection_cursor()`** — appends `▶ ` or `  ` prefix spans consistently across all panels.
 - **`push_highlighted_name()`** — appends item name spans with filter-aware styling (dimmed, bold+underlined, or inverted).
 - **`build_help_line()`** — builds a styled `Line` for help text with filter-aware styling, for use with right-aligned overlay rendering.
-- **`render_help_overlays()`** — renders right-aligned help text directly to the frame buffer after the List widget renders, using `Paragraph` with `Alignment::Right` to avoid manual space-padding and truncation.
+- **`render_help_overlays()`** — renders right-aligned help text directly to the frame buffer after the List widget renders. Positions a precisely-sized `Paragraph` at the right edge of each row, with a 1-char leading gap. Scans the buffer to detect existing content and skips rendering when help text would overlap item content.
 - **`push_edit_cursor()`** — appends inline edit cursor spans (before_cursor + ▎ + after_cursor).
 - **`selection_bg()`** — returns the appropriate background color for selected/editing items.
 - **`item_match_state()`** — computes whether an item matches the filter and retrieves match indices for both name and help fields.
@@ -344,6 +344,7 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 | Synchronous completion execution | Completion commands are run synchronously via `sh -c` when the user first enters edit mode. Avoids async complexity; commands are expected to be fast. Results are cached per session. |
 | Completion fallback to free-text | When a completion command fails or the user presses Esc, the typed text is kept as the value. The select overlay is non-blocking. |
 | Unified choice select + text input | Opening a choice select also enters editing mode. The text input serves as both the value and the filter. Typing clears any active selection, so users can seamlessly switch between browsing choices and entering custom text. |
+| Consistent selection highlighting | All three panels (Commands, Flags, Args) use the same `selection_bg` background color on the selected item, plus the `▶` caret. Help text is rendered as a right-aligned overlay after the List widget, with automatic skip when it would overlap item content. |
 | Commands list always visible | The flat indented list shows the entire command hierarchy, not just subcommands of the current selection. It remains visible even when navigating to leaf commands with no children, providing constant wayfinding context. |
 | Arguments panel visibility based on spec | The arguments panel is shown whenever the current command defines arguments in the spec, ensuring consistent visibility regardless of whether arg values are populated. |
 
