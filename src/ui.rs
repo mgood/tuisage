@@ -140,7 +140,7 @@ fn render_execution_view(frame: &mut Frame, app: &App, colors: &UiColors) {
     let status_text = if exited {
         let exit_code = app.execution_exit_status().unwrap_or_default();
         format!(
-            " Exited ({}) — press Esc/Enter/q to close ",
+            " Exited ({}) — press Esc/⏎/q to close ",
             if exit_code.is_empty() {
                 "unknown".to_string()
             } else {
@@ -751,27 +751,27 @@ fn render_theme_picker(frame: &mut Frame, app: &mut App, terminal_area: Rect, co
 
 fn render_help_bar(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
     let keybinds = if app.is_theme_picking() {
-        "↑↓: navigate  Enter: confirm  Esc: cancel"
+        "↑↓: navigate  ⏎: confirm  Esc: cancel"
     } else if app.is_choosing() {
-        "↑↓: select  Enter: confirm  Esc: keep text"
+        "↑↓: select  ⏎: confirm  Esc: keep text"
     } else if app.editing {
-        "Enter: confirm  Esc: cancel"
+        "⏎: confirm  Esc: cancel"
     } else if app.filtering {
-        "Enter: apply  Esc: clear  ↑↓: navigate"
+        "⏎: apply  Esc: clear  ↑↓: navigate"
     } else if app.filter_active() {
         "↑↓/jk: next match  /: new filter  Esc: clear filter"
     } else {
         match app.focus() {
             Focus::Commands => {
-                "↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  q: quit"
+                "↑↓: navigate  ⇥: next  /: filter  ^r: run  q: quit"
             }
             Focus::Flags => {
-                "Enter/Space: toggle  ↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  q: quit"
+                "⏎/Space: toggle  ↑↓: navigate  ⇥: next  /: filter  ^r: run  q: quit"
             }
             Focus::Args => {
-                "Enter: edit  ↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  q: quit"
+                "⏎: edit  ↑↓: navigate  ⇥: next  /: filter  ^r: run  q: quit"
             }
-            Focus::Preview => "Enter: run  Tab: next  q: quit",
+            Focus::Preview => "⏎: run  ⇥: next  q: quit",
         }
     };
 
@@ -1932,7 +1932,7 @@ flag "-q --quiet" help="Quiet mode"
         let output = render_to_string(&mut app, 100, 24);
 
         assert!(
-            output.contains("Enter: confirm") && output.contains("Esc: cancel"),
+            output.contains("⏎: confirm") && output.contains("Esc: cancel"),
             "Help bar should show theme picker keybinds"
         );
     }

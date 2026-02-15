@@ -25,4 +25,4 @@ expression: output
 │                                      ││                                                          │
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
- ↑↓: navigate  Tab: next  /: filter  Ctrl+R: run  q: quit                         T: [Gruvbox Dark]
+ ↑↓: navigate  ⇥: next  /: filter  ^r: run  q: quit                               T: [Gruvbox Dark]

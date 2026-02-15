@@ -25,4 +25,4 @@ expression: output
 │                                      ││                                                          │
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
- Enter: apply  Esc: clear  ↑↓: navigate                                                T: [Dracula]
+ ⏎: apply  Esc: clear  ↑↓: navigate                                                    T: [Dracula]
