@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Padding, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
 };
 use ratatui_themes::ThemeName;
@@ -16,7 +16,8 @@ extern crate insta;
 use crate::app::{flatten_command_tree, App, AppMode, FlagValue, Focus};
 use crate::widgets::{
     panel_block, panel_title, push_edit_cursor, push_help_text, push_highlighted_name,
-    push_selection_cursor, selection_bg, ItemContext, PanelState, UiColors,
+    push_selection_cursor, selection_bg, CommandPreview, HelpBar, ItemContext, PanelState,
+    SelectList, UiColors,
 };
 
 /// Render the full UI: command panel, flag panel, arg panel, preview, help bar.
@@ -692,69 +693,18 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
         format!(" {} ", filter_text)
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(colors.active_border))
-        .title(title)
-        .title_style(
-            Style::default()
-                .fg(colors.active_border)
-                .add_modifier(Modifier::BOLD),
-        );
+    // Collect labels for the SelectList widget
+    let labels: Vec<String> = filtered.iter().map(|(_, c)| c.clone()).collect();
 
-    // Build list items
-    let items: Vec<ListItem> = if filtered.is_empty() {
-        vec![ListItem::new(Line::from(Span::styled(
-            "(no matches)",
-            Style::default().fg(colors.help).italic(),
-        )))]
-    } else {
-        filtered
-            .iter()
-            .enumerate()
-            .map(|(i, (_, choice))| {
-                let is_selected = i == selected_index;
-                let prefix = if is_selected { "▶ " } else { "  " };
-                let style = if is_selected {
-                    Style::default()
-                        .fg(colors.choice)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(colors.choice)
-                };
-                let mut item = ListItem::new(Line::from(vec![
-                    Span::styled(
-                        prefix,
-                        if is_selected {
-                            Style::default()
-                                .fg(colors.active_border)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default()
-                        },
-                    ),
-                    Span::styled(choice.clone(), style),
-                ]));
-                if is_selected {
-                    item = item.style(Style::default().bg(colors.selected_bg));
-                }
-                item
-            })
-            .collect()
-    };
-
-    // Clear the area behind the overlay
-    let clear = ratatui::widgets::Clear;
-    frame.render_widget(clear, overlay_rect);
-
-    // Render the list
-    let mut state = ListState::default().with_selected(if filtered.is_empty() {
-        None
-    } else {
-        Some(selected_index)
-    });
-    let list = List::new(items).block(block);
-    frame.render_stateful_widget(list, overlay_rect, &mut state);
+    let widget = SelectList::new(
+        title,
+        &labels,
+        selected_index,
+        colors.choice,
+        colors.choice,
+        colors,
+    );
+    frame.render_widget(widget, overlay_rect);
 }
 
 /// Render the theme picker overlay, positioned above the help bar, right-aligned.
@@ -790,62 +740,18 @@ fn render_theme_picker(frame: &mut Frame, app: &mut App, terminal_area: Rect, co
         tp.overlay_rect = Some(overlay_rect);
     }
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(colors.active_border))
-        .title(" Theme ")
-        .title_style(
-            Style::default()
-                .fg(colors.active_border)
-                .add_modifier(Modifier::BOLD),
-        );
+    // Collect labels for the SelectList widget
+    let labels: Vec<String> = all.iter().map(|t| t.display_name().to_string()).collect();
 
-    let items: Vec<ListItem> = all
-        .iter()
-        .enumerate()
-        .map(|(i, theme)| {
-            let is_selected = i == selected_index;
-            let prefix = if is_selected { "▶ " } else { "  " };
-            let style = if is_selected {
-                Style::default()
-                    .fg(colors.value)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(colors.choice)
-            };
-            let mut item = ListItem::new(Line::from(vec![
-                Span::styled(
-                    prefix,
-                    if is_selected {
-                        Style::default()
-                            .fg(colors.active_border)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                    },
-                ),
-                Span::styled(theme.display_name().to_string(), style),
-            ]));
-            if is_selected {
-                item = item.style(Style::default().bg(colors.selected_bg));
-            }
-            item
-        })
-        .collect();
-
-    // Clear the area behind the overlay
-    frame.render_widget(ratatui::widgets::Clear, overlay_rect);
-
-    let visible_items = (overlay_height.saturating_sub(2)) as usize; // inner height
-    let mut state = ListState::default().with_selected(Some(selected_index));
-
-    // Ensure the selected item is visible by adjusting offset
-    if selected_index >= visible_items {
-        state = state.with_offset(selected_index.saturating_sub(visible_items - 1));
-    }
-
-    let list = List::new(items).block(block);
-    frame.render_stateful_widget(list, overlay_rect, &mut state);
+    let widget = SelectList::new(
+        " Theme ".to_string(),
+        &labels,
+        selected_index,
+        colors.choice,
+        colors.value,
+        colors,
+    );
+    frame.render_widget(widget, overlay_rect);
 }
 
 fn render_help_bar(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
@@ -874,146 +780,27 @@ fn render_help_bar(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
         }
     };
 
-    // Theme indicator right-aligned with "T:" prefix
-    let theme_indicator = format!("T: [{}] ", app.theme_name.display_name());
-    let theme_indicator_len = theme_indicator.len() as u16;
+    let theme_display = app.theme_name.display_name();
+    let widget = HelpBar::new(keybinds, theme_display, colors);
 
-    // Calculate padding to right-align the theme indicator
-    let keybinds_text = format!(" {keybinds}");
-    let keybinds_len = keybinds_text.chars().count() as u16;
-    let padding_len = area.width.saturating_sub(keybinds_len + theme_indicator_len);
-    let padding = " ".repeat(padding_len as usize);
+    // Store the theme indicator rect for mouse click detection
+    app.theme_indicator_rect = Some(widget.theme_indicator_rect(area));
 
-    let hints = Paragraph::new(Line::from(vec![
-        Span::styled(keybinds_text, Style::default().fg(colors.help)),
-        Span::styled(padding, Style::default()),
-        Span::styled(
-            theme_indicator.clone(),
-            Style::default().fg(colors.active_border).italic(),
-        ),
-    ]))
-    .style(Style::default().bg(colors.bar_bg));
-    frame.render_widget(hints, area);
-
-    // Store the theme indicator rect for mouse click detection (right-aligned)
-    let indicator_x = area.x + area.width.saturating_sub(theme_indicator_len);
-    app.theme_indicator_rect = Some(Rect::new(
-        indicator_x,
-        area.y,
-        theme_indicator_len,
-        1,
-    ));
+    frame.render_widget(widget, area);
 }
 
 /// Render the command preview bar at the bottom with colorized parts.
 fn render_preview(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) {
     let is_focused = app.focus() == Focus::Preview;
-    let border_color = if is_focused {
-        colors.active_border
-    } else {
-        colors.inactive_border
-    };
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color))
-        .title(" Command ")
-        .title_style(Style::default().fg(border_color).bold())
-        .padding(Padding::horizontal(1));
-
-    let prefix = if is_focused { "▶ " } else { "$ " };
-    let bold = if is_focused {
-        Modifier::BOLD
-    } else {
-        Modifier::empty()
-    };
-
-    // Build colorized command by tokenizing the built command string
     let command = app.build_command();
-    let mut spans = vec![Span::styled(prefix, Style::default().fg(colors.command))];
-    colorize_command(&command, app, &mut spans, colors, bold);
-
-    let paragraph = Paragraph::new(Line::from(spans))
-        .block(block)
-        .wrap(Wrap { trim: false });
-
-    frame.render_widget(paragraph, area);
-}
-
-/// Colorize a built command string by categorizing each token as bin, subcommand, flag, or arg.
-fn colorize_command(
-    command: &str,
-    app: &App,
-    spans: &mut Vec<Span<'static>>,
-    colors: &UiColors,
-    bold: Modifier,
-) {
     let bin = if app.spec.bin.is_empty() {
         &app.spec.name
     } else {
         &app.spec.bin
     };
 
-    // Collect known subcommand names from the path
-    let subcommand_names: std::collections::HashSet<&str> =
-        app.command_path.iter().map(|s| s.as_str()).collect();
-
-    let tokens: Vec<&str> = command.split_whitespace().collect();
-    let mut i = 0;
-    let mut expect_flag_value = false;
-
-    while i < tokens.len() {
-        if i > 0 {
-            spans.push(Span::raw(" "));
-        }
-
-        let token = tokens[i];
-
-        if i == 0 && token == bin {
-            // Binary name — bold with primary text color
-            spans.push(Span::styled(
-                token.to_string(),
-                Style::default()
-                    .fg(colors.preview_cmd)
-                    .add_modifier(bold | Modifier::BOLD),
-            ));
-        } else if expect_flag_value {
-            // Value following a flag like --tag
-            spans.push(Span::styled(
-                token.to_string(),
-                Style::default().fg(colors.value).add_modifier(bold),
-            ));
-            expect_flag_value = false;
-        } else if token.starts_with('-') {
-            // Flag token
-            spans.push(Span::styled(
-                token.to_string(),
-                Style::default().fg(colors.flag).add_modifier(bold),
-            ));
-            // Check if this flag expects a value (next token is not a flag and not a subcommand)
-            if let Some(&next) = tokens.get(i + 1) {
-                if !next.starts_with('-') && !subcommand_names.contains(next) {
-                    // Heuristic: flags like --tag expect a value; boolean flags like --rollback don't
-                    // We peek ahead: if the next token doesn't look like a subcommand, treat it as a value
-                    expect_flag_value = true;
-                }
-            }
-        } else if subcommand_names.contains(token) {
-            // Subcommand name
-            spans.push(Span::styled(
-                token.to_string(),
-                Style::default().fg(colors.command).add_modifier(bold),
-            ));
-        } else {
-            // Positional argument value
-            spans.push(Span::styled(
-                token.to_string(),
-                Style::default().fg(colors.arg).add_modifier(bold),
-            ));
-        }
-
-        i += 1;
-    }
+    let widget = CommandPreview::new(&command, bin, &app.command_path, is_focused, colors);
+    frame.render_widget(widget, area);
 }
 
 /// Format a flag's display string (e.g., "-f, --force" or "--verbose").

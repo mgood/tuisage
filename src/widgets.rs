@@ -1,14 +1,19 @@
-//! Reusable UI widget helpers for TuiSage panels.
+//! Reusable UI widget helpers and custom widgets for TuiSage panels.
 //!
 //! These helpers extract common patterns from the command, flag, and argument
 //! list renderers to ensure consistent behavior across panels.
+//!
+//! Custom widgets implement [`ratatui::widgets::Widget`] for self-contained,
+//! composable rendering of UI sections like the command preview and help bar.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ratatui::{
+    buffer::Buffer,
+    layout::Rect,
     style::{Color, Modifier, Style},
-    text::Span,
-    widgets::{Block, Borders, Padding},
+    text::{Line, Span},
+    widgets::{Block, Borders, Padding, Paragraph, Widget, Wrap},
 };
 
 use crate::app::{fuzzy_match_indices, App, Focus, MatchScores};
@@ -398,4 +403,298 @@ pub fn build_highlighted_text(
     }
 
     spans
+}
+
+// ── Custom Widgets ──────────────────────────────────────────────────
+
+/// A widget that renders the assembled command preview with colorized tokens.
+///
+/// Displays the command string in a bordered block, with syntax-aware coloring
+/// for the binary name, subcommands, flags, and positional arguments.
+pub struct CommandPreview<'a> {
+    /// The full built command string.
+    pub command: &'a str,
+    /// Binary name from the spec.
+    pub bin: &'a str,
+    /// Subcommand names in the current command path.
+    pub subcommands: &'a [String],
+    /// Whether the preview panel currently has focus.
+    pub is_focused: bool,
+    pub colors: &'a UiColors,
+}
+
+impl<'a> CommandPreview<'a> {
+    pub fn new(
+        command: &'a str,
+        bin: &'a str,
+        subcommands: &'a [String],
+        is_focused: bool,
+        colors: &'a UiColors,
+    ) -> Self {
+        Self {
+            command,
+            bin,
+            subcommands,
+            is_focused,
+            colors,
+        }
+    }
+
+    /// Colorize the command string by categorizing each token.
+    fn colorize(&self, bold: Modifier) -> Vec<Span<'static>> {
+        let subcommand_names: HashSet<&str> =
+            self.subcommands.iter().map(|s| s.as_str()).collect();
+
+        let tokens: Vec<&str> = self.command.split_whitespace().collect();
+        let mut spans = Vec::new();
+        let mut i = 0;
+        let mut expect_flag_value = false;
+
+        while i < tokens.len() {
+            if i > 0 {
+                spans.push(Span::raw(" "));
+            }
+
+            let token = tokens[i];
+
+            if i == 0 && token == self.bin {
+                spans.push(Span::styled(
+                    token.to_string(),
+                    Style::default()
+                        .fg(self.colors.preview_cmd)
+                        .add_modifier(bold | Modifier::BOLD),
+                ));
+            } else if expect_flag_value {
+                spans.push(Span::styled(
+                    token.to_string(),
+                    Style::default().fg(self.colors.value).add_modifier(bold),
+                ));
+                expect_flag_value = false;
+            } else if token.starts_with('-') {
+                spans.push(Span::styled(
+                    token.to_string(),
+                    Style::default().fg(self.colors.flag).add_modifier(bold),
+                ));
+                if let Some(&next) = tokens.get(i + 1) {
+                    if !next.starts_with('-') && !subcommand_names.contains(next) {
+                        expect_flag_value = true;
+                    }
+                }
+            } else if subcommand_names.contains(token) {
+                spans.push(Span::styled(
+                    token.to_string(),
+                    Style::default().fg(self.colors.command).add_modifier(bold),
+                ));
+            } else {
+                spans.push(Span::styled(
+                    token.to_string(),
+                    Style::default().fg(self.colors.arg).add_modifier(bold),
+                ));
+            }
+
+            i += 1;
+        }
+
+        spans
+    }
+}
+
+impl Widget for CommandPreview<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let border_color = if self.is_focused {
+            self.colors.active_border
+        } else {
+            self.colors.inactive_border
+        };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color))
+            .title(" Command ")
+            .title_style(Style::default().fg(border_color).bold())
+            .padding(Padding::horizontal(1));
+
+        let prefix = if self.is_focused { "▶ " } else { "$ " };
+        let bold = if self.is_focused {
+            Modifier::BOLD
+        } else {
+            Modifier::empty()
+        };
+
+        let mut spans = vec![Span::styled(prefix, Style::default().fg(self.colors.command))];
+        spans.extend(self.colorize(bold));
+
+        let paragraph = Paragraph::new(Line::from(spans))
+            .block(block)
+            .wrap(Wrap { trim: false });
+
+        paragraph.render(area, buf);
+    }
+}
+
+/// A widget that renders the context-sensitive help/status bar.
+///
+/// Shows keyboard shortcuts for the current mode on the left and
+/// the active theme indicator on the right.
+pub struct HelpBar<'a> {
+    /// The help text string to display.
+    pub keybinds: &'a str,
+    /// Theme display name for the right-aligned indicator.
+    pub theme_display: &'a str,
+    pub colors: &'a UiColors,
+}
+
+impl<'a> HelpBar<'a> {
+    pub fn new(keybinds: &'a str, theme_display: &'a str, colors: &'a UiColors) -> Self {
+        Self {
+            keybinds,
+            theme_display,
+            colors,
+        }
+    }
+
+    /// Returns the Rect where the theme indicator is rendered,
+    /// for use in mouse click hit-testing.
+    pub fn theme_indicator_rect(&self, area: Rect) -> Rect {
+        let theme_indicator = format!("T: [{}] ", self.theme_display);
+        let theme_indicator_len = theme_indicator.len() as u16;
+        let indicator_x = area.x + area.width.saturating_sub(theme_indicator_len);
+        Rect::new(indicator_x, area.y, theme_indicator_len, 1)
+    }
+}
+
+impl Widget for HelpBar<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let theme_indicator = format!("T: [{}] ", self.theme_display);
+        let theme_indicator_len = theme_indicator.len() as u16;
+
+        let keybinds_text = format!(" {}", self.keybinds);
+        let keybinds_len = keybinds_text.chars().count() as u16;
+        let padding_len = area.width.saturating_sub(keybinds_len + theme_indicator_len);
+        let padding = " ".repeat(padding_len as usize);
+
+        let paragraph = Paragraph::new(Line::from(vec![
+            Span::styled(keybinds_text, Style::default().fg(self.colors.help)),
+            Span::styled(padding, Style::default()),
+            Span::styled(
+                theme_indicator,
+                Style::default().fg(self.colors.active_border).italic(),
+            ),
+        ]))
+        .style(Style::default().bg(self.colors.bar_bg));
+
+        paragraph.render(area, buf);
+    }
+}
+
+/// A widget that renders a bordered selectable list overlay.
+///
+/// Used for both the choice select dropdown and the theme picker.
+/// Clears the area behind it, draws a bordered block with a title,
+/// and renders selectable items with a `▶` cursor indicator.
+pub struct SelectList<'a> {
+    /// Title shown in the block border.
+    pub title: String,
+    /// Item labels to display.
+    pub items: &'a [String],
+    /// Currently selected index.
+    pub selected: usize,
+    /// Style for unselected items.
+    pub item_color: Color,
+    /// Style for the selected item (text color).
+    pub selected_color: Color,
+    pub colors: &'a UiColors,
+}
+
+impl<'a> SelectList<'a> {
+    pub fn new(
+        title: String,
+        items: &'a [String],
+        selected: usize,
+        item_color: Color,
+        selected_color: Color,
+        colors: &'a UiColors,
+    ) -> Self {
+        Self {
+            title,
+            items,
+            selected,
+            item_color,
+            selected_color,
+            colors,
+        }
+    }
+}
+
+impl Widget for SelectList<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        // Clear area behind the overlay
+        ratatui::widgets::Clear.render(area, buf);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(self.colors.active_border))
+            .title(self.title)
+            .title_style(
+                Style::default()
+                    .fg(self.colors.active_border)
+                    .add_modifier(Modifier::BOLD),
+            );
+
+        let items: Vec<ratatui::widgets::ListItem> = if self.items.is_empty() {
+            vec![ratatui::widgets::ListItem::new(Line::from(Span::styled(
+                "(no matches)",
+                Style::default().fg(self.colors.help).italic(),
+            )))]
+        } else {
+            self.items
+                .iter()
+                .enumerate()
+                .map(|(i, label)| {
+                    let is_selected = i == self.selected;
+                    let prefix = if is_selected { "▶ " } else { "  " };
+                    let style = if is_selected {
+                        Style::default()
+                            .fg(self.selected_color)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(self.item_color)
+                    };
+                    let mut item = ratatui::widgets::ListItem::new(Line::from(vec![
+                        Span::styled(
+                            prefix,
+                            if is_selected {
+                                Style::default()
+                                    .fg(self.colors.active_border)
+                                    .add_modifier(Modifier::BOLD)
+                            } else {
+                                Style::default()
+                            },
+                        ),
+                        Span::styled(label.clone(), style),
+                    ]));
+                    if is_selected {
+                        item = item.style(Style::default().bg(self.colors.selected_bg));
+                    }
+                    item
+                })
+                .collect()
+        };
+
+        let visible_items = area.height.saturating_sub(2) as usize;
+        let mut state = ratatui::widgets::ListState::default().with_selected(
+            if self.items.is_empty() {
+                None
+            } else {
+                Some(self.selected)
+            },
+        );
+
+        if self.selected >= visible_items {
+            state = state.with_offset(self.selected.saturating_sub(visible_items - 1));
+        }
+
+        let list = ratatui::widgets::List::new(items).block(block);
+        ratatui::widgets::StatefulWidget::render(list, area, buf, &mut state);
+    }
 }
