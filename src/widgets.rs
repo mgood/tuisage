@@ -592,11 +592,14 @@ impl Widget for HelpBar<'_> {
 /// Used for both the choice select dropdown and the theme picker.
 /// Clears the area behind it, draws a bordered block with a title,
 /// and renders selectable items with a `▶` cursor indicator.
+/// Optionally shows descriptions alongside items.
 pub struct SelectList<'a> {
     /// Title shown in the block border.
     pub title: String,
     /// Item labels to display.
     pub items: &'a [String],
+    /// Optional descriptions for each item (parallel to `items`).
+    pub descriptions: &'a [Option<String>],
     /// Currently selected index.
     pub selected: usize,
     /// Style for unselected items.
@@ -618,11 +621,18 @@ impl<'a> SelectList<'a> {
         Self {
             title,
             items,
+            descriptions: &[],
             selected,
             item_color,
             selected_color,
             colors,
         }
+    }
+
+    /// Set descriptions to display alongside items.
+    pub fn with_descriptions(mut self, descriptions: &'a [Option<String>]) -> Self {
+        self.descriptions = descriptions;
+        self
     }
 }
 
@@ -660,7 +670,8 @@ impl Widget for SelectList<'_> {
                     } else {
                         Style::default().fg(self.item_color)
                     };
-                    let mut item = ratatui::widgets::ListItem::new(Line::from(vec![
+
+                    let mut spans = vec![
                         Span::styled(
                             prefix,
                             if is_selected {
@@ -672,7 +683,17 @@ impl Widget for SelectList<'_> {
                             },
                         ),
                         Span::styled(label.clone(), style),
-                    ]));
+                    ];
+
+                    // Add description if present
+                    if let Some(Some(desc)) = self.descriptions.get(i) {
+                        spans.push(Span::styled(
+                            format!("  {}", desc),
+                            Style::default().fg(self.colors.help),
+                        ));
+                    }
+
+                    let mut item = ratatui::widgets::ListItem::new(Line::from(spans));
                     if is_selected {
                         item = item.style(Style::default().bg(self.colors.selected_bg));
                     }

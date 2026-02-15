@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::io::Write;
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -109,6 +111,8 @@ pub struct ThemePickerState {
 pub struct ChoiceSelectState {
     /// All available choices for the item.
     pub choices: Vec<String>,
+    /// Optional descriptions for each choice (parallel to `choices`).
+    pub descriptions: Vec<Option<String>>,
     /// Current filter text.
     pub filter_input: InputState,
     /// Selected index in the filtered list (not the original choices list).
@@ -121,6 +125,8 @@ pub struct ChoiceSelectState {
     pub value_column: u16,
     /// The rendered overlay area (set during rendering, used for mouse hit-testing).
     pub overlay_rect: Option<Rect>,
+    /// Whether this select came from dynamic completions (Esc falls back to free-text editing).
+    pub from_completions: bool,
 }
 
 /// Data stored in each tree node for a command.
@@ -206,6 +212,10 @@ pub struct App {
 
     /// Area of the theme indicator in the help bar (for mouse click detection).
     pub theme_indicator_rect: Option<Rect>,
+
+    /// Cache of dynamic completion results, keyed by "command_path:arg_name".
+    /// Each entry holds (choices, descriptions) from a previously-run completion command.
+    pub completion_cache: HashMap<String, (Vec<String>, Vec<Option<String>>)>,
 }
 
 impl App {
@@ -305,6 +315,7 @@ impl App {
             choice_select: None,
             theme_picker: None,
             theme_indicator_rect: None,
+            completion_cache: HashMap::new(),
         };
         app.sync_state();
         // Synchronize command_path with the tree's initial selection so the
@@ -469,6 +480,14 @@ impl App {
             .collect()
     }
 
+    /// Get the description for a choice at the given original index.
+    pub fn choice_description(&self, original_index: usize) -> Option<&str> {
+        self.choice_select
+            .as_ref()
+            .and_then(|cs| cs.descriptions.get(original_index))
+            .and_then(|d| d.as_deref())
+    }
+
     /// Open the choice select box for the current flag/arg.
     pub fn open_choice_select(&mut self, choices: Vec<String>, current_value: &str) {
         let source_panel = self.focus();
@@ -537,13 +556,29 @@ impl App {
             .unwrap_or(0);
         self.choice_select = Some(ChoiceSelectState {
             choices,
+            descriptions: Vec::new(),
             filter_input: InputState::empty(),
             selected_index: current_idx,
             source_panel,
             source_index,
             value_column,
             overlay_rect: None,
+            from_completions: false,
         });
+    }
+
+    /// Open the choice select box populated with dynamic completion results.
+    pub fn open_completion_select(
+        &mut self,
+        choices: Vec<String>,
+        descriptions: Vec<Option<String>>,
+        current_value: &str,
+    ) {
+        self.open_choice_select(choices, current_value);
+        if let Some(ref mut cs) = self.choice_select {
+            cs.descriptions = descriptions;
+            cs.from_completions = true;
+        }
     }
 
     /// Close the choice select box without applying.
@@ -594,7 +629,15 @@ impl App {
 
         match key.code {
             KeyCode::Esc => {
+                let from_completions = self
+                    .choice_select
+                    .as_ref()
+                    .map(|cs| cs.from_completions)
+                    .unwrap_or(false);
                 self.close_choice_select();
+                if from_completions {
+                    self.start_editing();
+                }
                 Action::None
             }
             KeyCode::Enter => {
@@ -710,6 +753,86 @@ impl App {
             }
         }
         cmd
+    }
+
+    /// Find a `complete` directive for the given argument name on the current command.
+    pub fn find_completion(&self, arg_name: &str) -> Option<&usage::SpecComplete> {
+        let cmd = self.current_command();
+        cmd.complete.get(arg_name)
+    }
+
+    /// Cache key for a completion result: "command_path:arg_name".
+    fn completion_cache_key(&self, arg_name: &str) -> String {
+        let path = self.command_path.join(" ");
+        format!("{}:{}", path, arg_name)
+    }
+
+    /// Run a completion command and parse its output into (choices, descriptions).
+    /// When `descriptions` is true, each line is parsed as "value:description".
+    pub fn run_completion(
+        run_cmd: &str,
+        descriptions: bool,
+    ) -> Option<(Vec<String>, Vec<Option<String>>)> {
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(run_cmd)
+            .output()
+            .ok()?;
+
+        if !output.status.success() {
+            return None;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut choices = Vec::new();
+        let mut descs = Vec::new();
+
+        for line in stdout.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if descriptions {
+                // Parse "value:description", with \: as escaped colon
+                if let Some((value, desc)) = parse_completion_line(line) {
+                    choices.push(value);
+                    descs.push(Some(desc));
+                } else {
+                    choices.push(line.to_string());
+                    descs.push(None);
+                }
+            } else {
+                choices.push(line.to_string());
+                descs.push(None);
+            }
+        }
+
+        if choices.is_empty() {
+            return None;
+        }
+
+        Some((choices, descs))
+    }
+
+    /// Try to get or run completions for the given arg name, using the cache.
+    /// Returns `Some((choices, descriptions))` on success, `None` on failure.
+    pub fn get_or_run_completion(
+        &mut self,
+        arg_name: &str,
+    ) -> Option<(Vec<String>, Vec<Option<String>>)> {
+        let cache_key = self.completion_cache_key(arg_name);
+
+        if let Some(cached) = self.completion_cache.get(&cache_key) {
+            return Some(cached.clone());
+        }
+
+        let complete = self.find_completion(arg_name)?.clone();
+        let run_cmd = complete.run.as_ref()?;
+
+        let result = Self::run_completion(run_cmd, complete.descriptions)?;
+
+        self.completion_cache.insert(cache_key, result.clone());
+        Some(result)
     }
 
     /// Whether the spec has any subcommands at all (for focus manager).
@@ -1772,6 +1895,15 @@ impl App {
                     })
                 };
 
+                // Get the flag's arg name for completion lookup (before mutable borrow)
+                let flag_arg_name: Option<String> = {
+                    let flags = self.visible_flags();
+                    flags
+                        .get(flag_idx)
+                        .and_then(|f| f.arg.as_ref())
+                        .map(|a| a.name.clone())
+                };
+
                 // Toggle bool flags, start editing string flags
                 let values = self.current_flag_values_mut();
                 if let Some((name, value)) = values.get_mut(flag_idx) {
@@ -1789,9 +1921,17 @@ impl App {
                         }
                         FlagValue::String(s) => {
                             if let Some(choices) = maybe_choices {
-                                // Open choice select box instead of cycling
                                 let current = s.clone();
                                 self.open_choice_select(choices, &current);
+                            } else if let Some(ref arg_name) = flag_arg_name {
+                                let current = s.clone();
+                                if let Some((choices, descs)) =
+                                    self.get_or_run_completion(arg_name)
+                                {
+                                    self.open_completion_select(choices, descs, &current);
+                                } else {
+                                    self.start_editing();
+                                }
                             } else {
                                 self.start_editing();
                             }
@@ -1804,12 +1944,17 @@ impl App {
                 let arg_idx = self.arg_index();
                 let arg = &self.arg_values[arg_idx];
                 if !arg.choices.is_empty() {
-                    // Open choice select box instead of cycling
                     let choices = arg.choices.clone();
                     let current = arg.value.clone();
                     self.open_choice_select(choices, &current);
                 } else {
-                    self.start_editing();
+                    let arg_name = arg.name.clone();
+                    let current = arg.value.clone();
+                    if let Some((choices, descs)) = self.get_or_run_completion(&arg_name) {
+                        self.open_completion_select(choices, descs, &current);
+                    } else {
+                        self.start_editing();
+                    }
                 }
                 Action::None
             }
@@ -2383,6 +2528,25 @@ pub fn fuzzy_match(text: &str, pattern: &str) -> bool {
         }
     }
     true
+}
+
+/// Parse a completion line in "value:description" format.
+/// Colons can be escaped with `\:`.
+fn parse_completion_line(line: &str) -> Option<(String, String)> {
+    let mut value = String::new();
+    let mut chars = line.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' && chars.peek() == Some(&':') {
+            value.push(':');
+            chars.next();
+        } else if ch == ':' {
+            let desc: String = chars.collect();
+            return Some((value, desc.to_string()));
+        } else {
+            value.push(ch);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -5215,5 +5379,203 @@ mod tests {
         app.handle_key(down);
         assert_eq!(app.theme_picker.as_ref().unwrap().selected_index, 0);
         assert_eq!(app.theme_name, ThemeName::Dracula);
+    }
+
+    // ── Completion tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_completion_line_simple() {
+        let result = parse_completion_line("auth:Authentication plugin");
+        assert_eq!(
+            result,
+            Some(("auth".to_string(), "Authentication plugin".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_completion_line_escaped_colon() {
+        let result = parse_completion_line("host\\:port:A host:port pair");
+        assert_eq!(
+            result,
+            Some(("host:port".to_string(), "A host:port pair".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_completion_line_no_description() {
+        let result = parse_completion_line("simple-value");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_run_completion_simple() {
+        let result = App::run_completion("printf 'alpha\nbeta\ngamma\n'", false);
+        assert!(result.is_some());
+        let (choices, descs) = result.unwrap();
+        assert_eq!(choices, vec!["alpha", "beta", "gamma"]);
+        assert!(descs.iter().all(|d| d.is_none()));
+    }
+
+    #[test]
+    fn test_run_completion_with_descriptions() {
+        let result =
+            App::run_completion("printf 'auth:Auth plugin\ncache:Cache layer\n'", true);
+        assert!(result.is_some());
+        let (choices, descs) = result.unwrap();
+        assert_eq!(choices, vec!["auth", "cache"]);
+        assert_eq!(
+            descs,
+            vec![
+                Some("Auth plugin".to_string()),
+                Some("Cache layer".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn test_run_completion_failure() {
+        let result = App::run_completion("false", false);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_run_completion_empty_output() {
+        let result = App::run_completion("echo ''", false);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_completion_exists() {
+        let spec = sample_spec();
+        let mut app = App::new(spec);
+        app.navigate_to_command(&["plugin", "install"]);
+        let complete = app.find_completion("name");
+        assert!(complete.is_some(), "Should find completion for 'name'");
+        assert!(
+            complete.unwrap().run.is_some(),
+            "Completion should have a run command"
+        );
+    }
+
+    #[test]
+    fn test_find_completion_not_exists() {
+        let spec = sample_spec();
+        let mut app = App::new(spec);
+        app.navigate_to_command(&["plugin", "install"]);
+        let complete = app.find_completion("nonexistent");
+        assert!(complete.is_none());
+    }
+
+    #[test]
+    fn test_find_completion_with_descriptions_flag() {
+        let spec = sample_spec();
+        let mut app = App::new(spec);
+        app.navigate_to_command(&["plugin", "update"]);
+        let complete = app.find_completion("name");
+        assert!(complete.is_some());
+        assert!(complete.unwrap().descriptions);
+    }
+
+    #[test]
+    fn test_completion_cache() {
+        let spec = sample_spec();
+        let mut app = App::new(spec);
+        app.navigate_to_command(&["plugin", "install"]);
+
+        // First call should run the command
+        let result = app.get_or_run_completion("name");
+        assert!(result.is_some());
+        let (choices, _) = result.unwrap();
+        assert!(!choices.is_empty());
+
+        // Second call should use the cache
+        let cache_key = app.completion_cache_key("name");
+        assert!(
+            app.completion_cache.contains_key(&cache_key),
+            "Result should be cached"
+        );
+
+        let result2 = app.get_or_run_completion("name");
+        assert_eq!(result2.unwrap().0, choices, "Cached result should match");
+    }
+
+    #[test]
+    fn test_enter_on_completion_arg_opens_select() {
+        let spec = sample_spec();
+        let mut app = App::new(spec);
+        app.navigate_to_command(&["plugin", "install"]);
+        app.set_focus(Focus::Args);
+
+        // The <name> arg at index 0 should have a completion
+        app.set_arg_index(0);
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+
+        assert!(
+            app.is_choosing(),
+            "Enter on arg with completion should open select"
+        );
+        assert!(
+            app.choice_select
+                .as_ref()
+                .map(|cs| cs.from_completions)
+                .unwrap_or(false),
+            "Select should be marked as from_completions"
+        );
+    }
+
+    #[test]
+    fn test_esc_from_completion_select_opens_editor() {
+        let spec = sample_spec();
+        let mut app = App::new(spec);
+        app.navigate_to_command(&["plugin", "install"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+
+        // Open completion select
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.is_choosing());
+
+        // Esc should close select and open free-text editor
+        let esc = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(esc);
+        assert!(!app.is_choosing(), "Select should be closed");
+        assert!(app.editing, "Should fall back to text editing");
+    }
+
+    #[test]
+    fn test_completion_descriptions_in_select() {
+        let spec = sample_spec();
+        let mut app = App::new(spec);
+        app.navigate_to_command(&["plugin", "update"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+
+        assert!(app.is_choosing());
+        let cs = app.choice_select.as_ref().unwrap();
+        assert!(
+            !cs.descriptions.is_empty(),
+            "Should have descriptions"
+        );
+        assert!(
+            cs.descriptions.iter().any(|d| d.is_some()),
+            "At least one description should be present"
+        );
     }
 }

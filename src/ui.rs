@@ -663,7 +663,6 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
         .map(|(_, c)| c.chars().count())
         .max()
         .unwrap_or(10) as u16;
-    let overlay_width = (max_choice_len + 6).min(terminal_area.width.saturating_sub(2)); // padding + border + selector
     let max_visible = 10u16;
     let visible_count = if filtered.is_empty() {
         1
@@ -672,11 +671,34 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
     };
     let overlay_height = visible_count + 2; // borders
 
+    // Build the title with filter text
+    let title = if filter_text.is_empty() {
+        " Select ".to_string()
+    } else {
+        format!(" {} ", filter_text)
+    };
+
+    // Collect labels and descriptions for the SelectList widget
+    let labels: Vec<String> = filtered.iter().map(|(_, c)| c.clone()).collect();
+    let descs: Vec<Option<String>> = filtered
+        .iter()
+        .map(|(orig_idx, _)| app.choice_description(*orig_idx).map(|s| s.to_string()))
+        .collect();
+
+    // Account for description width in overlay sizing
+    let max_desc_len = descs
+        .iter()
+        .map(|d| d.as_ref().map(|s| s.chars().count() + 2).unwrap_or(0))
+        .max()
+        .unwrap_or(0) as u16;
+    let overlay_width =
+        (max_choice_len + max_desc_len + 6).min(terminal_area.width.saturating_sub(2));
+
     // Position x at the value column (where the value text would appear)
-    let overlay_x = (panel_area.x + value_column).min(terminal_area.width.saturating_sub(overlay_width));
+    let overlay_x = (panel_area.x + value_column)
+        .min(terminal_area.width.saturating_sub(overlay_width));
 
     // Clamp to terminal bounds
-    let overlay_x = overlay_x.min(terminal_area.width.saturating_sub(overlay_width));
     let overlay_y = overlay_y.min(terminal_area.height.saturating_sub(overlay_height));
 
     let overlay_rect = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
@@ -686,16 +708,6 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
         cs.overlay_rect = Some(overlay_rect);
     }
 
-    // Build the title with filter text
-    let title = if filter_text.is_empty() {
-        " Select ".to_string()
-    } else {
-        format!(" {} ", filter_text)
-    };
-
-    // Collect labels for the SelectList widget
-    let labels: Vec<String> = filtered.iter().map(|(_, c)| c.clone()).collect();
-
     let widget = SelectList::new(
         title,
         &labels,
@@ -703,7 +715,8 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
         colors.choice,
         colors.choice,
         colors,
-    );
+    )
+    .with_descriptions(&descs);
     frame.render_widget(widget, overlay_rect);
 }
 
