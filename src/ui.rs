@@ -409,9 +409,8 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
                     cs.source_panel == Focus::Flags && cs.source_index == i
                 });
 
-                if is_choice_selecting {
-                    // Don't render value or choices hint — the select box will overlay here
-                } else if is_editing {
+                if is_choice_selecting || is_editing {
+                    // Show the edit cursor — when choice selecting, the text input is also active
                     let before_cursor = app.edit_input.text_before_cursor();
                     let after_cursor = app.edit_input.text_after_cursor();
                     push_edit_cursor(&mut spans, before_cursor, after_cursor, colors);
@@ -540,9 +539,8 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
                 cs.source_panel == Focus::Args && cs.source_index == i
             });
 
-            if is_choice_selecting {
-                // Don't render value or choices hint — the select box will overlay here
-            } else if is_editing {
+            if is_choice_selecting || is_editing {
+                // Show the edit cursor — when choice selecting, the text input is also active
                 let before_cursor = app.edit_input.text_before_cursor();
                 let after_cursor = app.edit_input.text_after_cursor();
                 push_edit_cursor(&mut spans, before_cursor, after_cursor, colors);
@@ -616,12 +614,8 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
     let source_index = cs.source_index;
     let value_column = cs.value_column;
     let selected_index = cs.selected_index;
-    let filter_text = cs.filter_input.text().to_string();
 
     let filtered = app.filtered_choices();
-    if filtered.is_empty() {
-        // Still show the box with a "no matches" message
-    }
 
     // Determine the panel area and item position
     let panel_area = match source_panel {
@@ -654,8 +648,8 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
     let inner_y = panel_area.y + 1; // skip border
     let item_y = inner_y + (source_index as u16).saturating_sub(scroll_offset as u16);
 
-    // Position the overlay on the SAME row as the item (top border shares the row)
-    let overlay_y = item_y;
+    // Position the overlay one row BELOW the item
+    let overlay_y = item_y + 1;
 
     // Calculate dimensions
     let max_choice_len = filtered
@@ -671,13 +665,6 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
     };
     let overlay_height = visible_count + 2; // borders
 
-    // Build the title with filter text
-    let title = if filter_text.is_empty() {
-        " Select ".to_string()
-    } else {
-        format!(" {} ", filter_text)
-    };
-
     // Collect labels and descriptions for the SelectList widget
     let labels: Vec<String> = filtered.iter().map(|(_, c)| c.clone()).collect();
     let descs: Vec<Option<String>> = filtered
@@ -692,7 +679,7 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
         .max()
         .unwrap_or(0) as u16;
     let overlay_width =
-        (max_choice_len + max_desc_len + 6).min(terminal_area.width.saturating_sub(2));
+        (max_choice_len + max_desc_len + 4).min(terminal_area.width.saturating_sub(2));
 
     // Position x at the value column (where the value text would appear)
     let overlay_x = (panel_area.x + value_column)
@@ -709,7 +696,7 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
     }
 
     let widget = SelectList::new(
-        title,
+        String::new(),
         &labels,
         selected_index,
         colors.choice,
@@ -759,11 +746,12 @@ fn render_theme_picker(frame: &mut Frame, app: &mut App, terminal_area: Rect, co
     let widget = SelectList::new(
         " Theme ".to_string(),
         &labels,
-        selected_index,
+        Some(selected_index),
         colors.choice,
         colors.value,
         colors,
-    );
+    )
+    .with_cursor();
     frame.render_widget(widget, overlay_rect);
 }
 
@@ -771,7 +759,7 @@ fn render_help_bar(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
     let keybinds = if app.is_theme_picking() {
         "↑↓: navigate  Enter: confirm  Esc: cancel"
     } else if app.is_choosing() {
-        "↑↓: navigate  Enter: confirm  Esc: cancel  type to filter"
+        "↑↓: select  Enter: confirm  Esc: keep text"
     } else if app.editing {
         "Enter: confirm  Esc: cancel"
     } else if app.filtering {

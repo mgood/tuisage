@@ -18,11 +18,11 @@ expression: output
 │  │ install (i)       Install a plugin││                                                          │
 │  │ uninstall (rm)  Uninstall a plugin│└──────────────────────────────────────────────────────────┘
 │  │ list (ls)   List installed plugins│┌ Arguments ───────────────────────────────────────────────┐
-│  │ update              Update plugins││ ▶ ● <environment> = ┌ Select ───┐       Target environme │
-│  version        Print the CLI version││                     │▶ dev      │                        │
-│  help          Print help information││                     │  staging  │                        │
-│                                      ││                     │  prod     │                        │
-│                                      ││                     └───────────┘                        │
-│                                      ││                                                          │
+│  │ update              Update plugins││ ▶ ● <environment> = ▎                   Target environme │
+│  version        Print the CLI version││                     ┌─────────┐                          │
+│  help          Print help information││                     │dev      │                          │
+│                                      ││                     │staging  │                          │
+│                                      ││                     │prod     │                          │
+│                                      ││                     └─────────┘                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
- ↑↓: navigate  Enter: confirm  Esc: cancel  type to filter                             T: [Dracula]
+ ↑↓: select  Enter: confirm  Esc: keep text                                            T: [Dracula]

@@ -3,7 +3,7 @@ source: src/ui.rs
 expression: output
 ---
 ┌ Command ─────────────────────────────────────────────────────────────────────────────────────────┐
-│ $ mycli deploy                                                                                   │
+│ $ mycli deploy st                                                                                │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ Commands ────────────────────────────┐┌ Flags ───────────────────────────────────────────────────┐
 │  init        Initialize a new project││   [·] --tag = <tag>                     Docker image tag │
@@ -18,11 +18,11 @@ expression: output
 │  │ install (i)       Install a plugin││                                                          │
 │  │ uninstall (rm)  Uninstall a plugin│└──────────────────────────────────────────────────────────┘
 │  │ list (ls)   List installed plugins│┌ Arguments ───────────────────────────────────────────────┐
-│  │ update              Update plugins││ ▶ ● <environment> = ┌ st ───────┐       Target environme │
-│  version        Print the CLI version││                     │▶ staging  │                        │
-│  help          Print help information││                     └───────────┘                        │
-│                                      ││                                                          │
+│  │ update              Update plugins││ ▶ ● <environment> = st▎                 Target environme │
+│  version        Print the CLI version││                     ┌─────────┐                          │
+│  help          Print help information││                     │staging  │                          │
+│                                      ││                     └─────────┘                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
- ↑↓: navigate  Enter: confirm  Esc: cancel  type to filter                             T: [Dracula]
+ ↑↓: select  Enter: confirm  Esc: keep text                                            T: [Dracula]

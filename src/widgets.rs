@@ -594,14 +594,16 @@ impl Widget for HelpBar<'_> {
 /// and renders selectable items with a `▶` cursor indicator.
 /// Optionally shows descriptions alongside items.
 pub struct SelectList<'a> {
-    /// Title shown in the block border.
+    /// Title shown in the block border (empty string = no title).
     pub title: String,
     /// Item labels to display.
     pub items: &'a [String],
     /// Optional descriptions for each item (parallel to `items`).
     pub descriptions: &'a [Option<String>],
-    /// Currently selected index.
-    pub selected: usize,
+    /// Currently selected index (None = no selection).
+    pub selected: Option<usize>,
+    /// Whether to show the ▶ selection cursor prefix.
+    pub show_cursor: bool,
     /// Style for unselected items.
     pub item_color: Color,
     /// Style for the selected item (text color).
@@ -613,7 +615,7 @@ impl<'a> SelectList<'a> {
     pub fn new(
         title: String,
         items: &'a [String],
-        selected: usize,
+        selected: Option<usize>,
         item_color: Color,
         selected_color: Color,
         colors: &'a UiColors,
@@ -623,6 +625,7 @@ impl<'a> SelectList<'a> {
             items,
             descriptions: &[],
             selected,
+            show_cursor: false,
             item_color,
             selected_color,
             colors,
@@ -634,6 +637,12 @@ impl<'a> SelectList<'a> {
         self.descriptions = descriptions;
         self
     }
+
+    /// Show ▶ prefix cursor for the selected item.
+    pub fn with_cursor(mut self) -> Self {
+        self.show_cursor = true;
+        self
+    }
 }
 
 impl Widget for SelectList<'_> {
@@ -641,15 +650,18 @@ impl Widget for SelectList<'_> {
         // Clear area behind the overlay
         ratatui::widgets::Clear.render(area, buf);
 
-        let block = Block::default()
+        let mut block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(self.colors.active_border))
-            .title(self.title)
-            .title_style(
-                Style::default()
-                    .fg(self.colors.active_border)
-                    .add_modifier(Modifier::BOLD),
-            );
+            .border_style(Style::default().fg(self.colors.active_border));
+        if !self.title.is_empty() {
+            block = block
+                .title(self.title)
+                .title_style(
+                    Style::default()
+                        .fg(self.colors.active_border)
+                        .add_modifier(Modifier::BOLD),
+                );
+        }
 
         let items: Vec<ratatui::widgets::ListItem> = if self.items.is_empty() {
             vec![ratatui::widgets::ListItem::new(Line::from(Span::styled(
@@ -661,8 +673,7 @@ impl Widget for SelectList<'_> {
                 .iter()
                 .enumerate()
                 .map(|(i, label)| {
-                    let is_selected = i == self.selected;
-                    let prefix = if is_selected { "▶ " } else { "  " };
+                    let is_selected = self.selected == Some(i);
                     let style = if is_selected {
                         Style::default()
                             .fg(self.selected_color)
@@ -671,8 +682,10 @@ impl Widget for SelectList<'_> {
                         Style::default().fg(self.item_color)
                     };
 
-                    let mut spans = vec![
-                        Span::styled(
+                    let mut spans = Vec::new();
+                    if self.show_cursor {
+                        let prefix = if is_selected { "▶ " } else { "  " };
+                        spans.push(Span::styled(
                             prefix,
                             if is_selected {
                                 Style::default()
@@ -681,9 +694,9 @@ impl Widget for SelectList<'_> {
                             } else {
                                 Style::default()
                             },
-                        ),
-                        Span::styled(label.clone(), style),
-                    ];
+                        ));
+                    }
+                    spans.push(Span::styled(label.clone(), style));
 
                     // Add description if present
                     if let Some(Some(desc)) = self.descriptions.get(i) {
@@ -707,12 +720,14 @@ impl Widget for SelectList<'_> {
             if self.items.is_empty() {
                 None
             } else {
-                Some(self.selected)
+                self.selected
             },
         );
 
-        if self.selected >= visible_items {
-            state = state.with_offset(self.selected.saturating_sub(visible_items - 1));
+        if let Some(sel) = self.selected {
+            if sel >= visible_items {
+                state = state.with_offset(sel.saturating_sub(visible_items - 1));
+            }
         }
 
         let list = ratatui::widgets::List::new(items).block(block);

@@ -74,12 +74,12 @@ cmd "plugin" help="Manage plugins" {
         arg "<name>" help="Plugin name"
         arg "[version]" help="Plugin version"
         flag "-f --force" help="Force reinstall"
-        complete "name" run="echo -e 'auth\nanalytics\ncache\ndashboard\nlogging'"
+        complete "name" run="printf 'auth\nanalytics\ncache\ndashboard\nlogging\n'"
     }
     cmd "uninstall" help="Uninstall a plugin" {
         alias "rm"
         arg "<name>" help="Plugin name"
-        complete "name" run="echo -e 'auth\nanalytics\ncache'" descriptions=#true
+        complete "name" run="printf 'auth\nanalytics\ncache\n'" descriptions=#true
     }
     cmd "list" help="List installed plugins" {
         alias "ls"
@@ -89,7 +89,7 @@ cmd "plugin" help="Manage plugins" {
     cmd "update" help="Update plugins" {
         arg "[name]" help="Plugin name (updates all if omitted)"
         flag "--all" help="Update all plugins"
-        complete "name" run="echo -e 'auth:Authentication plugin\nanalytics:Usage analytics\ncache:Redis cache layer'" descriptions=#true
+        complete "name" run="printf 'auth:Authentication plugin\nanalytics:Usage analytics\ncache:Redis cache layer\n'" descriptions=#true
     }
 }
 

@@ -113,10 +113,8 @@ pub struct ChoiceSelectState {
     pub choices: Vec<String>,
     /// Optional descriptions for each choice (parallel to `choices`).
     pub descriptions: Vec<Option<String>>,
-    /// Current filter text.
-    pub filter_input: InputState,
-    /// Selected index in the filtered list (not the original choices list).
-    pub selected_index: usize,
+    /// Selected index in the filtered list (None = no selection, text input is the value).
+    pub selected_index: Option<usize>,
     /// Which panel opened the select box.
     pub source_panel: Focus,
     /// Index of the item (flag or arg) the select box belongs to.
@@ -125,8 +123,6 @@ pub struct ChoiceSelectState {
     pub value_column: u16,
     /// The rendered overlay area (set during rendering, used for mouse hit-testing).
     pub overlay_rect: Option<Rect>,
-    /// Whether this select came from dynamic completions (Esc falls back to free-text editing).
-    pub from_completions: bool,
 }
 
 /// Data stored in each tree node for a command.
@@ -376,7 +372,10 @@ impl App {
             self.filtering = false;
             self.filter_input.clear();
         }
-        // Close choice select when switching panels
+        // Finish any active editing and close choice select when switching panels
+        if self.editing {
+            self.finish_editing();
+        }
         self.choice_select = None;
         self.focus_manager.set(panel);
     }
@@ -462,7 +461,7 @@ impl App {
         let Some(ref cs) = self.choice_select else {
             return Vec::new();
         };
-        let filter = cs.filter_input.text();
+        let filter = self.edit_input.text();
         if filter.is_empty() {
             return cs
                 .choices
@@ -549,22 +548,22 @@ impl App {
             _ => 4,
         };
 
-        // Find the index of the current value in the choices list
-        let current_idx = choices
+        // Find the index of the current value in the choices list — pre-select if it matches
+        let selected_index = choices
             .iter()
-            .position(|c| c == current_value)
-            .unwrap_or(0);
+            .position(|c| c == current_value);
         self.choice_select = Some(ChoiceSelectState {
             choices,
             descriptions: Vec::new(),
-            filter_input: InputState::empty(),
-            selected_index: current_idx,
+            selected_index,
             source_panel,
             source_index,
             value_column,
             overlay_rect: None,
-            from_completions: false,
         });
+        // Enter editing mode with the current value as initial text
+        self.editing = true;
+        self.edit_input.set_text(current_value.to_string());
     }
 
     /// Open the choice select box populated with dynamic completion results.
@@ -577,7 +576,6 @@ impl App {
         self.open_choice_select(choices, current_value);
         if let Some(ref mut cs) = self.choice_select {
             cs.descriptions = descriptions;
-            cs.from_completions = true;
         }
     }
 
@@ -592,12 +590,18 @@ impl App {
         let Some(ref cs) = self.choice_select else {
             return;
         };
-        let selected_index = cs.selected_index;
+        let Some(selected_index) = cs.selected_index else {
+            // No selection — accept typed text via finish_editing
+            self.choice_select = None;
+            self.finish_editing();
+            return;
+        };
         let source_panel = cs.source_panel;
         let source_index = cs.source_index;
 
         let Some((_, choice_text)) = filtered.get(selected_index) else {
             self.choice_select = None;
+            self.finish_editing();
             return;
         };
         let choice_text = choice_text.clone();
@@ -621,69 +625,73 @@ impl App {
         }
 
         self.choice_select = None;
+        self.editing = false;
     }
 
     /// Handle key events when the choice select box is open.
+    /// The text input is active simultaneously — typing filters choices and clears selection.
     fn handle_choice_select_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
         use crossterm::event::KeyCode;
 
         match key.code {
             KeyCode::Esc => {
-                let from_completions = self
-                    .choice_select
-                    .as_ref()
-                    .map(|cs| cs.from_completions)
-                    .unwrap_or(false);
+                // Keep the typed text as the value, close select
+                self.sync_edit_to_value();
+                self.editing = false;
                 self.close_choice_select();
-                if from_completions {
-                    self.start_editing();
-                }
                 Action::None
             }
             KeyCode::Enter => {
                 self.confirm_choice_select();
                 Action::None
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Up => {
                 if let Some(ref mut cs) = self.choice_select {
-                    if cs.selected_index > 0 {
-                        cs.selected_index -= 1;
+                    match cs.selected_index {
+                        Some(0) | None => cs.selected_index = None,
+                        Some(idx) => cs.selected_index = Some(idx - 1),
                     }
                 }
                 Action::None
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Down => {
                 let filtered_len = self.filtered_choices().len();
                 if let Some(ref mut cs) = self.choice_select {
-                    if cs.selected_index + 1 < filtered_len {
-                        cs.selected_index += 1;
+                    if filtered_len > 0 {
+                        match cs.selected_index {
+                            None => cs.selected_index = Some(0),
+                            Some(idx) if idx + 1 < filtered_len => {
+                                cs.selected_index = Some(idx + 1);
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 Action::None
             }
             KeyCode::Backspace => {
+                self.edit_input.delete_char_backward();
+                self.sync_edit_to_value();
+                // Clear selection when typing
                 if let Some(ref mut cs) = self.choice_select {
-                    cs.filter_input.delete_char_backward();
-                }
-                // Recompute selection bounds
-                let filtered_len = self.filtered_choices().len();
-                if let Some(ref mut cs) = self.choice_select {
-                    if cs.selected_index >= filtered_len {
-                        cs.selected_index = filtered_len.saturating_sub(1);
-                    }
+                    cs.selected_index = None;
                 }
                 Action::None
             }
+            KeyCode::Left => {
+                self.edit_input.move_left();
+                Action::None
+            }
+            KeyCode::Right => {
+                self.edit_input.move_right();
+                Action::None
+            }
             KeyCode::Char(c) => {
+                self.edit_input.insert_char(c);
+                self.sync_edit_to_value();
+                // Clear selection when typing
                 if let Some(ref mut cs) = self.choice_select {
-                    cs.filter_input.insert_char(c);
-                }
-                // Recompute selection bounds
-                let filtered_len = self.filtered_choices().len();
-                if let Some(ref mut cs) = self.choice_select {
-                    if cs.selected_index >= filtered_len {
-                        cs.selected_index = filtered_len.saturating_sub(1);
-                    }
+                    cs.selected_index = None;
                 }
                 Action::None
             }
@@ -1280,14 +1288,16 @@ impl App {
                             let filtered_len = self.filtered_choices().len();
                             if clicked_index < filtered_len {
                                 if let Some(ref mut cs) = self.choice_select {
-                                    cs.selected_index = clicked_index;
+                                    cs.selected_index = Some(clicked_index);
                                 }
                                 self.confirm_choice_select();
                             }
                             return Action::None;
                         }
                     }
-                    // Click outside the overlay — close it
+                    // Click outside the overlay — keep typed text, close select
+                    self.sync_edit_to_value();
+                    self.editing = false;
                     self.close_choice_select();
                     return Action::None;
                 }
@@ -4912,12 +4922,13 @@ mod tests {
         app.handle_key(enter);
         assert!(app.is_choosing());
 
-        // Navigate down to "staging" (index 1)
+        // Navigate down to "staging" (Down from None→index 0, then index 0→index 1)
         let down = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Down,
             crossterm::event::KeyModifiers::NONE,
         );
-        app.handle_key(down);
+        app.handle_key(down); // -> Some(0) = "dev"
+        app.handle_key(down); // -> Some(1) = "staging"
 
         // Confirm selection
         app.handle_key(enter);
@@ -5033,7 +5044,7 @@ mod tests {
 
         let cs = app.choice_select.as_ref().unwrap();
         // "staging" is at index 1 in ["dev", "staging", "prod"]
-        assert_eq!(cs.selected_index, 1, "Should pre-select 'staging'");
+        assert_eq!(cs.selected_index, Some(1), "Should pre-select 'staging'");
     }
 
     #[test]
@@ -5058,12 +5069,13 @@ mod tests {
         app.handle_key(enter);
         assert!(app.is_choosing());
 
-        // Navigate to "full" (index 1)
+        // Navigate to "full" (Down goes to index 0 first, then index 1)
         let down = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Down,
             crossterm::event::KeyModifiers::NONE,
         );
-        app.handle_key(down);
+        app.handle_key(down); // -> Some(0) = "basic"
+        app.handle_key(down); // -> Some(1) = "full"
 
         // Confirm
         app.handle_key(enter);
@@ -5119,26 +5131,31 @@ mod tests {
         );
         app.handle_key(enter);
 
-        // Navigate up from index 0 — should stay at 0
+        // No selection initially (empty value doesn't match any choice)
+        // Navigate up from no selection — should stay at None
         let up = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Up,
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(up);
-        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, 0);
+        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, None);
 
-        // Navigate down twice to index 2
+        // Navigate down — selects first item (index 0)
         let down = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Down,
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(down);
+        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, Some(0));
+
+        // Navigate down twice more to index 2
         app.handle_key(down);
-        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, 2);
+        app.handle_key(down);
+        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, Some(2));
 
         // Navigate down again — should stay at 2 (last item)
         app.handle_key(down);
-        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, 2);
+        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, Some(2));
     }
 
     #[test]
@@ -5519,16 +5536,13 @@ mod tests {
             "Enter on arg with completion should open select"
         );
         assert!(
-            app.choice_select
-                .as_ref()
-                .map(|cs| cs.from_completions)
-                .unwrap_or(false),
-            "Select should be marked as from_completions"
+            app.editing,
+            "Editing should be active alongside choice select"
         );
     }
 
     #[test]
-    fn test_esc_from_completion_select_opens_editor() {
+    fn test_esc_from_completion_select_keeps_text() {
         let spec = sample_spec();
         let mut app = App::new(spec);
         app.navigate_to_command(&["plugin", "install"]);
@@ -5543,14 +5557,22 @@ mod tests {
         app.handle_key(enter);
         assert!(app.is_choosing());
 
-        // Esc should close select and open free-text editor
+        // Type some text
+        let a_key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('a'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(a_key);
+
+        // Esc should close select and keep the typed text
         let esc = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Esc,
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(esc);
         assert!(!app.is_choosing(), "Select should be closed");
-        assert!(app.editing, "Should fall back to text editing");
+        assert!(!app.editing, "Editing should be closed");
+        assert_eq!(app.arg_values[0].value, "a", "Typed text should be kept as value");
     }
 
     #[test]
@@ -5576,6 +5598,105 @@ mod tests {
         assert!(
             cs.descriptions.iter().any(|d| d.is_some()),
             "At least one description should be present"
+        );
+    }
+
+    #[test]
+    fn test_choice_select_typing_clears_selection() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.is_choosing());
+
+        // Press Down to select first item
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(down);
+        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, Some(0));
+
+        // Type a character — should clear selection
+        let d_key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('d'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(d_key);
+        assert_eq!(
+            app.choice_select.as_ref().unwrap().selected_index, None,
+            "Typing should clear selection"
+        );
+        assert_eq!(app.edit_input.text(), "d", "Text should be in edit input");
+    }
+
+    #[test]
+    fn test_choice_select_enter_with_no_selection_accepts_text() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.is_choosing());
+
+        // Type custom text without selecting from list
+        for c in "custom".chars() {
+            let key = crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(c),
+                crossterm::event::KeyModifiers::NONE,
+            );
+            app.handle_key(key);
+        }
+        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, None);
+
+        // Press Enter — should accept typed text
+        app.handle_key(enter);
+        assert!(!app.is_choosing(), "Select should be closed");
+        assert!(!app.editing, "Editing should be closed");
+        assert_eq!(app.arg_values[0].value, "custom", "Typed text should be the value");
+    }
+
+    #[test]
+    fn test_choice_select_up_from_first_deselects() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+
+        // Select first item
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(down);
+        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, Some(0));
+
+        // Up from first item should deselect
+        let up = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Up,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(up);
+        assert_eq!(
+            app.choice_select.as_ref().unwrap().selected_index, None,
+            "Up from first item should deselect"
         );
     }
 }
