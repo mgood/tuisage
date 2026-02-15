@@ -181,7 +181,7 @@ When `sync_command_path_from_tree()` is called (on tree selection change):
 
 ### `src/ui.rs`
 
-The rendering module (~2200 lines including ~1150 lines of tests). Uses helpers from `widgets.rs` for consistent panel rendering across all three list panels.
+The rendering module (~1950 lines including ~1150 lines of tests). Uses helpers and custom widgets from `widgets.rs` for consistent rendering.
 
 #### Rendering Functions
 
@@ -191,14 +191,23 @@ The rendering module (~2200 lines including ~1150 lines of tests). Uses helpers 
 - **`render_command_list()`** — renders the command list as a flat `List` widget with depth-based indentation (2 spaces per level). Delegates panel chrome, selection cursors, and text highlighting to `widgets.rs` helpers.
 - **`render_flag_list()`** — renders flags with checkbox indicators (✓/○), values, defaults, global tags, and count badges.
 - **`render_arg_list()`** — renders arguments with required indicators, current values, choices, and inline editing.
-- **`render_preview()`** — renders the colorized command preview with `▶ RUN` or `$` prefix based on focus.
-- **`render_help_bar()`** — renders keybinding hints and theme indicator in a single row at the bottom.
-- **`colorize_command()`** — parses the built command string and applies per-token coloring.
+- **`render_preview()`** — delegates to the `CommandPreview` widget for colorized command rendering.
+- **`render_help_bar()`** — delegates to the `HelpBar` widget for keybinding hints and theme indicator.
+- **`render_choice_select()`** — computes overlay positioning, then delegates to `SelectList` widget.
+- **`render_theme_picker()`** — computes overlay positioning, then delegates to `SelectList` widget.
 - **`flag_display_string()`** — formats a single flag's display text for the list.
 
 ### `src/widgets.rs`
 
-Reusable UI widget helpers (~400 lines) that eliminate duplication across the three list panel renderers. Extracted from repeated patterns in `ui.rs` to ensure consistent behavior.
+Reusable UI widget helpers and custom widgets (~700 lines) that eliminate duplication across renderers. Contains both helper functions used by `ui.rs` panel renderers and self-contained `Widget` trait implementations for composable UI sections.
+
+#### Custom Widgets
+
+These implement the ratatui `Widget` trait for self-contained, testable rendering:
+
+- **`CommandPreview`** — renders the assembled command string in a bordered block with syntax-aware token coloring (binary name, subcommands, flags, positional arguments). Handles focus-dependent styling (▶ prefix when focused, $ when not).
+- **`HelpBar`** — renders the context-sensitive help/status bar with keyboard shortcuts on the left and a right-aligned theme indicator. Exposes `theme_indicator_rect()` for mouse hit-testing.
+- **`SelectList`** — renders a bordered selectable list overlay with Clear + block + items. Used by both the choice select dropdown and theme picker. Supports empty state ("no matches"), scroll offset for long lists, and configurable item/selected colors.
 
 #### `UiColors` Struct
 
@@ -301,6 +310,7 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 | Decision | Rationale |
 |---|---|
 | Shared widget helpers (`widgets.rs`) | Extracts common panel rendering patterns (borders, selection cursors, text highlighting) into reusable helpers. Eliminates ~100 lines of duplication across the three list renderers and ensures consistent behavior. |
+| Custom `Widget` trait implementations | `CommandPreview`, `HelpBar`, and `SelectList` implement ratatui's `Widget` trait for self-contained, composable rendering. Positioning/layout logic stays in `ui.rs`; rendering logic lives in the widget. |
 | Core modules (`app.rs`, `ui.rs`) with helpers | Core state and rendering logic stays in focused modules. Shared UI patterns extracted to `widgets.rs`, navigation helpers extracted as free functions. |
 | `Vec<String>` for command path | Simple push/pop navigation through the command tree. Joined with `>` for hash map keys. |
 | State preserved across navigation | Flag/arg values are stored per command-path key, so navigating away and back retains previous selections. |
@@ -355,5 +365,5 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 
 - **Clipboard copy** — copy the built command to the system clipboard from within the TUI
 - **Embedded USAGE blocks** — verify and test support for script files with heredoc USAGE blocks via `--spec-file`
-- **Module splitting** — break `app.rs` into `state`, `input`, `builder` sub-modules; break `ui.rs` into widget modules
+- **Module splitting** — break `app.rs` into `state`, `input`, `builder` sub-modules; consider migrating remaining panel renderers (command list, flag list, arg list) to custom `Widget` implementations
 - **CI pipeline** — GitHub Actions for `cargo test`, `cargo clippy`, and `insta` snapshot checks
