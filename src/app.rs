@@ -1277,8 +1277,8 @@ impl App {
                         .as_ref()
                         .and_then(|cs| cs.overlay_rect);
                     if let Some(rect) = overlay_rect {
-                        // Check if click is within the overlay area (inner content, not border)
-                        let inner_top = rect.y + 1; // skip top border
+                        // Check if click is within the overlay area (inner content)
+                        let inner_top = rect.y; // no top border
                         let inner_bottom = rect.y + rect.height.saturating_sub(1);
                         if col >= rect.x && col < rect.x + rect.width
                             && row >= inner_top && row < inner_bottom

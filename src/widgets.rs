@@ -604,6 +604,8 @@ pub struct SelectList<'a> {
     pub selected: Option<usize>,
     /// Whether to show the ▶ selection cursor prefix.
     pub show_cursor: bool,
+    /// Which borders to show (defaults to ALL).
+    pub borders: Borders,
     /// Style for unselected items.
     pub item_color: Color,
     /// Style for the selected item (text color).
@@ -626,6 +628,7 @@ impl<'a> SelectList<'a> {
             descriptions: &[],
             selected,
             show_cursor: false,
+            borders: Borders::ALL,
             item_color,
             selected_color,
             colors,
@@ -643,6 +646,12 @@ impl<'a> SelectList<'a> {
         self.show_cursor = true;
         self
     }
+
+    /// Set which borders to show.
+    pub fn with_borders(mut self, borders: Borders) -> Self {
+        self.borders = borders;
+        self
+    }
 }
 
 impl Widget for SelectList<'_> {
@@ -651,7 +660,7 @@ impl Widget for SelectList<'_> {
         ratatui::widgets::Clear.render(area, buf);
 
         let mut block = Block::default()
-            .borders(Borders::ALL)
+            .borders(self.borders)
             .border_style(Style::default().fg(self.colors.active_border));
         if !self.title.is_empty() {
             block = block

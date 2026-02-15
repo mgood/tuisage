@@ -19,10 +19,10 @@ expression: output
 │  │ uninstall (rm)  Uninstall a plugin│└──────────────────────────────────────────────────────────┘
 │  │ list (ls)   List installed plugins│┌ Arguments ───────────────────────────────────────────────┐
 │  │ update              Update plugins││ ▶ ● <environment> = ▎                   Target environme │
-│  version        Print the CLI version││                     ┌─────────┐                          │
-│  help          Print help information││                     │dev      │                          │
-│                                      ││                     │staging  │                          │
-│                                      ││                     │prod     │                          │
-│                                      ││                     └─────────┘                          │
+│  version        Print the CLI version││                    │dev      │                           │
+│  help          Print help information││                    │staging  │                           │
+│                                      ││                    │prod     │                           │
+│                                      ││                    └─────────┘                           │
+│                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
  ↑↓: select  Enter: confirm  Esc: keep text                                            T: [Dracula]

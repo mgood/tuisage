@@ -663,7 +663,7 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
     } else {
         (filtered.len() as u16).min(max_visible)
     };
-    let overlay_height = visible_count + 2; // borders
+    let overlay_height = visible_count + 1; // bottom border only
 
     // Collect labels and descriptions for the SelectList widget
     let labels: Vec<String> = filtered.iter().map(|(_, c)| c.clone()).collect();
@@ -681,8 +681,8 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
     let overlay_width =
         (max_choice_len + max_desc_len + 4).min(terminal_area.width.saturating_sub(2));
 
-    // Position x at the value column (where the value text would appear)
-    let overlay_x = (panel_area.x + value_column)
+    // Position x one character left of value column to align with text output
+    let overlay_x = (panel_area.x + value_column.saturating_sub(1))
         .min(terminal_area.width.saturating_sub(overlay_width));
 
     // Clamp to terminal bounds
@@ -703,7 +703,8 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
         colors.choice,
         colors,
     )
-    .with_descriptions(&descs);
+    .with_descriptions(&descs)
+    .with_borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM);
     frame.render_widget(widget, overlay_rect);
 }
 
