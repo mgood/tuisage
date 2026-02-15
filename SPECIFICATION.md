@@ -388,18 +388,19 @@ Filtering uses scored fuzzy-matching (powered by `nucleo-matcher::Pattern`):
 
 ## Inline Choice Select Box
 
-When a flag or argument has predefined choices (e.g., `--template` with choices `basic`, `full`, `minimal`) or dynamic completions (via a `complete` directive), activating it (via Enter) opens an **inline select box** instead of cycling through choices or opening a text editor.
+When a flag or argument has predefined choices (e.g., `--template` with choices `basic`, `full`, `minimal`) or dynamic completions (via a `complete` directive), activating it (via Enter) opens an **inline select box** with an integrated text input.
 
 ### Behavior
 
-1. **Activation**: Pressing Enter on a flag or argument that has choices or completions opens the select box. The select box appears as an overlay rendered inline, directly below the item's position in the list.
-2. **Appearance**: The select box shows all available choices as a vertical list with a border, styled using the panel's active border color. The currently selected choice is highlighted. Choices that don't match the filter are hidden (not dimmed). When completions include descriptions (from `descriptions=#true`), the description is shown alongside each item in the help text color.
-3. **Fuzzy filtering**: As the user types, the choices are filtered using the same `nucleo-matcher` fuzzy matching algorithm. Non-matching choices are **hidden** (removed from the visible list), unlike the main panel filter which dims non-matches. The select box title shows the typed filter text.
-4. **Navigation**: `↑`/`↓`/`j`/`k` navigate between visible (matching) choices. Typing narrows the list.
-5. **Selection**: `Enter` confirms the highlighted choice, closes the select box, and sets the flag/argument value.
-6. **Cancellation**: `Esc` closes the select box without changing the value. For fields with dynamic completions, pressing Esc also allows the user to enter custom text via free-text editing.
-7. **Auto-select**: If only one choice matches the filter, it is auto-highlighted. If the filter narrows to zero matches, the select box shows an empty state.
-8. **Sizing**: The select box is as wide as needed to fit the longest choice (including descriptions), plus the filter text, and as tall as the number of visible choices (up to a maximum of 10 rows). It is positioned to stay within the terminal bounds.
+1. **Activation**: Pressing Enter on a flag or argument that has choices or completions opens the select box and enters editing mode simultaneously. A text cursor appears inline on the item row, and the choice list appears below.
+2. **Appearance**: The choice list appears as a borderless overlay directly below the item, without a title bar. The selected choice (if any) is highlighted with a background color. Choices that don't match the filter are hidden. When completions include descriptions (from `descriptions=#true`), the description is shown alongside each item.
+3. **Text input as filter**: The inline text input serves as both the value input and the filter for the choice list. As the user types, choices are filtered using fuzzy matching and the typed text becomes the current value.
+4. **No initial selection**: When the select box opens, no choice is selected (unless the current value matches a choice). The user's typed text is the value.
+5. **Navigation**: `↓` from no selection selects the first visible choice. `↑` from the first choice deselects (returns to text input mode). `↑`/`↓` navigate between visible choices when a selection is active.
+6. **Selection confirmation**: `Enter` with an active selection confirms that choice and closes the select box. `Enter` with no selection accepts the typed text as the value.
+7. **Dismissal**: `Esc` keeps the typed text as the value, closes the select box and editing mode.
+8. **Typing clears selection**: When a choice is selected, typing any character clears the selection and adds to the text input. This lets the user seamlessly switch between browsing choices and typing custom text.
+9. **Sizing**: The select box is as wide as needed to fit the longest choice (including descriptions), and as tall as the number of visible choices (up to 10 rows). It is positioned within terminal bounds.
 
 ### Dynamic Completions
 
@@ -409,15 +410,15 @@ When a flag's argument or a positional argument has a matching `complete` direct
 2. **Descriptions**: When `descriptions=#true`, each output line is parsed as `value:description` (colons can be escaped with `\:`). The value is used for selection and the description is displayed alongside it.
 3. **Caching**: Completion results are cached per argument name per command path within a session. Subsequent activations of the same field reuse cached results without re-running the command.
 4. **Failure handling**: If the command fails or produces no output, the field falls back to free-text editing.
-5. **Custom text**: The user can always dismiss the select box with Esc and enter custom text that is not in the completion list.
+5. **Custom text**: The user can type custom text directly in the text input. Typing clears any active choice selection, making the typed text the value.
 
 ### Rendering
 
-The select box is rendered as an overlay on top of the normal panel content, anchored below the activated item. It uses:
+The select box is rendered as an overlay on top of the normal panel content, positioned one row below the activated item. It uses:
 - Active border color for the border
 - Selection background color for the highlighted choice
 - Normal text for other choices
-- The title shows the filter query (if any)
+- No title bar (the text input on the item row serves as the filter indicator)
 
 ## Command Building
 

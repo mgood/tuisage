@@ -99,7 +99,7 @@ The core state and logic module (~5600 lines including ~1400 lines of tests).
 - **`FlagValue`** — discriminated union: `Bool(bool)`, `String(String)`, `Count(u32)`.
 - **`ArgValue`** — struct with `name`, `value`, `required`, `choices`, `help` fields.
 - **`CmdData`** — data stored in each tree node: `name`, `help`, `aliases`.
-- **`ChoiceSelectState`** — state for the inline choice select box: `choices`, `filter_input`, `selected_index`, `source_panel`, `source_index`, `descriptions` (optional per-choice descriptions), `from_completions` (whether opened from dynamic completions).
+- **`ChoiceSelectState`** — state for the inline choice select box: `choices`, `descriptions` (optional per-choice descriptions), `selected_index` (`Option<usize>`, None = no selection), `source_panel`, `source_index`. When open, `editing` is also true and `edit_input` serves as both the text value and the filter.
 - **`App`** — the main application state struct.
 
 #### `App` Struct Fields
@@ -163,7 +163,7 @@ Support for the usage spec `complete` directive. When a flag or argument has no 
 - **`find_completion(arg_name)`** — searches the current command's `complete` map for a `SpecComplete` matching the given arg/flag name. Returns `Option<&SpecComplete>`.
 - **`run_completion(cmd, descriptions)`** — executes a shell command via `sh -c`, parses output lines into `(Vec<String>, Vec<Option<String>>)`. When `descriptions` is true, lines are parsed as `value:description` pairs (with `\:` escaping). Returns `None` on failure or empty output.
 - **`get_or_run_completion(arg_name)`** — cache-first lookup: checks `completion_cache` before running the command. Caches results keyed by `"command_path:arg_name"`.
-- **`open_completion_select(choices, descriptions)`** — opens the choice select overlay with `from_completions = true` so Esc falls back to free-text editing instead of just closing.
+- **`open_completion_select(choices, descriptions)`** — opens the choice select overlay populated with completion results and their descriptions.
 - **`parse_completion_line(line)`** — parses a single `value:description` line, handling `\:` escaping within values. Returns `Some((value, description))` or `None` for lines without a description separator.
 - **`choice_description(idx)`** — returns the description for a choice at the given index, if present.
 
@@ -223,7 +223,7 @@ These implement the ratatui `Widget` trait for self-contained, testable renderin
 
 - **`CommandPreview`** — renders the assembled command string in a bordered block with syntax-aware token coloring (binary name, subcommands, flags, positional arguments). Handles focus-dependent styling (▶ prefix when focused, $ when not).
 - **`HelpBar`** — renders the context-sensitive help/status bar with keyboard shortcuts on the left and a right-aligned theme indicator. Exposes `theme_indicator_rect()` for mouse hit-testing.
-- **`SelectList`** — renders a bordered selectable list overlay with Clear + block + items. Used by both the choice select dropdown and theme picker. Supports empty state ("no matches"), scroll offset for long lists, configurable item/selected colors, and optional per-item descriptions (shown in help color for dynamic completions).
+- **`SelectList`** — renders a bordered selectable list overlay with Clear + block + items. Used by both the choice select dropdown and theme picker. Supports empty state ("no matches"), scroll offset for long lists, `Option<usize>` selection (None = no highlight), optional `▶` cursor prefix (via `with_cursor()`), configurable item/selected colors, and optional per-item descriptions (shown in help color for dynamic completions).
 
 #### `UiColors` Struct
 
@@ -294,8 +294,8 @@ The `usage-lib` crate includes optional features for generating documentation, m
 
 ### Test Count
 
-194 tests total:
-- **126 tests** in `app.rs` — state logic, command building, command parts, tree navigation, key handling, mouse handling, filtering, editing, tree expand/collapse, execution state management, execution key handling, global flag sync, filtered navigation, startup sync, separate name/help matching, choice select box, theme picker, backspace clear/remove, dynamic completions (parsing, execution, caching, UI flow)
+197 tests total:
+- **129 tests** in `app.rs` — state logic, command building, command parts, tree navigation, key handling, mouse handling, filtering, editing, tree expand/collapse, execution state management, execution key handling, global flag sync, filtered navigation, startup sync, separate name/help matching, choice select box, theme picker, backspace clear/remove, dynamic completions (parsing, execution, caching, UI flow, unified input/selection)
 - **68 tests** in `ui.rs` — rendering assertions, snapshot tests, theming, click regions, filter display, filter mode visual cues, choice select rendering, theme picker rendering
 
 ### Test Fixtures
@@ -341,7 +341,8 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 | `FocusManager` from ratatui-interact | Handles Tab/Shift-Tab cycling with dynamic panel availability, reducing boilerplate. |
 | Finishing edits on focus change | Prevents a class of bugs where the edit input text leaks into the wrong field when clicking elsewhere. |
 | Synchronous completion execution | Completion commands are run synchronously via `sh -c` when the user first enters edit mode. Avoids async complexity; commands are expected to be fast. Results are cached per session. |
-| Completion fallback to free-text | When a completion command fails or the user presses Esc, falls back to free-text editing. The select overlay is non-blocking. |
+| Completion fallback to free-text | When a completion command fails or the user presses Esc, the typed text is kept as the value. The select overlay is non-blocking. |
+| Unified choice select + text input | Opening a choice select also enters editing mode. The text input serves as both the value and the filter. Typing clears any active selection, so users can seamlessly switch between browsing choices and entering custom text. |
 | Commands list always visible | The flat indented list shows the entire command hierarchy, not just subcommands of the current selection. It remains visible even when navigating to leaf commands with no children, providing constant wayfinding context. |
 | Arguments panel visibility based on spec | The arguments panel is shown whenever the current command defines arguments in the spec, ensuring consistent visibility regardless of whether arg values are populated. |
 
@@ -377,7 +378,7 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - **Args filter auto-select** — when filtering in the Arguments panel, the cursor automatically moves to the first matching argument if the current selection doesn't match the filter.
 - **Inline choice select box** — flags and arguments with predefined choices open an inline select box overlay instead of cycling through options. The select box supports fuzzy filtering (non-matching choices are hidden), navigation with Up/Down, confirmation with Enter, and cancellation with Esc. The current value is pre-selected when the box opens.
 - **Dynamic completions** — args and flags with `complete` directives in the usage spec run shell commands to populate the select overlay. Supports `descriptions=#true` for `value:description` pairs. Results are cached per session. Esc falls back to free-text editing. Failed commands silently fall back to text editing.
-- Comprehensive test suite (194 tests)
+- Comprehensive test suite (197 tests)
 - Zero clippy warnings
 
 ### Remaining Work
