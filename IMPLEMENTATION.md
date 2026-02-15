@@ -243,7 +243,8 @@ Per-item rendering context bundling: `is_selected`, `is_match`, `name_matches` (
 - **`panel_block()`** — creates a styled `Block` with focus-aware border color, title, and optional horizontal padding.
 - **`push_selection_cursor()`** — appends `▶ ` or `  ` prefix spans consistently across all panels.
 - **`push_highlighted_name()`** — appends item name spans with filter-aware styling (dimmed, bold+underlined, or inverted).
-- **`push_help_text()`** — appends right-aligned help text spans with filter-aware styling and padding calculation.
+- **`build_help_line()`** — builds a styled `Line` for help text with filter-aware styling, for use with right-aligned overlay rendering.
+- **`render_help_overlays()`** — renders right-aligned help text directly to the frame buffer after the List widget renders, using `Paragraph` with `Alignment::Right` to avoid manual space-padding and truncation.
 - **`push_edit_cursor()`** — appends inline edit cursor spans (before_cursor + ▎ + after_cursor).
 - **`selection_bg()`** — returns the appropriate background color for selected/editing items.
 - **`item_match_state()`** — computes whether an item matches the filter and retrieves match indices for both name and help fields.
