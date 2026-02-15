@@ -14,7 +14,7 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 
 ## Core Goals
 
-1. **Parse usage specs** — Read `.usage.kdl` files (or stdin) and understand the full command tree: subcommands, flags, arguments, choices, defaults, and aliases.
+1. **Parse usage specs** — Read `.usage.kdl` files (or stdin) and understand the full command tree: subcommands, flags, arguments, choices, completions, defaults, and aliases.
 2. **Interactive exploration** — Present the command hierarchy in a navigable TUI so users can browse subcommands, see available flags, and understand argument requirements.
 3. **Command assembly** — As the user makes selections, continuously build and display the resulting command string in real time.
 4. **Long-running interface** — Remain open after building a command, allowing users to modify it and build again, or execute commands directly within the TUI.
@@ -44,6 +44,7 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Support clearing/removing flag and argument values via Backspace: decrements count flags, turns off boolean flags, and clears string/choice flag values and argument values.
 - Support flags that take string values (free-text input).
 - Support flags with predefined choices via an **inline select box** that appears below the flag when activated. The select box supports fuzzy filtering to narrow options by typing, and hides non-matching choices.
+- Support flags with **dynamic completions** via the usage spec `complete` directive. When a flag's argument has a matching `complete` entry with a `run` command, execute the command when the user first enters edit mode and show the results in the select box. The user can still enter custom text by pressing Esc to dismiss the select box and type freely.
 - Display default values clearly when a flag has one.
 - Distinguish between global and command-specific flags.
 
@@ -52,6 +53,8 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Display positional arguments for the currently selected command.
 - Support free-text input for arguments.
 - Support arguments with predefined choices via an **inline select box** that appears below the argument when activated. The select box supports fuzzy filtering to narrow options by typing, and hides non-matching choices.
+- Support arguments with **dynamic completions** via the usage spec `complete` directive. When an argument has a matching `complete` entry with a `run` command, execute the command when the user first enters edit mode and show the results in the select box. Support `descriptions=#true` to display `value:description` pairs. The user can still enter custom text by pressing Esc to dismiss the select box and type freely.
+- Cache dynamic completion results per field within a session to avoid re-executing the command on subsequent edits of the same field.
 - Indicate which arguments are required vs. optional.
 
 ### Filtering

@@ -51,6 +51,7 @@ The usage spec is parsed via `usage-lib` into a `Spec` struct that provides:
 - A tree of subcommands, each with their own flags and arguments
 - Flag metadata: long/short names, whether they take values, choices, defaults, aliases, count mode
 - Argument metadata: name, required/optional, choices
+- Completion directives: per-command `complete` entries mapping argument names to shell commands that generate completion values at runtime
 
 ## UI Layout
 
@@ -387,18 +388,28 @@ Filtering uses scored fuzzy-matching (powered by `nucleo-matcher::Pattern`):
 
 ## Inline Choice Select Box
 
-When a flag or argument has predefined choices (e.g., `--template` with choices `basic`, `full`, `minimal`), activating it (via Enter) opens an **inline select box** instead of cycling through choices or opening a text editor.
+When a flag or argument has predefined choices (e.g., `--template` with choices `basic`, `full`, `minimal`) or dynamic completions (via a `complete` directive), activating it (via Enter) opens an **inline select box** instead of cycling through choices or opening a text editor.
 
 ### Behavior
 
-1. **Activation**: Pressing Enter on a flag or argument that has choices opens the select box. The select box appears as an overlay rendered inline, directly below the item's position in the list.
-2. **Appearance**: The select box shows all available choices as a vertical list with a border, styled using the panel's active border color. The currently selected choice is highlighted. Choices that don't match the filter are hidden (not dimmed).
+1. **Activation**: Pressing Enter on a flag or argument that has choices or completions opens the select box. The select box appears as an overlay rendered inline, directly below the item's position in the list.
+2. **Appearance**: The select box shows all available choices as a vertical list with a border, styled using the panel's active border color. The currently selected choice is highlighted. Choices that don't match the filter are hidden (not dimmed). When completions include descriptions (from `descriptions=#true`), the description is shown alongside each item in the help text color.
 3. **Fuzzy filtering**: As the user types, the choices are filtered using the same `nucleo-matcher` fuzzy matching algorithm. Non-matching choices are **hidden** (removed from the visible list), unlike the main panel filter which dims non-matches. The select box title shows the typed filter text.
 4. **Navigation**: `↑`/`↓`/`j`/`k` navigate between visible (matching) choices. Typing narrows the list.
 5. **Selection**: `Enter` confirms the highlighted choice, closes the select box, and sets the flag/argument value.
-6. **Cancellation**: `Esc` closes the select box without changing the value.
+6. **Cancellation**: `Esc` closes the select box without changing the value. For fields with dynamic completions, pressing Esc also allows the user to enter custom text via free-text editing.
 7. **Auto-select**: If only one choice matches the filter, it is auto-highlighted. If the filter narrows to zero matches, the select box shows an empty state.
-8. **Sizing**: The select box is as wide as needed to fit the longest choice, plus the filter text, and as tall as the number of visible choices (up to a maximum of 10 rows). It is positioned to stay within the terminal bounds.
+8. **Sizing**: The select box is as wide as needed to fit the longest choice (including descriptions), plus the filter text, and as tall as the number of visible choices (up to a maximum of 10 rows). It is positioned to stay within the terminal bounds.
+
+### Dynamic Completions
+
+When a flag's argument or a positional argument has a matching `complete` directive on the current command (matched by name), the completion command is executed when the user first activates the field:
+
+1. **Execution**: The `run` command from the `complete` spec is executed as a shell command. Output lines become completion values.
+2. **Descriptions**: When `descriptions=#true`, each output line is parsed as `value:description` (colons can be escaped with `\:`). The value is used for selection and the description is displayed alongside it.
+3. **Caching**: Completion results are cached per argument name per command path within a session. Subsequent activations of the same field reuse cached results without re-running the command.
+4. **Failure handling**: If the command fails or produces no output, the field falls back to free-text editing.
+5. **Custom text**: The user can always dismiss the select box with Esc and enter custom text that is not in the completion list.
 
 ### Rendering
 
