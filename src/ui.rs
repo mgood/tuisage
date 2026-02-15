@@ -268,7 +268,11 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
                 help_entries.push((i, build_help_line(help, &ctx, &ps, colors)));
             }
 
-            ListItem::new(Line::from(spans))
+            let mut item = ListItem::new(Line::from(spans));
+            if is_selected {
+                item = item.style(selection_bg(false, colors));
+            }
+            item
         })
         .collect();
 
@@ -284,7 +288,7 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
     let list = List::new(items).block(block);
     frame.render_stateful_widget(list, area, &mut state);
 
-    // Render right-aligned help text overlays
+    // Render right-aligned help text overlays (no padding on Commands panel)
     let inner = area.inner(ratatui::layout::Margin::new(1, 1));
     render_help_overlays(frame.buffer_mut(), &help_entries, app.command_scroll(), inner);
 }
@@ -460,8 +464,8 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
     let list = List::new(items).block(block);
     frame.render_stateful_widget(list, area, &mut state);
 
-    // Render right-aligned help text overlays
-    let inner = area.inner(ratatui::layout::Margin::new(1, 1));
+    // Render right-aligned help text overlays (2 = border + horizontal padding)
+    let inner = area.inner(ratatui::layout::Margin::new(2, 1));
     render_help_overlays(frame.buffer_mut(), &help_entries, app.flag_scroll(), inner);
 }
 
@@ -587,8 +591,8 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
     let list = List::new(items).block(block);
     frame.render_stateful_widget(list, area, &mut state);
 
-    // Render right-aligned help text overlays
-    let inner = area.inner(ratatui::layout::Margin::new(1, 1));
+    // Render right-aligned help text overlays (2 = border + horizontal padding)
+    let inner = area.inner(ratatui::layout::Margin::new(2, 1));
     render_help_overlays(frame.buffer_mut(), &help_entries, app.arg_scroll(), inner);
 }
 

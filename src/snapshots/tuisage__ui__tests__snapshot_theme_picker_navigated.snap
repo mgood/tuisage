@@ -6,9 +6,9 @@ expression: output
 │ $ mycli init                                                                                     │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ Commands ────────────────────────────┐┌ Flags ───────────────────────────────────────────────────┐
-│▶ init        Initialize a new project││   [·] -t, --template = <basic|full|minimalTemplate to use│
-│  config          Manage configuration││   ○ -f, --force                  Overwrite existing files│
-│  │ set (add)       Set a config value││   [0] -v, --verbose [G]            E┌ Theme ─────────────┐
+│▶ init        Initialize a new project││   [·] -t, --template = <basic|full|minimal>              │
+│  config          Manage configuration││   ○ -f, --force                 Overwrite existing files │
+│  │ set (add)       Set a config value││   [0] -v, --verbose [G]           En┌ Theme ─────────────┐
 │  │ get             Get a config value││   ○ -q, --quiet [G]                 │  Dracula           │
 │  │ list (ls)   List all config values││                                     │  One Dark Pro      │
 │  │ remove (rm)  Remove a config value││                                     │▶ Nord              │

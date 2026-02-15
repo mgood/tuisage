@@ -6,19 +6,19 @@ expression: output
 │ $ mycli deploy st                                                                                │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ Commands ────────────────────────────┐┌ Flags ───────────────────────────────────────────────────┐
-│  init        Initialize a new project││   [·] --tag = <tag>                      Docker image tag│
-│  config          Manage configuration││   ○ --rollback               Rollback to previous version│
-│  │ set (add)       Set a config value││   ○ --skip-tests         Skip running tests before deploy│
-│  │ get             Get a config value││   ○ -y, --yes                    Skip confirmation prompt│
-│  │ list (ls)   List all config values││   [0] -v, --verbose [G]            Enable verbose logging│
-│  │ remove (rm)  Remove a config value││   ○ -q, --quiet [G]                     Enable quiet mode│
+│  init        Initialize a new project││   [·] --tag = <tag>                     Docker image tag │
+│  config          Manage configuration││   ○ --rollback              Rollback to previous version │
+│  │ set (add)       Set a config value││   ○ --skip-tests        Skip running tests before deploy │
+│  │ get             Get a config value││   ○ -y, --yes                   Skip confirmation prompt │
+│  │ list (ls)   List all config values││   [0] -v, --verbose [G]           Enable verbose logging │
+│  │ remove (rm)  Remove a config value││   ○ -q, --quiet [G]                    Enable quiet mode │
 │  run                       Run a task││                                                          │
 │▶ deploy        Deploy the application││                                                          │
 │  plugin                Manage plugins││                                                          │
 │  │ install (i)       Install a plugin││                                                          │
 │  │ uninstall (rm)  Uninstall a plugin│└──────────────────────────────────────────────────────────┘
 │  │ list (ls)   List installed plugins│┌ Arguments ───────────────────────────────────────────────┐
-│  │ update              Update plugins││ ▶ ● <environment> = st▎                Target environment│
+│  │ update              Update plugins││ ▶ ● <environment> = st▎               Target environment │
 │  version        Print the CLI version││                    │staging  │                           │
 │  help          Print help information││                    └─────────┘                           │
 │                                      ││                                                          │

@@ -6,19 +6,19 @@ expression: output
 │ $ mycli deploy --tag v1.2.3 --rollback prod                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ Commands ────────────────────────────┐┌ Flags ───────────────────────────────────────────────────┐
-│  init        Initialize a new project││ ▶ [•] --tag = v1.2.3                     Docker image tag│
-│  config          Manage configuration││   ✓ --rollback               Rollback to previous version│
-│  │ set (add)       Set a config value││   ○ --skip-tests         Skip running tests before deploy│
-│  │ get             Get a config value││   ○ -y, --yes                    Skip confirmation prompt│
-│  │ list (ls)   List all config values││   [0] -v, --verbose [G]            Enable verbose logging│
-│  │ remove (rm)  Remove a config value││   ○ -q, --quiet [G]                     Enable quiet mode│
+│  init        Initialize a new project││ ▶ [•] --tag = v1.2.3                    Docker image tag │
+│  config          Manage configuration││   ✓ --rollback              Rollback to previous version │
+│  │ set (add)       Set a config value││   ○ --skip-tests        Skip running tests before deploy │
+│  │ get             Get a config value││   ○ -y, --yes                   Skip confirmation prompt │
+│  │ list (ls)   List all config values││   [0] -v, --verbose [G]           Enable verbose logging │
+│  │ remove (rm)  Remove a config value││   ○ -q, --quiet [G]                    Enable quiet mode │
 │  run                       Run a task││                                                          │
 │▶ deploy        Deploy the application││                                                          │
 │  plugin                Manage plugins││                                                          │
 │  │ install (i)       Install a plugin││                                                          │
 │  │ uninstall (rm)  Uninstall a plugin│└──────────────────────────────────────────────────────────┘
 │  │ list (ls)   List installed plugins│┌ Arguments ───────────────────────────────────────────────┐
-│  │ update              Update plugins││   ● <environment> = prod [dev|staging|pTarget environment│
+│  │ update              Update plugins││   ● <environment> = prod [dev|staging|prod]              │
 │  version        Print the CLI version││                                                          │
 │  help          Print help information││                                                          │
 │                                      ││                                                          │

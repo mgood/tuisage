@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 use ratatui::{
     buffer::Buffer,
-    layout::{Alignment, Rect},
+    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Padding, Paragraph, Widget, Wrap},
@@ -317,7 +317,7 @@ pub fn build_help_line(
 ///
 /// `help_entries` maps item index → styled help Line.
 /// `scroll_offset` is the List's current scroll position.
-/// `inner` is the inner rect of the panel (after borders).
+/// `inner` is the inner rect of the panel (after borders and padding).
 pub fn render_help_overlays(
     buf: &mut Buffer,
     help_entries: &[(usize, Line<'static>)],
@@ -325,6 +325,9 @@ pub fn render_help_overlays(
     inner: Rect,
 ) {
     let visible_rows = inner.height as usize;
+    if inner.width < 2 {
+        return;
+    }
 
     for &(item_idx, ref help_line) in help_entries {
         // Skip items above the scroll viewport
@@ -337,20 +340,40 @@ pub fn render_help_overlays(
         }
 
         let y = inner.y + row_in_view as u16;
-        // Leave 1 char margin on right to prevent truncation at border
         let help_width = help_line.width() as u16;
         if help_width == 0 || help_width >= inner.width {
             continue;
         }
 
-        let help_rect = Rect::new(
-            inner.x,
-            y,
-            inner.width,
-            1,
-        );
+        // Position the help text right-aligned with a 1-char gap before it.
+        // Only render if it doesn't overlap with existing row content.
+        let total_width = help_width + 1; // 1 char gap before help text
+        if total_width >= inner.width {
+            continue;
+        }
+        let help_x = inner.x + inner.width - total_width;
 
-        let para = Paragraph::new(help_line.clone()).alignment(Alignment::Right);
+        // Find rightmost non-empty cell in this row to avoid overwriting content
+        let mut content_end = inner.x;
+        for x in (inner.x..inner.x + inner.width).rev() {
+            let cell = &buf[(x, y)];
+            if cell.symbol() != " " {
+                content_end = x + 1;
+                break;
+            }
+        }
+        // Skip if help text would overlap existing content
+        if help_x < content_end {
+            continue;
+        }
+
+        let help_rect = Rect::new(help_x, y, total_width, 1);
+        let spaced_line = Line::from(
+            std::iter::once(Span::raw(" "))
+                .chain(help_line.spans.iter().cloned())
+                .collect::<Vec<_>>(),
+        );
+        let para = Paragraph::new(spaced_line);
         para.render(help_rect, buf);
     }
 }

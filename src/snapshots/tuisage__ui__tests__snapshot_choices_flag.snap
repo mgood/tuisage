@@ -6,7 +6,7 @@ expression: output
 │ $ mycli format                                                               │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌ Commands ────────────────────┐┌ Flags ───────────────────────────────────────┐
-│▶ format           Format code││   [·] --style = <compact|expanded|dCode style│
+│▶ format           Format code││   [·] --style = <compact|expanded|default>   │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
@@ -16,7 +16,7 @@ expression: output
 │                              ││                                              │
 │                              │└──────────────────────────────────────────────┘
 │                              │┌ Arguments ───────────────────────────────────┐
-│                              ││   ● <file> = (empty)           File to format│
+│                              ││   ● <file> = (empty)          File to format │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
