@@ -724,7 +724,10 @@ impl Widget for SelectList<'_> {
                 .collect()
         };
 
-        let visible_items = area.height.saturating_sub(2) as usize;
+        // Calculate visible items based on which borders are present
+        let border_height = if self.borders.contains(Borders::TOP) { 1 } else { 0 }
+            + if self.borders.contains(Borders::BOTTOM) { 1 } else { 0 };
+        let visible_items = area.height.saturating_sub(border_height) as usize;
         let mut state = ratatui::widgets::ListState::default().with_selected(
             if self.items.is_empty() {
                 None
@@ -734,7 +737,7 @@ impl Widget for SelectList<'_> {
         );
 
         if let Some(sel) = self.selected {
-            if sel >= visible_items {
+            if visible_items > 0 && sel >= visible_items {
                 state = state.with_offset(sel.saturating_sub(visible_items - 1));
             }
         }

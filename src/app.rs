@@ -5699,4 +5699,39 @@ mod tests {
             "Up from first item should deselect"
         );
     }
+
+    #[test]
+    fn test_choice_select_reopen_after_selection() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+
+        // Open select and choose a value
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.is_choosing());
+
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(down); // Select first item
+        app.handle_key(enter); // Confirm
+        assert!(!app.is_choosing());
+        assert_eq!(app.arg_values[0].value, "dev");
+
+        // Reopen the select — should not crash
+        app.handle_key(enter);
+        assert!(app.is_choosing(), "Should be able to reopen select after choosing");
+        // The current value "dev" should be pre-selected
+        assert_eq!(
+            app.choice_select.as_ref().unwrap().selected_index,
+            Some(0),
+            "Should pre-select current value"
+        );
+    }
 }
