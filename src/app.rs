@@ -123,6 +123,9 @@ pub struct ChoiceSelectState {
     pub value_column: u16,
     /// The rendered overlay area (set during rendering, used for mouse hit-testing).
     pub overlay_rect: Option<Rect>,
+    /// Whether the filter is active. Starts false so all choices are visible
+    /// even when reopening with an existing value; becomes true on first keystroke.
+    pub filter_active: bool,
 }
 
 /// Data stored in each tree node for a command.
@@ -462,7 +465,8 @@ impl App {
             return Vec::new();
         };
         let filter = self.edit_input.text();
-        if filter.is_empty() {
+        // Show all choices when filter is not yet active (initial open) or when empty
+        if filter.is_empty() || !cs.filter_active {
             return cs
                 .choices
                 .iter()
@@ -497,14 +501,14 @@ impl App {
         };
 
         // Compute x offset from panel left edge to where the value starts.
-        // Layout: border(1) + padding(1) + cursor "▶ "(2) + indicator(varies) + name(varies) + " = "(3)
+        // Layout: border(1) + cursor "▶ "(2) + indicator(varies) + name(varies) + " = "(3)
         let value_column: u16 = match source_panel {
             Focus::Args => {
                 let arg = &self.arg_values[source_index];
                 // indicator "● " or "○ " = 2 chars
                 // arg_display = "<name>" or "[name]" = name.len() + 2
                 let arg_display_len = arg.name.chars().count() + 2;
-                (1 + 1 + 2 + 2 + arg_display_len + 3) as u16
+                (1 + 2 + 2 + arg_display_len + 3) as u16
             }
             Focus::Flags => {
                 let flags = self.visible_flags();
@@ -543,7 +547,7 @@ impl App {
                     extra += 2; // " *"
                 }
 
-                (1 + 1 + 2 + indicator_width + flag_display_len + extra + 3) as u16
+                (1 + 2 + indicator_width + flag_display_len + extra + 3) as u16
             }
             _ => 4,
         };
@@ -560,6 +564,7 @@ impl App {
             source_index,
             value_column,
             overlay_rect: None,
+            filter_active: false,
         });
         // Enter editing mode with the current value as initial text
         self.editing = true;
@@ -672,8 +677,9 @@ impl App {
             KeyCode::Backspace => {
                 self.edit_input.delete_char_backward();
                 self.sync_edit_to_value();
-                // Clear selection when typing
+                // Activate filter and clear selection when typing
                 if let Some(ref mut cs) = self.choice_select {
+                    cs.filter_active = true;
                     cs.selected_index = None;
                 }
                 Action::None
@@ -689,8 +695,9 @@ impl App {
             KeyCode::Char(c) => {
                 self.edit_input.insert_char(c);
                 self.sync_edit_to_value();
-                // Clear selection when typing
+                // Activate filter and clear selection when typing
                 if let Some(ref mut cs) = self.choice_select {
+                    cs.filter_active = true;
                     cs.selected_index = None;
                 }
                 Action::None
@@ -5733,5 +5740,45 @@ mod tests {
             Some(0),
             "Should pre-select current value"
         );
+    }
+
+    #[test]
+    fn test_choice_select_shows_all_choices_on_reopen() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0); // <environment> choices: dev, staging, prod
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+
+        // Open select, choose "dev", confirm
+        app.handle_key(enter);
+        app.handle_key(down);
+        app.handle_key(enter);
+        assert_eq!(app.arg_values[0].value, "dev");
+
+        // Reopen — filter should be inactive, so all choices visible
+        app.handle_key(enter);
+        assert!(app.is_choosing());
+        assert!(!app.choice_select.as_ref().unwrap().filter_active);
+        // Even though edit_input has "dev", all 3 choices should be visible
+        assert_eq!(app.filtered_choices().len(), 3);
+
+        // Type a character — filter activates, narrows choices
+        let s_key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('s'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(s_key);
+        assert!(app.choice_select.as_ref().unwrap().filter_active);
+        // "devs" should narrow the list (likely no exact matches for "devs")
+        assert!(app.filtered_choices().len() < 3);
     }
 }

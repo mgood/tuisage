@@ -6,10 +6,10 @@ expression: output
 │ $ mycli init my-project                                                                          │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ Commands ────────────────────────────┐┌ Flags ───────────────────────────────────────────────────┐
-│▶ init        Initialize a new project││   [·] -t, --template = <basic|full|minimal>              │
-│  config          Manage configuration││   ○ -f, --force                 Overwrite existing files │
-│  │ set (add)       Set a config value││   [0] -v, --verbose [G]           Enable verbose logging │
-│  │ get             Get a config value││   ○ -q, --quiet [G]                    Enable quiet mode │
+│▶ init        Initialize a new project││  [·] -t, --template = <basic|full|minimal>               │
+│  config          Manage configuration││  ○ -f, --force                   Overwrite existing files│
+│  │ set (add)       Set a config value││  [0] -v, --verbose [G]             Enable verbose logging│
+│  │ get             Get a config value││  ○ -q, --quiet [G]                      Enable quiet mode│
 │  │ list (ls)   List all config values││                                                          │
 │  │ remove (rm)  Remove a config value││                                                          │
 │  run                       Run a task││                                                          │
@@ -18,7 +18,7 @@ expression: output
 │  │ install (i)       Install a plugin││                                                          │
 │  │ uninstall (rm)  Uninstall a plugin│└──────────────────────────────────────────────────────────┘
 │  │ list (ls)   List installed plugins│┌ Arguments ───────────────────────────────────────────────┐
-│  │ update              Update plugins││ ▶ ● <name> = my-project▎                    Project name │
+│  │ update              Update plugins││▶ ● <name> = my-project▎                      Project name│
 │  version        Print the CLI version││                                                          │
 │  help          Print help information││                                                          │
 │                                      ││                                                          │

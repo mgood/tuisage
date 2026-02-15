@@ -217,7 +217,7 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
     let flat_commands = flatten_command_tree(&app.command_tree_nodes);
 
     let title = panel_title("Commands", &ps);
-    let block = panel_block(title, &ps, false);
+    let block = panel_block(title, &ps);
 
     // Calculate inner height for scroll offset (area minus borders)
     let inner_height = area.height.saturating_sub(2) as usize;
@@ -310,7 +310,7 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
     let flag_index = app.flag_index();
 
     let title = panel_title("Flags", &ps);
-    let block = panel_block(title, &ps, true);
+    let block = panel_block(title, &ps);
 
     // Calculate inner height for scroll offset
     let inner_height = area.height.saturating_sub(2) as usize;
@@ -465,7 +465,7 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
     frame.render_stateful_widget(list, area, &mut state);
 
     // Render right-aligned help text overlays (2 = border + horizontal padding)
-    let inner = area.inner(ratatui::layout::Margin::new(2, 1));
+    let inner = area.inner(ratatui::layout::Margin::new(1, 1));
     render_help_overlays(frame.buffer_mut(), &help_entries, app.flag_scroll(), inner);
 }
 
@@ -486,7 +486,7 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
     let arg_index = app.arg_index();
 
     let title = panel_title("Arguments", &ps);
-    let block = panel_block(title, &ps, true);
+    let block = panel_block(title, &ps);
 
     // Calculate inner height for scroll offset (must happen before borrowing app.arg_values)
     let inner_height = area.height.saturating_sub(2) as usize;
@@ -592,7 +592,7 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
     frame.render_stateful_widget(list, area, &mut state);
 
     // Render right-aligned help text overlays (2 = border + horizontal padding)
-    let inner = area.inner(ratatui::layout::Margin::new(2, 1));
+    let inner = area.inner(ratatui::layout::Margin::new(1, 1));
     render_help_overlays(frame.buffer_mut(), &help_entries, app.arg_scroll(), inner);
 }
 

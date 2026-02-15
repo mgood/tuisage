@@ -150,16 +150,12 @@ pub fn panel_title(name: &str, ps: &PanelState) -> String {
 /// Build a styled `Block` for a panel with consistent border and title styling.
 /// The `with_padding` flag controls whether horizontal padding is added
 /// (Flags and Args panels use padding; Commands panel does not).
-pub fn panel_block(title: String, ps: &PanelState, with_padding: bool) -> Block<'static> {
-    let mut block = Block::default()
+pub fn panel_block(title: String, ps: &PanelState) -> Block<'static> {
+    Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ps.border_color))
         .title(title)
-        .title_style(Style::default().fg(ps.border_color).bold());
-    if with_padding {
-        block = block.padding(Padding::horizontal(1));
-    }
-    block
+        .title_style(Style::default().fg(ps.border_color).bold())
 }
 
 /// Push the selection cursor indicator (`▶ ` or `  `) onto spans.

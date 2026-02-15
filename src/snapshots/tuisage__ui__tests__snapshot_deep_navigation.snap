@@ -6,9 +6,9 @@ expression: output
 │ $ mycli plugin install                                                                           │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ Commands ────────────────────────────┐┌ Flags ───────────────────────────────────────────────────┐
-│  init        Initialize a new project││   ○ -f, --force                          Force reinstall │
-│  config          Manage configuration││   [0] -v, --verbose [G]           Enable verbose logging │
-│  │ set (add)       Set a config value││   ○ -q, --quiet [G]                    Enable quiet mode │
+│  init        Initialize a new project││  ○ -f, --force                            Force reinstall│
+│  config          Manage configuration││  [0] -v, --verbose [G]             Enable verbose logging│
+│  │ set (add)       Set a config value││  ○ -q, --quiet [G]                      Enable quiet mode│
 │  │ get             Get a config value││                                                          │
 │  │ list (ls)   List all config values││                                                          │
 │  │ remove (rm)  Remove a config value││                                                          │
@@ -18,8 +18,8 @@ expression: output
 │▶ │ install (i)       Install a plugin││                                                          │
 │  │ uninstall (rm)  Uninstall a plugin│└──────────────────────────────────────────────────────────┘
 │  │ list (ls)   List installed plugins│┌ Arguments ───────────────────────────────────────────────┐
-│  │ update              Update plugins││   ● <name> = (empty)                         Plugin name │
-│  version        Print the CLI version││   ○ [version] = (empty)                   Plugin version │
+│  │ update              Update plugins││  ● <name> = (empty)                           Plugin name│
+│  version        Print the CLI version││  ○ [version] = (empty)                     Plugin version│
 │  help          Print help information││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │

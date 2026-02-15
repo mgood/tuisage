@@ -6,10 +6,10 @@ expression: output
 │ $ mycli init                                                                                     │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ Commands ────────────────────────────┐┌ Flags ───────────────────────────────────────────────────┐
-│▶ init        Initialize a new project││   [·] -t, --template = <basic|full|minimal>              │
-│  config          Manage configuration││   ○ -f, --force                 Overwrite existing files │
-│  │ set (add)       Set a config value││   [0] -v, --verbose [G]           En┌ Theme ─────────────┐
-│  │ get             Get a config value││   ○ -q, --quiet [G]                 │▶ Dracula           │
+│▶ init        Initialize a new project││  [·] -t, --template = <basic|full|minimal>               │
+│  config          Manage configuration││  ○ -f, --force                   Overwrite existing files│
+│  │ set (add)       Set a config value││  [0] -v, --verbose [G]             E┌ Theme ─────────────┐
+│  │ get             Get a config value││  ○ -q, --quiet [G]                  │▶ Dracula           │
 │  │ list (ls)   List all config values││                                     │  One Dark Pro      │
 │  │ remove (rm)  Remove a config value││                                     │  Nord              │
 │  run                       Run a task││                                     │  Catppuccin Mocha  │
@@ -18,7 +18,7 @@ expression: output
 │  │ install (i)       Install a plugin││                                     │  Gruvbox Light     │
 │  │ uninstall (rm)  Uninstall a plugin│└─────────────────────────────────────│  Tokyo Night       │
 │  │ list (ls)   List installed plugins│┌ Arguments ──────────────────────────│  Solarized Dark    │
-│  │ update              Update plugins││   ● <name> = (empty)                │  Solarized Light   │
+│  │ update              Update plugins││  ● <name> = (empty)                 │  Solarized Light   │
 │  version        Print the CLI version││                                     │  Monokai Pro       │
 │  help          Print help information││                                     │  Rosé Pine         │
 │                                      ││                                     │  Kanagawa          │
