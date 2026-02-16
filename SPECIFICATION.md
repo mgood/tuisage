@@ -28,7 +28,7 @@ TuiSage uses `clap` (derive mode) for argument parsing and `clap_usage` for gene
 
 | Flag | Description |
 |---|---|
-| `--spec-cmd <CMD>` | Run a shell command and parse its stdout as a usage spec (e.g., `--spec-cmd "mise tasks ls --usage"`) |
+| `[SPEC_CMD]...` | Command to run to get the usage spec (e.g., `tuisage mycli --usage`) — trailing arguments after any flags |
 | `--spec-file <FILE>` | Read a usage spec from a file path (`.usage.kdl` or a script with embedded `USAGE` block) |
 | `--cmd <CMD>` | Override the base command being built (e.g., `--cmd "mise run"`), replacing the spec's binary name |
 | `--usage` | Output TuiSage's own usage spec (in `.usage.kdl` format via `clap_usage`) and exit |
@@ -36,11 +36,12 @@ TuiSage uses `clap` (derive mode) for argument parsing and `clap_usage` for gene
 | `-V, --version` | Print version (provided by clap) |
 
 **Rules:**
-- Exactly one of `--spec-cmd` or `--spec-file` must be provided (mutually exclusive, both required without the other).
+- Provide either trailing arguments (spec command) or `--spec-file`, but not both.
+- If neither are provided, show an error.
 - `--cmd` is optional; when omitted the spec's `bin` field is used as the base command.
 - `--usage` short-circuits before any spec loading and prints the usage spec to stdout.
 
-Parsing errors and spec command failures produce descriptive error messages via `color-eyre` and exit non-zero. When `--spec-cmd` is used, the command is executed via `sh -c` (or `cmd /C` on Windows) and its stdout is parsed as a usage spec; a non-zero exit status from the command is reported as an error.
+Parsing errors and spec command failures produce descriptive error messages via `color-eyre` and exit non-zero. When a spec command is used (trailing arguments), it is executed via `sh -c` (or `cmd /C` on Windows) with the arguments joined into a single command string, and its stdout is parsed as a usage spec; a non-zero exit status from the command is reported as an error.
 
 ### Spec Parsing
 
@@ -485,7 +486,7 @@ Themes can be cycled at runtime with `]`/`[` keys for quick switching, or `T` to
 
 ## Terminal Lifecycle
 
-1. **Startup**: Parse CLI args (clap) → handle `--usage` if present → load spec (from `--spec-cmd` or `--spec-file`) → apply `--cmd` override if present → enable mouse capture → initialize terminal → create `App` state → enter event loop.
+1. **Startup**: Parse CLI args (clap) → handle `--usage` if present → load spec (from trailing arguments or `--spec-file`) → apply `--cmd` override if present → enable mouse capture → initialize terminal → create `App` state → enter event loop.
 2. **Event loop (builder mode)**: Draw frame → wait for event (blocking) → handle key/mouse/resize → repeat. The application remains running indefinitely until the user quits.
 3. **Execute**: User presses Enter on preview → spawn the command in a PTY via `portable-pty` → switch to execution mode → display embedded terminal output via `tui-term`.
 4. **Event loop (execution mode)**: Draw frame → poll for events (16ms interval for live terminal refresh) → forward keyboard input to PTY → repeat until user closes the execution view.

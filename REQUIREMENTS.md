@@ -23,9 +23,9 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 
 ### Input
 
-- Accept a usage spec via `--spec-cmd`, which runs a command and parses its stdout as a usage spec (e.g., `--spec-cmd "mise tasks ls --usage"`).
+- Accept a usage spec by running a command passed as arguments (e.g., `tuisage mycli --usage`), parsing its stdout as a usage spec.
 - Accept a usage spec via `--spec-file`, which reads a `.usage.kdl` file from disk.
-- Exactly one of `--spec-cmd` or `--spec-file` must be provided.
+- If no arguments and no `--spec-file` are provided, show an error.
 - Accept an optional `--cmd` flag to override the base command being built (e.g., `--cmd "mise run"`), replacing the spec's binary name.
 - Support `--usage` to output TuiSage's own usage spec in `.usage.kdl` format (via `clap_usage`).
 

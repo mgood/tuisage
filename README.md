@@ -34,7 +34,7 @@ cargo build --release
 This is designed to work well with `mise`. Running `mise tasks ls --usage` prints the full usage spec the tasks, though you need to specify `--cmd "mise run"` as the command prefix to run the tasks:
 
 ```sh
-tuisage --cmd "mise run" --spec-cmd "mise tasks ls --usage"
+tuisage --cmd "mise run" mise tasks ls --usage
 ```
 
 For convenience, you can add it to your mise config file to run as `mise tui`:
@@ -42,7 +42,7 @@ For convenience, you can add it to your mise config file to run as `mise tui`:
 ```toml
 [tasks.tui]
 description = "TUI to run mise tasks"
-run = 'tuisage --cmd "mise run" --spec-cmd "mise tasks ls --usage"'
+run = 'tuisage --cmd "mise run" mise tasks ls --usage'
 ```
 
 ### Native `--usage` support
@@ -50,7 +50,7 @@ run = 'tuisage --cmd "mise run" --spec-cmd "mise tasks ls --usage"'
 For tools supporting `--usage` you can run them like:
 
 ```sh
-tuisage --spec-cmd "mytool --usage"
+tuisage mytool --usage
 ```
 
 ### From a file
@@ -73,14 +73,14 @@ tuisage --cmd "docker compose" --spec-file docker-compose.usage.kdl
 
 | Flag | Description |
 |---|---|
-| `--spec-cmd <CMD>` | Run a command to get the usage spec (e.g., `"mise tasks ls --usage"`) |
+| `[SPEC_CMD]...` | Command to run to get the usage spec (e.g., `tuisage mycli --usage`) |
 | `--spec-file <FILE>` | Read usage spec from a file |
 | `--cmd <CMD>` | Base command to build (overrides the spec's binary name) |
 | `--usage` | Generate usage spec for TuiSage itself |
 | `-h, --help` | Print help |
 | `-V, --version` | Print version |
 
-One of `--spec-cmd` or `--spec-file` is required (but not both).
+Provide either trailing arguments (spec command) or `--spec-file` (but not both).
 
 ## Keyboard Shortcuts
 

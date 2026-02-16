@@ -9,7 +9,7 @@ This document describes how TuiSage is built — its architecture, code structur
 │                   main.rs                       │
 │  - CLI arg parsing (clap derive)                │
 │  - --usage output (clap_usage)                  │
-│  - Spec loading (--spec-cmd or --spec-file)     │
+│  - Spec loading (trailing args or --spec-file) │
 │  - Base command override (--cmd)                │
 │  - Terminal setup (ratatui + mouse capture)      │
 │  - Event loop (key, mouse, resize)              │
@@ -64,10 +64,10 @@ This document describes how TuiSage is built — its architecture, code structur
 
 The entry point. Responsibilities:
 
-- Parse CLI arguments via `clap` (derive mode) into an `Args` struct with `--spec-cmd`, `--spec-file`, `--cmd`, and `--usage` flags.
+- Parse CLI arguments via `clap` (derive mode) into an `Args` struct with trailing arguments (spec command), `--spec-file`, `--cmd`, and `--usage` flags.
 - Handle `--usage` by generating TuiSage's own usage spec via `clap_usage::generate()` and exiting.
-- Validate that exactly one of `--spec-cmd` or `--spec-file` is provided.
-- Load the usage spec: run a shell command (`sh -c` / `cmd /C`) for `--spec-cmd`, or read a file for `--spec-file`.
+- Validate that either trailing arguments or `--spec-file` is provided (but not both).
+- Load the usage spec: run a shell command (`sh -c` / `cmd /C`) for trailing arguments, or read a file for `--spec-file`.
 - Override the spec's `bin` field if `--cmd` is provided.
 - Enable mouse capture via `crossterm::event::EnableMouseCapture`.
 - Initialize the ratatui `DefaultTerminal`.
@@ -353,9 +353,9 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 ### Completed
 
 - Project setup and spec parsing
-- CLI argument parsing via `clap` (derive mode) with `--spec-cmd`, `--spec-file`, `--cmd`, and `--usage` flags
+- CLI argument parsing via `clap` (derive mode) with trailing arguments (spec command), `--spec-file`, `--cmd`, and `--usage` flags
 - Usage spec output via `clap_usage` (`--usage` flag)
-- Spec loading from shell commands (`--spec-cmd`) and files (`--spec-file`)
+- Spec loading from shell commands (trailing arguments) and files (`--spec-file`)
 - Base command override (`--cmd`) to set the built command prefix independently of the spec
 - Core app state: navigation, flag values, arg values, command building
 - Full TUI rendering: 2-column layout (commands left, flags+args stacked right), preview, help bar
