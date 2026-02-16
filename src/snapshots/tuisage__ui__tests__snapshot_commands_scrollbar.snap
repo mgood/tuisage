@@ -1,0 +1,16 @@
+---
+source: src/ui.rs
+expression: output
+---
+┌ Command ─────────────────────────────────────────────────────────────────────────────────────────┐
+│ $ mycli deploy                                                                                   │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Commands ────────────────────────────┐┌ Flags ───────────────────────────────────────────────────┐
+│  │ set (add)       Set a config value││  [·] --tag = <tag>                       Docker image tag┃
+│  │ get             Get a config value┃│  ○ --rollback                Rollback to previous version┃
+│  │ list (ls)   List all config values┃│  ○ --skip-tests          Skip running tests before deploy│
+│  │ remove (rm)  Remove a config value│└──────────────────────────────────────────────────────────┘
+│  run                       Run a task│┌ Arguments ───────────────────────────────────────────────┐
+│▶ deploy        Deploy the application││  ● <environment> = <dev|staging|prod>  Target environment│
+└──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
+ ↑↓: navigate  ⇥: next  /: filter  ^r: run  q: quit                                    T: [Dracula]

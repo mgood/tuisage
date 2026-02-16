@@ -74,7 +74,7 @@ cmd "plugin" help="Manage plugins" {
         arg "<name>" help="Plugin name"
         arg "[version]" help="Plugin version"
         flag "-f --force" help="Force reinstall"
-        complete "name" run="printf 'auth\nanalytics\ncache\ndashboard\nlogging\n'"
+        complete "name" run="printf 'auth\nanalytics\ncache\ndashboard\nlogging\nnotifications\nstorage\nsearch\nqueue\nscheduler\nmonitoring\nalerts\nbackup\naudit\nreporting\n'"
     }
     cmd "uninstall" help="Uninstall a plugin" {
         alias "rm"

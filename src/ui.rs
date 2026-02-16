@@ -705,10 +705,16 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
         .max()
         .unwrap_or(10) as u16;
     let max_visible = 10u16;
+    
+    // Calculate available space below the item (to bottom of terminal, minus 1 for help bar)
+    let space_below = terminal_area.height.saturating_sub(overlay_y).saturating_sub(1);
+    
+    // Adjust visible count to fit available space (account for bottom border)
+    let max_items_that_fit = space_below.saturating_sub(1).max(1); // at least 1 item
     let visible_count = if filtered.is_empty() {
         1
     } else {
-        (filtered.len() as u16).min(max_visible)
+        (filtered.len() as u16).min(max_visible).min(max_items_that_fit)
     };
     let overlay_height = visible_count + 1; // bottom border only
 
@@ -2041,5 +2047,56 @@ flag "-q --quiet" help="Quiet mode"
             app.theme_indicator_rect.is_some(),
             "theme_indicator_rect should be set after rendering"
         );
+    }
+
+    #[test]
+    fn snapshot_commands_scrollbar() {
+        // Use sample spec which has 15 commands (when flat)
+        // Render in a small height (12 lines) to force scrolling
+        let mut app = App::new(sample_spec());
+        // Navigate down to show scrollbar thumb moved from top
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        for _ in 0..7 {
+            app.handle_key(down);
+        }
+        let output = render_to_string(&mut app, 100, 12);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn snapshot_select_scrollbar() {
+        // Create a spec with many static choices to test scrollbar
+        let spec_text = r#"
+name "test"
+bin "test"
+cmd "test" {
+    arg "<item>" {
+        choices "opt01" "opt02" "opt03" "opt04" "opt05" "opt06" "opt07" "opt08" "opt09" "opt10" "opt11" "opt12" "opt13" "opt14" "opt15"
+    }
+}
+        "#;
+        let mut app = App::new(parse_spec(spec_text));
+        
+        // Focus on Args and open the select box
+        app.set_focus(Focus::Args);
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        
+        // Navigate down in the select to show scrollbar thumb moved from top
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        for _ in 0..5 {
+            app.handle_key(down);
+        }
+        let output = render_to_string(&mut app, 100, 24);
+        insta::assert_snapshot!(output);
     }
 }
