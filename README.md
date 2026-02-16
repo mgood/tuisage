@@ -102,6 +102,10 @@ One of `--spec-cmd` or `--spec-file` is required (but not both).
 
 Left click to activate most elements. Mouse wheel scrolls selection up and down.
 
+## Compatibility
+
+This has been mostly tested in [ghostty](https://ghostty.org), though I have also tried it with the Mac built-in Terminal.app, and the Zed and VSCode embedded terminals. Some seem to trouble aligning the box-drawing characters, but are otherwise functional.
+
 ## Security Considerations
 
 Only run this with *trusted* tools. Since it automatically runs custom commands provided by the usage spec, it could run an unintended command.
