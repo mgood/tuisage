@@ -1,24 +1,20 @@
 # TuiSage
 
-A terminal UI for interactively building CLI commands from [usage](https://usage.jdx.dev/) specs.
+A terminal UI for running [mise tasks](https://mise.jdx.dev/tasks/) or other commands supporting [`--usage`](https://usage.jdx.dev/) specs.
 
-Point TuiSage at a usage spec — from a file or by running a command — and it presents an interactive interface for browsing subcommands, toggling flags, filling in arguments, and producing a complete command string.
+![Animation showing the interface](demo/demo.gif)
 
 ## Features
 
-- **Browse subcommands** — explore the full command hierarchy as an expandable/collapsible tree
-- **Toggle flags** — boolean flags, count flags (`-vvv`), and flags with values
-- **Fill arguments** — positional args with free-text input or choice cycling
-- **Live preview** — see the assembled command update in real time
-- **Execute commands** — run the built command directly within the TUI in an embedded terminal (PTY)
-- **Fuzzy filter** — press `/` to filter commands, flags, or args with scored, ranked matching (powered by `nucleo-matcher`); panel title shows 🔍 emoji when filtering
-- **Mouse support** — click to select, scroll wheel to navigate, click-to-activate
-- **Scrolling** — long lists scroll automatically to keep the selection visible
-- **Default indicators** — flags with default values are clearly marked
-- **Color themes** — multiple built-in themes, switchable at runtime with `[`/`]` or via the `T` theme picker with live preview
-- **Usage spec output** — generate TuiSage's own usage spec with `--usage`
+- **Execute commands** — Runs in an embedded terminal so you can see the output, then return to the UI.
+- **Fuzzy filter** — Press `/` to activate search mode, or start typing in a "select" box. Uses [nucleo](https://crates.io/crates/nucleo-matcher) for fzf-style matching.
+- **Dynamic completions** — Supports running a custom command to generate completion values. See the spec for the ["complete" statement](https://usage.jdx.dev/spec/reference/complete).
+- **Mouse support** — Click to select, or mouse wheel to scroll up and down.
+- **Themes** — Press "T" or click the name to open the theme selector. Uses [ratatui-themes](https://crates.io/crates/ratatui-themes).
 
 ## Installation
+
+Clone the repo, then:
 
 ```sh
 cargo install --path .
@@ -28,53 +24,50 @@ Or build from source:
 
 ```sh
 cargo build --release
+./target/release/tuisage
 ```
 
 ## Usage
 
-### From a command (standard use case)
+### Mise Tasks
 
-Run a command that outputs a usage spec, and optionally specify the base command to build:
+This is designed to work well with `mise`. Running `mise tasks ls --usage` prints the full usage spec the tasks, though you need to specify `--cmd "mise run"` as the command prefix to run the tasks:
 
 ```sh
-# Build a "mise run" command using the spec from "mise tasks ls --usage"
 tuisage --cmd "mise run" --spec-cmd "mise tasks ls --usage"
+```
 
-# Just explore a tool's usage spec
+For convenience, you can add it to your mise config file to run as `mise tui`:
+
+```toml
+[tasks.tui]
+description = "TUI to run mise tasks"
+run = 'tuisage --cmd "mise run" --spec-cmd "mise tasks ls --usage"'
+```
+
+### Native `--usage` support
+
+For tools supporting `--usage` you can run them like:
+
+```sh
 tuisage --spec-cmd "mytool --usage"
 ```
 
 ### From a file
 
+You can also provide your own `--usage` spec from a file:
+
 ```sh
 tuisage --spec-file path/to/cli.usage.kdl
 ```
 
-### With a base command override
+### Other combinations
 
-The `--cmd` flag overrides the binary name from the spec, so the built command starts with whatever you provide:
+You can combine these as well:
 
 ```sh
 tuisage --cmd "docker compose" --spec-file docker-compose.usage.kdl
 ```
-
-### Generate TuiSage's own usage spec
-
-```sh
-tuisage --usage
-```
-
-### Command Execution
-
-When you press **Enter** on the command preview, TuiSage executes the command in an embedded terminal directly within the TUI. The command is run with separate process arguments (not shell-stringified) for safety.
-
-During execution:
-- The command is displayed at the top of the screen
-- Terminal output is shown in real time in a pseudo-terminal pane
-- Keyboard input is forwarded to the running process (including Ctrl-C)
-- After the process exits, press Esc/Enter/q to close and return to the command builder
-
-This allows you to build, run, tweak, and re-run commands iteratively without leaving the TUI.
 
 ## CLI Reference
 
@@ -93,74 +86,25 @@ One of `--spec-cmd` or `--spec-file` is required (but not both).
 
 | Key | Action |
 |---|---|
-| `↑` / `↓` or `k` / `j` | Navigate within a panel |
-| `←` / `h` | Collapse tree node (or move to parent) |
-| `→` / `l` | Expand tree node (or move to first child) |
+| `↑` / `↓` or `k` / `j` | Navigate within a panel or select box |
 | `Tab` / `Shift-Tab` | Cycle focus between panels |
-| `Enter` | Navigate into command / toggle flag / edit arg / execute command |
-| `Space` | Toggle boolean flag / increment count flag |
-| `Backspace` | Remove/clear: decrement count flag, turn off bool flag, clear value flag or arg |
-| `/` | Start fuzzy filter (works in Commands, Flags, and Args panels) |
+| `Enter` | Activate the selected input |
+| `Space` | Toggle or increment a flag |
+| `Backspace` | Remove/clear: decrement or clear a value |
+| `/` | Enter search mode |
 | `Esc` | Cancel filter / stop editing |
-| `Ctrl+R` | Execute command (works from any panel) |
-| `]` / `[` | Next / previous color theme (quick cycle) |
-| `T` | Open theme picker (live preview, Enter to confirm, Esc to cancel) |
-| `q` | Quit |
-| `Ctrl-C` | Quit |
-
-### During Command Execution
-
-| Key | Action |
-|---|---|
-| Any key | Forwarded to the running process |
-| `Ctrl-C` | Send SIGINT to the running process |
-| `Ctrl-D` | Send EOF to the running process |
-
-### After Command Exits
-
-| Key | Action |
-|---|---|
-| `Esc` / `Enter` / `q` | Close execution view, return to builder |
+| `Ctrl+R` | Execute command |
+| `]` / `[` | Cycle through themes |
+| `T` | Open theme picker |
+| `q` or `Ctrl+C` | Quit |
 
 ## Mouse
 
-| Action | Effect |
-|---|---|
-| Left click | Focus panel and select item |
-| Click on selected item | Activate (toggle expand/collapse / toggle / edit) |
-| Right click (commands) | Expand tree node |
-| Scroll wheel | Move selection up/down |
+Left click to activate most elements. Mouse wheel scrolls selection up and down.
 
-## Example Spec
+## Security Considerations
 
-Here's a minimal `.usage.kdl` spec that TuiSage can read:
-
-```kdl
-bin "mytool"
-about "A sample tool"
-
-flag "-v --verbose" help="Verbose output"
-flag "-f --force" help="Force operation"
-
-cmd "init" help="Initialize a project" {
-    arg "<name>" help="Project name"
-    flag "-t --template <tpl>" help="Template" {
-        arg "<tpl>" {
-            choices "basic" "full" "minimal"
-        }
-    }
-}
-
-cmd "deploy" help="Deploy the app" {
-    arg "<env>" help="Target environment" {
-        choices "dev" "staging" "prod"
-    }
-    flag "--tag <tag>" help="Image tag"
-    flag "--dry-run" help="Preview only"
-}
-```
-
-See `fixtures/sample.usage.kdl` for a more comprehensive example.
+Only run this with *trusted* tools. Since it automatically runs custom commands provided by the usage spec, it could run an unintended command.
 
 ## Testing
 
@@ -175,15 +119,24 @@ cargo insta review
 cargo insta test --accept
 ```
 
+## Roadmap
+
+Some features I would like to implement:
+
+- **History / favorites** – revisit commands from the current session, save them for fast use in the future.
+- **Saving preferences** – persist theme selection, or maybe other options.
+- **Filename and other completions** – Recognize inputs for file paths to provide a file navigator, present a calendar picker for date fields, etc.
+
 ## Documentation
+
+This README presents the main documentation intended for users. Other documents are primarily designed to help building and maintaining the app with AI agents, but may provide insight into the development.
 
 | Document | Purpose |
 |---|---|
-| **README.md** | User guide (this file) |
+| **AGENTS.md** | Development guidelines for agents |
 | **REQUIREMENTS.md** | High-level goals, features, and user stories |
 | **SPECIFICATION.md** | Detailed behavioral specification (UI, interactions, data flow) |
 | **IMPLEMENTATION.md** | Architecture, code structure, and development state |
-| **AGENTS.md** | Development guidelines for contributors and AI agents |
 
 ## Dependencies
 
