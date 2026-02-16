@@ -2,7 +2,7 @@
 
 A terminal UI for running [mise tasks](https://mise.jdx.dev/tasks/) or other commands supporting [`--usage`](https://usage.jdx.dev/) specs.
 
-![Animation showing the interface](demo/demo.gif)
+![Animation showing the interface](https://vhs.charm.sh/vhs-6VISU7YHvgOWuO11RgvdEt.gif)
 
 ## Features
 
