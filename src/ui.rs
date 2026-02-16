@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
     Frame,
 };
 use ratatui_themes::ThemeName;
@@ -288,6 +288,9 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
     let list = List::new(items).block(block);
     frame.render_stateful_widget(list, area, &mut state);
 
+    // Scrollbar
+    render_panel_scrollbar(frame, area, flat_commands.len(), app.command_scroll(), colors);
+
     // Render right-aligned help text overlays (no padding on Commands panel)
     let inner = area.inner(ratatui::layout::Margin::new(1, 1));
     render_help_overlays(frame.buffer_mut(), &help_entries, app.command_scroll(), inner);
@@ -458,11 +461,15 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
         })
         .collect();
 
+    let total_flags = flags.len();
     let mut state = ListState::default()
         .with_selected(if ps.is_focused { Some(flag_index) } else { None })
         .with_offset(app.flag_scroll());
     let list = List::new(items).block(block);
     frame.render_stateful_widget(list, area, &mut state);
+
+    // Scrollbar
+    render_panel_scrollbar(frame, area, total_flags, app.flag_scroll(), colors);
 
     // Render right-aligned help text overlays (2 = border + horizontal padding)
     let inner = area.inner(ratatui::layout::Margin::new(1, 1));
@@ -585,15 +592,44 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
         })
         .collect();
 
+    let total_args = app.arg_values.len();
     let mut state = ListState::default()
         .with_selected(if ps.is_focused { Some(arg_index) } else { None })
         .with_offset(app.arg_scroll());
     let list = List::new(items).block(block);
     frame.render_stateful_widget(list, area, &mut state);
 
+    // Scrollbar
+    render_panel_scrollbar(frame, area, total_args, app.arg_scroll(), colors);
+
     // Render right-aligned help text overlays (2 = border + horizontal padding)
     let inner = area.inner(ratatui::layout::Margin::new(1, 1));
     render_help_overlays(frame.buffer_mut(), &help_entries, app.arg_scroll(), inner);
+}
+
+/// Render a vertical scrollbar on the right side of a panel if content overflows.
+fn render_panel_scrollbar(
+    frame: &mut Frame,
+    area: Rect,
+    total_items: usize,
+    scroll_offset: usize,
+    colors: &UiColors,
+) {
+    let inner_height = area.height.saturating_sub(2) as usize; // minus top/bottom borders
+    if total_items <= inner_height || inner_height == 0 {
+        return;
+    }
+    let inner = area.inner(ratatui::layout::Margin::new(0, 1));
+    let mut scrollbar_state = ScrollbarState::new(total_items.saturating_sub(inner_height))
+        .position(scroll_offset);
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(None)
+        .end_symbol(None)
+        .track_symbol(Some("│"))
+        .thumb_symbol("┃")
+        .track_style(Style::default().fg(colors.inactive_border))
+        .thumb_style(Style::default().fg(colors.active_border));
+    frame.render_stateful_widget(scrollbar, inner, &mut scrollbar_state);
 }
 
 /// Render the choice select box as an overlay.
