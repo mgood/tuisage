@@ -214,6 +214,9 @@ pub struct App {
 
     /// Area of the theme indicator in the help bar (for mouse click detection).
     pub theme_indicator_rect: Option<Rect>,
+
+    /// Current mouse cursor position (column, row) for hover highlighting.
+    pub mouse_position: Option<(u16, u16)>,
 }
 
 impl App {
@@ -313,6 +316,7 @@ impl App {
             choice_select: None,
             theme_picker: None,
             theme_indicator_rect: None,
+            mouse_position: None,
         };
         app.sync_state();
         // Synchronize command_path with the tree's initial selection so the
@@ -1221,6 +1225,9 @@ impl App {
         let col = event.column;
         let row = event.row;
 
+        // Track mouse position for hover highlighting
+        self.mouse_position = Some((col, row));
+
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 // If theme picker is open, handle its clicks
@@ -1417,6 +1424,30 @@ impl App {
             .iter()
             .find(|r| r.data == Focus::Args)
             .map(|r| r.area)
+    }
+
+    /// Compute the item index the mouse is hovering over in the given panel.
+    /// Returns `None` if the mouse is not within the panel's content area.
+    pub fn hovered_index(&self, panel: Focus) -> Option<usize> {
+        let (col, row) = self.mouse_position?;
+        let area = match panel {
+            Focus::Commands => self.command_area()?,
+            Focus::Flags => self.flag_area()?,
+            Focus::Args => self.arg_area()?,
+            Focus::Preview => return None,
+        };
+        let inner_top = area.y + 1; // skip top border
+        let inner_bottom = area.y + area.height.saturating_sub(1);
+        if col < area.x || col >= area.x + area.width || row < inner_top || row >= inner_bottom {
+            return None;
+        }
+        let scroll = match panel {
+            Focus::Commands => self.command_scroll(),
+            Focus::Flags => self.flag_scroll(),
+            Focus::Args => self.arg_scroll(),
+            Focus::Preview => 0,
+        };
+        Some((row - inner_top) as usize + scroll)
     }
 
     /// Scroll up in the currently focused list.

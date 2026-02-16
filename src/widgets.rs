@@ -33,6 +33,7 @@ pub struct UiColors {
     pub active_border: Color,
     pub inactive_border: Color,
     pub selected_bg: Color,
+    pub hover_bg: Color,
     pub editing_bg: Color,
     pub preview_cmd: Color,
     pub choice: Color,
@@ -58,6 +59,18 @@ impl UiColors {
             _ => Color::Rgb(40, 40, 60),
         };
 
+        // Hover bg is a subtler version of selected_bg, blended toward the background
+        let hover_bg = match (p.bg, p.selection) {
+            (Color::Rgb(br, bg_g, bb), Color::Rgb(sr, sg, sb)) => {
+                Color::Rgb(
+                    ((br as u16 + sr as u16) / 2) as u8,
+                    ((bg_g as u16 + sg as u16) / 2) as u8,
+                    ((bb as u16 + sb as u16) / 2) as u8,
+                )
+            }
+            _ => Color::Rgb(30, 30, 45),
+        };
+
         let editing_bg = match p.selection {
             Color::Rgb(r, g, b) => Color::Rgb(
                 r.saturating_add(15),
@@ -77,6 +90,7 @@ impl UiColors {
             active_border: p.accent,
             inactive_border: p.muted,
             selected_bg,
+            hover_bg,
             editing_bg,
             preview_cmd: p.fg,
             choice: p.info,
@@ -663,6 +677,8 @@ pub struct SelectList<'a> {
     pub descriptions: &'a [Option<String>],
     /// Currently selected index (None = no selection).
     pub selected: Option<usize>,
+    /// Currently hovered index (None = no hover).
+    pub hovered: Option<usize>,
     /// Whether to show the ▶ selection cursor prefix.
     pub show_cursor: bool,
     /// Which borders to show (defaults to ALL).
@@ -688,6 +704,7 @@ impl<'a> SelectList<'a> {
             items,
             descriptions: &[],
             selected,
+            hovered: None,
             show_cursor: false,
             borders: Borders::ALL,
             item_color,
@@ -711,6 +728,12 @@ impl<'a> SelectList<'a> {
     /// Set which borders to show.
     pub fn with_borders(mut self, borders: Borders) -> Self {
         self.borders = borders;
+        self
+    }
+
+    /// Set the hovered index.
+    pub fn with_hovered(mut self, hovered: Option<usize>) -> Self {
+        self.hovered = hovered;
         self
     }
 }
@@ -800,6 +823,8 @@ impl StatefulWidget for SelectList<'_> {
                     let mut item = ratatui::widgets::ListItem::new(Line::from(spans));
                     if is_selected {
                         item = item.style(Style::default().bg(self.colors.selected_bg));
+                    } else if self.hovered == Some(i) {
+                        item = item.style(Style::default().bg(self.colors.hover_bg));
                     }
                     item
                 })

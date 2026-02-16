@@ -226,6 +226,9 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
     // Get selected index
     let selected_index = app.command_index();
 
+    // Get hovered index for this panel (only when focused)
+    let hovered_index = if ps.is_focused { app.hovered_index(Focus::Commands) } else { None };
+
     // Build list items with indentation markers
     let mut help_entries: Vec<(usize, Line<'static>)> = Vec::new();
     let items: Vec<ListItem> = flat_commands
@@ -233,6 +236,7 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
         .enumerate()
         .map(|(i, cmd)| {
             let is_selected = i == selected_index;
+            let is_hovered = hovered_index == Some(i) && !is_selected;
             let ctx = ItemContext::new(&cmd.id, is_selected, &ps);
 
             let mut spans = Vec::new();
@@ -271,6 +275,8 @@ fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
             let mut item = ListItem::new(Line::from(spans));
             if is_selected {
                 item = item.style(selection_bg(false, colors));
+            } else if is_hovered {
+                item = item.style(Style::default().bg(colors.hover_bg));
             }
             item
         })
@@ -327,12 +333,16 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
     let flag_defaults: Vec<Option<String>> =
         flags.iter().map(|f| f.default.first().cloned()).collect();
 
+    // Get hovered index for this panel (only when focused)
+    let hovered_index = if ps.is_focused { app.hovered_index(Focus::Flags) } else { None };
+
     let mut help_entries: Vec<(usize, Line<'static>)> = Vec::new();
     let items: Vec<ListItem> = flags
         .iter()
         .enumerate()
         .map(|(i, flag)| {
             let is_selected = ps.is_focused && i == flag_index;
+            let is_hovered = hovered_index == Some(i) && !is_selected;
             let is_editing = is_selected && app.editing;
             let value = flag_values.iter().find(|(n, _)| n == &flag.name);
             let default_val = flag_defaults.get(i).and_then(|d| d.as_ref());
@@ -456,6 +466,8 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
             let mut item = ListItem::new(line);
             if is_selected {
                 item = item.style(selection_bg(is_editing, colors));
+            } else if is_hovered {
+                item = item.style(Style::default().bg(colors.hover_bg));
             }
             item
         })
@@ -499,6 +511,9 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
     let inner_height = area.height.saturating_sub(2) as usize;
     app.ensure_visible(Focus::Args, inner_height);
 
+    // Get hovered index for this panel (only when focused)
+    let hovered_index = if ps.is_focused { app.hovered_index(Focus::Args) } else { None };
+
     let mut help_entries: Vec<(usize, Line<'static>)> = Vec::new();
     let items: Vec<ListItem> = app
         .arg_values
@@ -506,6 +521,7 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
         .enumerate()
         .map(|(i, arg_val)| {
             let is_selected = ps.is_focused && i == arg_index;
+            let is_hovered = hovered_index == Some(i) && !is_selected;
             let is_editing = is_selected && app.editing;
 
             let ctx = ItemContext::new(&arg_val.name, is_selected, &ps);
@@ -587,6 +603,8 @@ fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
             let mut item = ListItem::new(line);
             if is_selected {
                 item = item.style(selection_bg(is_editing, colors));
+            } else if is_hovered {
+                item = item.style(Style::default().bg(colors.hover_bg));
             }
             item
         })
@@ -724,6 +742,21 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
         cs.overlay_rect = Some(overlay_rect);
     }
 
+    // Compute hover index for the select overlay
+    let hovered_index = app.mouse_position.and_then(|(col, row)| {
+        let inner_top = overlay_rect.y; // no top border
+        let inner_bottom = overlay_rect.y + overlay_rect.height.saturating_sub(1);
+        if col >= overlay_rect.x && col < overlay_rect.x + overlay_rect.width
+            && row >= inner_top && row < inner_bottom
+        {
+            let scroll_offset = app.choice_select.as_ref().map_or(0, |cs| cs.scroll_offset);
+            let idx = (row - inner_top) as usize + scroll_offset;
+            if idx < filtered.len() { Some(idx) } else { None }
+        } else {
+            None
+        }
+    });
+
     let widget = SelectList::new(
         String::new(),
         &labels,
@@ -733,7 +766,8 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
         colors,
     )
     .with_descriptions(&descs)
-    .with_borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM);
+    .with_borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
+    .with_hovered(hovered_index);
     let mut scroll_state = SelectListScrollState::default();
     frame.render_stateful_widget(widget, overlay_rect, &mut scroll_state);
 
