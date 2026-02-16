@@ -22,10 +22,6 @@ struct Args {
     #[arg(long)]
     cmd: Option<String>,
 
-    /// Command to run to get the usage spec (e.g., "mise tasks ls --usage")
-    #[arg(long)]
-    spec_cmd: Option<String>,
-
     /// Path to a usage spec file
     #[arg(long)]
     spec_file: Option<PathBuf>,
@@ -33,6 +29,10 @@ struct Args {
     /// Generate usage spec for this tool
     #[arg(long)]
     usage: bool,
+
+    /// Command to run to get the usage spec (e.g., "mycli --usage")
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    spec_cmd: Vec<String>,
 }
 
 fn main() -> color_eyre::Result<()> {
@@ -53,24 +53,25 @@ fn main() -> color_eyre::Result<()> {
     }
 
     // Determine the usage spec source
-    let has_spec_cmd = args.spec_cmd.is_some();
+    let has_spec_cmd = !args.spec_cmd.is_empty();
     let has_spec_file = args.spec_file.is_some();
 
     if has_spec_cmd && has_spec_file {
         return Err(color_eyre::eyre::eyre!(
-            "Cannot specify both --spec-cmd and --spec-file. Use --help for usage information."
+            "Cannot specify both a spec command and --spec-file. Use --help for usage information."
         ));
     }
 
     if !has_spec_cmd && !has_spec_file {
         return Err(color_eyre::eyre::eyre!(
-            "Must specify either --spec-cmd or --spec-file. Use --help for usage information."
+            "Must specify either a spec command or --spec-file. Use --help for usage information."
         ));
     }
 
-    let mut spec = if let Some(ref spec_cmd) = args.spec_cmd {
-        // Run the command and capture its stdout as a usage spec
-        let output = run_spec_command(spec_cmd)?;
+    let mut spec = if has_spec_cmd {
+        // Join the arguments into a single command string and run it
+        let spec_cmd = args.spec_cmd.join(" ");
+        let output = run_spec_command(&spec_cmd)?;
         output.parse::<usage::Spec>().map_err(|e| {
             color_eyre::eyre::eyre!(
                 "Failed to parse usage spec from command '{}': {}",

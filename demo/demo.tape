@@ -11,7 +11,7 @@ Set PlaybackSpeed 0.3
 Set Theme "Dracula"
 
 Hide
-Type "cargo run -- --spec-file fixtures/sample.usage.kdl" Enter
+Type "cargo run -- fixtures/sample.usage.kdl" Enter
 Sleep 1000ms
 Show
 

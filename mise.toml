@@ -33,7 +33,7 @@ fi
 
 [tasks.recurse]
 description = "Run tuisage on its own mise tasks."
-run = 'cargo run -- --cmd "mise run" --spec-cmd "mise tasks ls --usage"'
+run = 'cargo run -- --cmd "mise run" mise tasks ls --usage'
 
 [tasks.vhs]
 description = "Run vhs to record demo."
