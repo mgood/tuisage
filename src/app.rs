@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::io::Write;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -211,10 +210,6 @@ pub struct App {
 
     /// Area of the theme indicator in the help bar (for mouse click detection).
     pub theme_indicator_rect: Option<Rect>,
-
-    /// Cache of dynamic completion results, keyed by "command_path:arg_name".
-    /// Each entry holds (choices, descriptions) from a previously-run completion command.
-    pub completion_cache: HashMap<String, (Vec<String>, Vec<Option<String>>)>,
 }
 
 impl App {
@@ -314,7 +309,6 @@ impl App {
             choice_select: None,
             theme_picker: None,
             theme_indicator_rect: None,
-            completion_cache: HashMap::new(),
         };
         app.sync_state();
         // Synchronize command_path with the tree's initial selection so the
@@ -776,12 +770,6 @@ impl App {
         cmd.complete.get(arg_name)
     }
 
-    /// Cache key for a completion result: "command_path:arg_name".
-    fn completion_cache_key(&self, arg_name: &str) -> String {
-        let path = self.command_path.join(" ");
-        format!("{}:{}", path, arg_name)
-    }
-
     /// Run a completion command and parse its output into (choices, descriptions).
     /// When `descriptions` is true, each line is parsed as "value:description".
     pub fn run_completion(
@@ -829,24 +817,19 @@ impl App {
         Some((choices, descs))
     }
 
-    /// Try to get or run completions for the given arg name, using the cache.
+    /// Run completion command and open select box with results.
+    /// Re-executes the command each time for fresh results.
     /// Returns `Some((choices, descriptions))` on success, `None` on failure.
-    pub fn get_or_run_completion(
+    pub fn run_and_open_completion(
         &mut self,
         arg_name: &str,
+        current_value: &str,
     ) -> Option<(Vec<String>, Vec<Option<String>>)> {
-        let cache_key = self.completion_cache_key(arg_name);
-
-        if let Some(cached) = self.completion_cache.get(&cache_key) {
-            return Some(cached.clone());
-        }
-
         let complete = self.find_completion(arg_name)?.clone();
         let run_cmd = complete.run.as_ref()?;
 
         let result = Self::run_completion(run_cmd, complete.descriptions)?;
-
-        self.completion_cache.insert(cache_key, result.clone());
+        self.open_completion_select(result.0.clone(), result.1.clone(), current_value);
         Some(result)
     }
 
@@ -1942,11 +1925,7 @@ impl App {
                                 self.open_choice_select(choices, &current);
                             } else if let Some(ref arg_name) = flag_arg_name {
                                 let current = s.clone();
-                                if let Some((choices, descs)) =
-                                    self.get_or_run_completion(arg_name)
-                                {
-                                    self.open_completion_select(choices, descs, &current);
-                                } else {
+                                if self.run_and_open_completion(arg_name, &current).is_none() {
                                     self.start_editing();
                                 }
                             } else {
@@ -1967,9 +1946,7 @@ impl App {
                 } else {
                     let arg_name = arg.name.clone();
                     let current = arg.value.clone();
-                    if let Some((choices, descs)) = self.get_or_run_completion(&arg_name) {
-                        self.open_completion_select(choices, descs, &current);
-                    } else {
+                    if self.run_and_open_completion(&arg_name, &current).is_none() {
                         self.start_editing();
                     }
                 }
@@ -5501,26 +5478,25 @@ mod tests {
     }
 
     #[test]
-    fn test_completion_cache() {
+    fn test_completion_runs_each_time() {
         let spec = sample_spec();
         let mut app = App::new(spec);
         app.navigate_to_command(&["plugin", "install"]);
 
-        // First call should run the command
-        let result = app.get_or_run_completion("name");
+        // Each call should run the command fresh
+        let result = app.run_and_open_completion("name", "");
         assert!(result.is_some());
         let (choices, _) = result.unwrap();
         assert!(!choices.is_empty());
 
-        // Second call should use the cache
-        let cache_key = app.completion_cache_key("name");
-        assert!(
-            app.completion_cache.contains_key(&cache_key),
-            "Result should be cached"
-        );
+        // Close the select box
+        app.close_choice_select();
 
-        let result2 = app.get_or_run_completion("name");
-        assert_eq!(result2.unwrap().0, choices, "Cached result should match");
+        // Open again - should re-run the command
+        let result2 = app.run_and_open_completion("name", "auth");
+        assert!(result2.is_some());
+        let (choices2, _) = result2.unwrap();
+        assert_eq!(choices2, choices, "Should get same results on re-run");
     }
 
     #[test]
