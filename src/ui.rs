@@ -17,7 +17,7 @@ use crate::app::{flatten_command_tree, App, AppMode, FlagValue, Focus};
 use crate::widgets::{
     build_help_line, panel_block, panel_title, push_edit_cursor, push_highlighted_name,
     push_selection_cursor, render_help_overlays, selection_bg, CommandPreview, HelpBar,
-    ItemContext, PanelState, SelectList, UiColors,
+    ItemContext, PanelState, SelectList, SelectListScrollState, UiColors,
 };
 
 /// Render the full UI: command panel, flag panel, arg panel, preview, help bar.
@@ -698,7 +698,14 @@ fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, c
     )
     .with_descriptions(&descs)
     .with_borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM);
-    frame.render_widget(widget, overlay_rect);
+    let mut scroll_state = SelectListScrollState::default();
+    frame.render_stateful_widget(widget, overlay_rect, &mut scroll_state);
+
+    // Store scroll state for mouse handling
+    if let Some(ref mut cs) = app.choice_select {
+        cs.scroll_offset = scroll_state.scroll_offset;
+        cs.visible_items = scroll_state.visible_items;
+    }
 }
 
 /// Render the theme picker overlay, positioned above the help bar, right-aligned.

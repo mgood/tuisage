@@ -13,7 +13,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Padding, Paragraph, Widget, Wrap},
+    widgets::{Block, Borders, Padding, Paragraph, StatefulWidget, Widget, Wrap},
 };
 
 use crate::app::{fuzzy_match_indices, App, Focus, MatchScores};
@@ -717,6 +717,27 @@ impl<'a> SelectList<'a> {
 
 impl Widget for SelectList<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let mut state = SelectListScrollState::default();
+        StatefulWidget::render(self, area, buf, &mut state);
+    }
+}
+
+/// Scroll state for `SelectList`, tracking the computed scroll offset and visible items.
+/// Pass this to `StatefulWidget::render` to get the scroll offset back for mouse handling.
+#[derive(Debug, Clone, Default)]
+pub struct SelectListScrollState {
+    /// The scroll offset computed during rendering (items scrolled past the top).
+    pub scroll_offset: usize,
+    /// Number of visible item rows in the viewport.
+    pub visible_items: usize,
+}
+
+impl StatefulWidget for SelectList<'_> {
+    type State = SelectListScrollState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
+
         // Clear area behind the overlay
         ratatui::widgets::Clear.render(area, buf);
 
@@ -789,7 +810,9 @@ impl Widget for SelectList<'_> {
         let border_height = if self.borders.contains(Borders::TOP) { 1 } else { 0 }
             + if self.borders.contains(Borders::BOTTOM) { 1 } else { 0 };
         let visible_items = area.height.saturating_sub(border_height) as usize;
-        let mut state = ratatui::widgets::ListState::default().with_selected(
+        state.visible_items = visible_items;
+
+        let mut list_state = ratatui::widgets::ListState::default().with_selected(
             if self.items.is_empty() {
                 None
             } else {
@@ -797,13 +820,46 @@ impl Widget for SelectList<'_> {
             },
         );
 
-        if let Some(sel) = self.selected {
+        let scroll_offset = if let Some(sel) = self.selected {
             if visible_items > 0 && sel >= visible_items {
-                state = state.with_offset(sel.saturating_sub(visible_items - 1));
+                sel.saturating_sub(visible_items - 1)
+            } else {
+                0
             }
-        }
+        } else {
+            0
+        };
+        list_state = list_state.with_offset(scroll_offset);
+        state.scroll_offset = scroll_offset;
 
         let list = ratatui::widgets::List::new(items).block(block);
-        ratatui::widgets::StatefulWidget::render(list, area, buf, &mut state);
+        ratatui::widgets::StatefulWidget::render(list, area, buf, &mut list_state);
+
+        // Render scrollbar if content overflows
+        let total_items = self.items.len();
+        if total_items > visible_items && visible_items > 0 {
+            let inner = area.inner(ratatui::layout::Margin {
+                horizontal: 0,
+                vertical: if self.borders.contains(Borders::TOP) { 1 } else { 0 },
+            });
+            // Adjust inner height if bottom border is present
+            let scrollbar_area = if self.borders.contains(Borders::BOTTOM) {
+                Rect::new(inner.x, inner.y, inner.width, inner.height.saturating_sub(
+                    if self.borders.contains(Borders::BOTTOM) { 1 } else { 0 }
+                ))
+            } else {
+                inner
+            };
+            let mut scrollbar_state = ScrollbarState::new(total_items.saturating_sub(visible_items))
+                .position(scroll_offset);
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(Some("│"))
+                .thumb_symbol("┃")
+                .track_style(Style::default().fg(self.colors.inactive_border))
+                .thumb_style(Style::default().fg(self.colors.active_border));
+            StatefulWidget::render(scrollbar, scrollbar_area, buf, &mut scrollbar_state);
+        }
     }
 }

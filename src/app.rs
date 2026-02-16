@@ -125,6 +125,10 @@ pub struct ChoiceSelectState {
     /// Whether the filter is active. Starts false so all choices are visible
     /// even when reopening with an existing value; becomes true on first keystroke.
     pub filter_active: bool,
+    /// Current scroll offset for the select list (set during rendering).
+    pub scroll_offset: usize,
+    /// Number of visible items in the viewport (set during rendering).
+    pub visible_items: usize,
 }
 
 /// Data stored in each tree node for a command.
@@ -559,6 +563,8 @@ impl App {
             value_column,
             overlay_rect: None,
             filter_active: false,
+            scroll_offset: 0,
+            visible_items: 0,
         });
         // Enter editing mode with the current value as initial text
         self.editing = true;
@@ -1273,8 +1279,9 @@ impl App {
                         if col >= rect.x && col < rect.x + rect.width
                             && row >= inner_top && row < inner_bottom
                         {
-                            // Compute which choice was clicked
-                            let clicked_index = (row - inner_top) as usize;
+                            // Account for scroll offset when computing clicked index
+                            let scroll_offset = self.choice_select.as_ref().map_or(0, |cs| cs.scroll_offset);
+                            let clicked_index = (row - inner_top) as usize + scroll_offset;
                             let filtered_len = self.filtered_choices().len();
                             if clicked_index < filtered_len {
                                 if let Some(ref mut cs) = self.choice_select {
@@ -1365,11 +1372,19 @@ impl App {
                 Action::None
             }
             MouseEventKind::ScrollUp => {
-                self.scroll_up_in_focused();
+                if self.is_choosing() {
+                    self.scroll_choice_select_up();
+                } else {
+                    self.scroll_up_in_focused();
+                }
                 Action::None
             }
             MouseEventKind::ScrollDown => {
-                self.scroll_down_in_focused();
+                if self.is_choosing() {
+                    self.scroll_choice_select_down();
+                } else {
+                    self.scroll_down_in_focused();
+                }
                 Action::None
             }
             MouseEventKind::Up(MouseButton::Left) => Action::None,
@@ -1412,6 +1427,32 @@ impl App {
     /// Scroll down in the currently focused list.
     fn scroll_down_in_focused(&mut self) {
         self.move_down();
+    }
+
+    /// Scroll the choice select list up (move selection up).
+    fn scroll_choice_select_up(&mut self) {
+        if let Some(ref mut cs) = self.choice_select {
+            match cs.selected_index {
+                Some(0) | None => cs.selected_index = None,
+                Some(idx) => cs.selected_index = Some(idx - 1),
+            }
+        }
+    }
+
+    /// Scroll the choice select list down (move selection down).
+    fn scroll_choice_select_down(&mut self) {
+        let filtered_len = self.filtered_choices().len();
+        if let Some(ref mut cs) = self.choice_select {
+            if filtered_len > 0 {
+                match cs.selected_index {
+                    None => cs.selected_index = Some(0),
+                    Some(idx) if idx + 1 < filtered_len => {
+                        cs.selected_index = Some(idx + 1);
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 
     /// Ensure the scroll offset keeps the selected index visible within the given viewport height.
