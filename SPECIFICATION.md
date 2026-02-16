@@ -405,11 +405,11 @@ When a flag or argument has predefined choices (e.g., `--template` with choices 
 
 ### Dynamic Completions
 
-When a flag's argument or a positional argument has a matching `complete` directive on the current command (matched by name), the completion command is executed when the user first activates the field:
+When a flag's argument or a positional argument has a matching `complete` directive on the current command (matched by name), the completion command is executed each time the user activates the field:
 
 1. **Execution**: The `run` command from the `complete` spec is executed as a shell command. Output lines become completion values.
 2. **Descriptions**: When `descriptions=#true`, each output line is parsed as `value:description` (colons can be escaped with `\:`). The value is used for selection and the description is displayed alongside it.
-3. **Caching**: Completion results are cached per argument name per command path within a session. Subsequent activations of the same field reuse cached results without re-running the command.
+3. **Fresh results**: The completion command is re-run each time the select box is opened to get the latest results. Results are held in memory only while the select box is open.
 4. **Failure handling**: If the command fails or produces no output, the field falls back to free-text editing.
 5. **Custom text**: The user can type custom text directly in the text input. Typing clears any active choice selection, making the typed text the value.
 

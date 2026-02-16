@@ -123,8 +123,7 @@ The core state and logic module (~5600 lines including ~1400 lines of tests).
 | `command_tree_state` | `TreeViewState` | Tree view state: selection index, collapsed set, scroll |
 | `flag_list_state` | `ListPickerState` | Selection + scroll state for flags |
 | `arg_list_state` | `ListPickerState` | Selection + scroll state for args |
-| `choice_select` | `Option<ChoiceSelectState>` | State for inline choice select box (None when closed) |
-| `completion_cache` | `HashMap<String, (Vec<String>, Vec<Option<String>>)>` | Cached completion results keyed by `"command_path:arg_name"` |
+| `choice_select` | `Option<ChoiceSelectState>` | State for inline choice select box (None when closed); holds completion results while open |
 | `edit_input` | `InputState` | State for the value editing text input |
 | `click_regions` | `ClickRegionRegistry<Focus>` | Registered click targets for mouse mapping (from ratatui-interact) |
 
@@ -162,14 +161,14 @@ Support for the usage spec `complete` directive. When a flag or argument has no 
 
 - **`find_completion(arg_name)`** — searches the current command's `complete` map for a `SpecComplete` matching the given arg/flag name. Returns `Option<&SpecComplete>`.
 - **`run_completion(cmd, descriptions)`** — executes a shell command via `sh -c`, parses output lines into `(Vec<String>, Vec<Option<String>>)`. When `descriptions` is true, lines are parsed as `value:description` pairs (with `\:` escaping). Returns `None` on failure or empty output.
-- **`get_or_run_completion(arg_name)`** — cache-first lookup: checks `completion_cache` before running the command. Caches results keyed by `"command_path:arg_name"`.
+- **`run_and_open_completion(arg_name, current_value)`** — runs the completion command and opens the select box with results. Re-executes the command each time for fresh results.
 - **`open_completion_select(choices, descriptions)`** — opens the choice select overlay populated with completion results and their descriptions.
 - **`parse_completion_line(line)`** — parses a single `value:description` line, handling `\:` escaping within values. Returns `Some((value, description))` or `None` for lines without a description separator.
 - **`choice_description(idx)`** — returns the description for a choice at the given index, if present.
 
-**Completion flow**: `handle_enter()` → no static choices? → `find_completion()` → `get_or_run_completion()` → `open_completion_select()`. On failure, falls back to `start_editing()`.
+**Completion flow**: `handle_enter()` → no static choices? → `find_completion()` → `run_and_open_completion()` → `open_completion_select()`. On failure, falls back to `start_editing()`.
 
-**Caching**: Results are cached per `"command_path:arg_name"` key for the session lifetime. This avoids re-running potentially slow shell commands on repeated edits.
+**No caching**: Completion commands are re-run each time the select box is opened to get fresh results. Results are held in memory only while the select box is open.
 
 #### Command Tree and Flat List
 
@@ -341,7 +340,7 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 | `ListPickerState` from ratatui-interact | Provides selection index + scroll offset tracking for flags and args panels. |
 | `FocusManager` from ratatui-interact | Handles Tab/Shift-Tab cycling with dynamic panel availability, reducing boilerplate. |
 | Finishing edits on focus change | Prevents a class of bugs where the edit input text leaks into the wrong field when clicking elsewhere. |
-| Synchronous completion execution | Completion commands are run synchronously via `sh -c` when the user first enters edit mode. Avoids async complexity; commands are expected to be fast. Results are cached per session. |
+| Synchronous completion execution | Completion commands are run synchronously via `sh -c` each time the select box is opened. Avoids async complexity; commands are expected to be fast. Fresh results on every open. |
 | Completion fallback to free-text | When a completion command fails or the user presses Esc, the typed text is kept as the value. The select overlay is non-blocking. |
 | Unified choice select + text input | Opening a choice select also enters editing mode. The text input serves as both the value and the filter. Typing clears any active selection, so users can seamlessly switch between browsing choices and entering custom text. |
 | Consistent selection highlighting | All three panels (Commands, Flags, Args) use the same `selection_bg` background color on the selected item, plus the `▶` caret. Help text is rendered as a right-aligned overlay after the List widget, with automatic skip when it would overlap item content. |
@@ -379,7 +378,7 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - **Ctrl+R execute shortcut** — execute the built command from any panel via `Ctrl+R` (replaces `Ctrl+Enter` which could be intercepted by terminal emulators). Works regardless of edit or filter mode.
 - **Args filter auto-select** — when filtering in the Arguments panel, the cursor automatically moves to the first matching argument if the current selection doesn't match the filter.
 - **Inline choice select box** — flags and arguments with predefined choices open an inline select box overlay instead of cycling through options. The select box supports fuzzy filtering (non-matching choices are hidden), navigation with Up/Down, confirmation with Enter, and cancellation with Esc. The current value is pre-selected when the box opens.
-- **Dynamic completions** — args and flags with `complete` directives in the usage spec run shell commands to populate the select overlay. Supports `descriptions=#true` for `value:description` pairs. Results are cached per session. Esc falls back to free-text editing. Failed commands silently fall back to text editing.
+- **Dynamic completions** — args and flags with `complete` directives in the usage spec run shell commands to populate the select overlay. Supports `descriptions=#true` for `value:description` pairs. Commands are re-run each time for fresh results. Esc falls back to free-text editing. Failed commands silently fall back to text editing.
 - Comprehensive test suite (197 tests)
 - Zero clippy warnings
 
