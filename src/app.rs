@@ -78,6 +78,8 @@ pub enum Focus {
 pub enum FlagValue {
     /// Boolean flag toggled on/off.
     Bool(bool),
+    /// Negatable boolean flag with three states: omitted (None), explicit on, explicit off.
+    NegBool(Option<bool>),
     /// Flag with a string value.
     String(String),
     /// Count flag (e.g., -vvv).
@@ -963,11 +965,11 @@ impl App {
                     } else if f.arg.is_some() {
                         let default = f.default.first().cloned().unwrap_or_default();
                         FlagValue::String(default)
+                    } else if f.negate.is_some() {
+                        // Negatable flag: tristate (omitted / explicit on / explicit off)
+                        FlagValue::NegBool(None)
                     } else {
-                        // Bool flags: respect default=#true
-                        let default_true =
-                            f.default.first().map(|d| d == "true").unwrap_or(false);
-                        FlagValue::Bool(default_true)
+                        FlagValue::Bool(false)
                     };
                     (f.name.clone(), val)
                 })
@@ -1989,6 +1991,16 @@ impl App {
                             let new_val = FlagValue::Bool(*b);
                             self.sync_global_flag(&flag_name, &new_val);
                         }
+                        FlagValue::NegBool(state) => {
+                            // Cycle: None → Some(true) → Some(false) → None
+                            *state = match *state {
+                                None => Some(true),
+                                Some(true) => Some(false),
+                                Some(false) => None,
+                            };
+                            let new_val = FlagValue::NegBool(*state);
+                            self.sync_global_flag(&flag_name, &new_val);
+                        }
                         FlagValue::Count(c) => {
                             *c += 1;
                             let new_val = FlagValue::Count(*c);
@@ -2041,6 +2053,15 @@ impl App {
                     FlagValue::Bool(b) => {
                         *b = !*b;
                         let new_val = FlagValue::Bool(*b);
+                        self.sync_global_flag(&flag_name, &new_val);
+                    }
+                    FlagValue::NegBool(state) => {
+                        *state = match *state {
+                            None => Some(true),
+                            Some(true) => Some(false),
+                            Some(false) => None,
+                        };
+                        let new_val = FlagValue::NegBool(*state);
                         self.sync_global_flag(&flag_name, &new_val);
                     }
                     FlagValue::Count(c) => {
@@ -2109,6 +2130,11 @@ impl App {
                 FlagValue::Bool(b) => {
                     *b = false;
                     let new_val = FlagValue::Bool(false);
+                    self.sync_global_flag(&flag_name, &new_val);
+                }
+                FlagValue::NegBool(state) => {
+                    *state = None;
+                    let new_val = FlagValue::NegBool(None);
                     self.sync_global_flag(&flag_name, &new_val);
                 }
                 FlagValue::String(s) => {
@@ -2276,18 +2302,22 @@ impl App {
 
         match value {
             FlagValue::Bool(true) => {
-                let is_default_true =
-                    flag.default.first().map(|d| d == "true").unwrap_or(false);
-                if flag.negate.is_some() && is_default_true {
-                    return; // already the default, nothing to emit
-                }
                 if let Some(long) = flag.long.first() {
                     parts.push(format!("--{long}"));
                 } else if let Some(short) = flag.short.first() {
                     parts.push(format!("-{short}"));
                 }
             }
-            FlagValue::Bool(false) => {
+            FlagValue::Bool(false) => {}
+            FlagValue::NegBool(None) => {}
+            FlagValue::NegBool(Some(true)) => {
+                if let Some(long) = flag.long.first() {
+                    parts.push(format!("--{long}"));
+                } else if let Some(short) = flag.short.first() {
+                    parts.push(format!("-{short}"));
+                }
+            }
+            FlagValue::NegBool(Some(false)) => {
                 if let Some(negate) = &flag.negate {
                     parts.push(negate.clone());
                 }
@@ -2336,12 +2366,6 @@ impl App {
 
         match value {
             FlagValue::Bool(true) => {
-                // If flag has a negate and default is true, it's already the default — emit nothing
-                let is_default_true =
-                    flag.default.first().map(|d| d == "true").unwrap_or(false);
-                if flag.negate.is_some() && is_default_true {
-                    return None;
-                }
                 let prefix = if let Some(long) = flag.long.first() {
                     format!("--{long}")
                 } else if let Some(short) = flag.short.first() {
@@ -2351,10 +2375,19 @@ impl App {
                 };
                 Some(prefix)
             }
-            FlagValue::Bool(false) => {
-                // If flag has a negate string, emit it (e.g. "--no-color")
-                flag.negate.clone()
+            FlagValue::Bool(false) => None,
+            FlagValue::NegBool(None) => None,
+            FlagValue::NegBool(Some(true)) => {
+                let prefix = if let Some(long) = flag.long.first() {
+                    format!("--{long}")
+                } else if let Some(short) = flag.short.first() {
+                    format!("-{short}")
+                } else {
+                    return None;
+                };
+                Some(prefix)
             }
+            FlagValue::NegBool(Some(false)) => flag.negate.clone(),
             FlagValue::Count(0) => None,
             FlagValue::Count(n) => {
                 if let Some(short) = flag.short.first() {
@@ -2803,86 +2836,162 @@ mod tests {
     }
 
     #[test]
-    fn test_negated_flag_default_true_init() {
-        // A bool flag with default=#true should initialize to Bool(true)
+    fn test_negated_flag_init_as_negbool_none() {
+        // A flag with negate= should initialize as NegBool(None) (omitted)
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["run"]);
         let values = app.current_flag_values();
         let color = values.iter().find(|(n, _)| n == "color");
         assert_eq!(
             color,
-            Some(&("color".to_string(), FlagValue::Bool(true))),
-            "--color flag with default=#true should initialize to Bool(true)"
+            Some(&("color".to_string(), FlagValue::NegBool(None))),
+            "--color flag with negate should initialize to NegBool(None)"
         );
     }
 
     #[test]
-    fn test_negated_flag_emits_nothing_at_default() {
-        // When a negatable flag is at its default (true), the command should not include it
+    fn test_negated_flag_omitted_emits_nothing() {
+        // When a negatable flag is omitted (None), no flag in command
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["run"]);
         let cmd = app.build_command();
         assert!(
             !cmd.contains("--color"),
-            "default-true negatable flag should not appear in command: {cmd}"
+            "omitted negatable flag should not emit --color: {cmd}"
         );
         assert!(
             !cmd.contains("--no-color"),
-            "negate should not appear when flag is at default: {cmd}"
+            "omitted negatable flag should not emit --no-color: {cmd}"
         );
     }
 
     #[test]
-    fn test_negated_flag_emits_negate_when_toggled_off() {
-        // Toggling a default=#true negatable flag off should emit --no-color
+    fn test_negated_flag_explicit_on_emits_flag() {
+        // NegBool(Some(true)) should emit --color
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["run"]);
-        // Set --color to false
         let path_key = "run".to_string();
         if let Some(flags) = app.flag_values.get_mut(&path_key) {
             for (name, value) in flags.iter_mut() {
                 if name == "color" {
-                    *value = FlagValue::Bool(false);
-                }
-            }
-        }
-        let cmd = app.build_command();
-        assert!(
-            cmd.contains("--no-color"),
-            "toggled-off negatable flag should emit negate string: {cmd}"
-        );
-        assert!(
-            !cmd.contains("--color ") && !cmd.ends_with("--color"),
-            "positive flag should not appear when negated: {cmd}"
-        );
-    }
-
-    #[test]
-    fn test_negated_flag_emits_positive_when_not_default() {
-        // A negatable flag with no default toggled on should emit --flag (not nothing)
-        let spec_text = r#"
-name "test"
-bin "test"
-cmd "run" {
-    flag "--color" negate="--no-color"
-}
-"#;
-        let spec = spec_text.parse::<usage::Spec>().unwrap();
-        let mut app = App::new(spec);
-        app.navigate_to_command(&["run"]);
-        // Default is false (no default=#true); toggle it on
-        let path_key = "run".to_string();
-        if let Some(flags) = app.flag_values.get_mut(&path_key) {
-            for (name, value) in flags.iter_mut() {
-                if name == "color" {
-                    *value = FlagValue::Bool(true);
+                    *value = FlagValue::NegBool(Some(true));
                 }
             }
         }
         let cmd = app.build_command();
         assert!(
             cmd.contains("--color"),
-            "negatable flag toggled on without default should emit positive flag: {cmd}"
+            "explicit on should emit --color: {cmd}"
+        );
+    }
+
+    #[test]
+    fn test_negated_flag_explicit_off_emits_negate() {
+        // NegBool(Some(false)) should emit --no-color
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["run"]);
+        let path_key = "run".to_string();
+        if let Some(flags) = app.flag_values.get_mut(&path_key) {
+            for (name, value) in flags.iter_mut() {
+                if name == "color" {
+                    *value = FlagValue::NegBool(Some(false));
+                }
+            }
+        }
+        let cmd = app.build_command();
+        assert!(
+            cmd.contains("--no-color"),
+            "explicit off should emit --no-color: {cmd}"
+        );
+        // Should not also include --color
+        assert!(
+            !cmd.contains("--color ") || cmd.contains("--no-color"),
+            "should not include positive flag when negated: {cmd}"
+        );
+    }
+
+    #[test]
+    fn test_negated_flag_toggle_cycles() {
+        // Enter should cycle NegBool: None → Some(true) → Some(false) → None
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["run"]);
+        app.set_focus(Focus::Flags);
+
+        // Find the color flag index
+        let color_idx = app
+            .current_flag_values()
+            .iter()
+            .position(|(n, _)| n == "color")
+            .expect("color flag should exist");
+        app.flag_list_state.select(color_idx);
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+
+        // Start: None
+        assert_eq!(
+            app.current_flag_values()[color_idx].1,
+            FlagValue::NegBool(None)
+        );
+
+        // First Enter: None → Some(true)
+        app.handle_key(enter);
+        assert_eq!(
+            app.current_flag_values()[color_idx].1,
+            FlagValue::NegBool(Some(true))
+        );
+
+        // Second Enter: Some(true) → Some(false)
+        app.handle_key(enter);
+        assert_eq!(
+            app.current_flag_values()[color_idx].1,
+            FlagValue::NegBool(Some(false))
+        );
+
+        // Third Enter: Some(false) → None
+        app.handle_key(enter);
+        assert_eq!(
+            app.current_flag_values()[color_idx].1,
+            FlagValue::NegBool(None)
+        );
+    }
+
+    #[test]
+    fn test_negated_flag_backspace_resets() {
+        // Backspace should reset NegBool to None
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["run"]);
+        app.set_focus(Focus::Flags);
+
+        let color_idx = app
+            .current_flag_values()
+            .iter()
+            .position(|(n, _)| n == "color")
+            .expect("color flag should exist");
+        app.flag_list_state.select(color_idx);
+
+        // Set to Some(true) first
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert_eq!(
+            app.current_flag_values()[color_idx].1,
+            FlagValue::NegBool(Some(true))
+        );
+
+        // Backspace resets to None
+        let backspace = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Backspace,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(backspace);
+        assert_eq!(
+            app.current_flag_values()[color_idx].1,
+            FlagValue::NegBool(None)
         );
     }
 

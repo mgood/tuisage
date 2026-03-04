@@ -363,6 +363,19 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
                 Some(FlagValue::Bool(false)) => {
                     Span::styled("○ ", Style::default().fg(colors.help))
                 }
+                Some(FlagValue::NegBool(None)) => {
+                    Span::styled("○ ", Style::default().fg(colors.help))
+                }
+                Some(FlagValue::NegBool(Some(true))) => Span::styled(
+                    "✓ ",
+                    Style::default().fg(colors.arg).add_modifier(Modifier::BOLD),
+                ),
+                Some(FlagValue::NegBool(Some(false))) => Span::styled(
+                    "✗ ",
+                    Style::default()
+                        .fg(colors.required)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Some(FlagValue::Count(n)) => {
                     if *n > 0 {
                         Span::styled(format!("[{}] ", n), Style::default().fg(colors.count))
@@ -411,6 +424,16 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
                     Style::default().fg(colors.required)
                 };
                 spans.push(Span::styled(" *", required_style));
+            }
+
+            // Negate indicator for negatable flags
+            if let Some(ref negate) = flag.negate {
+                let negate_style = if !ctx.is_match && !ps.match_scores.is_empty() {
+                    Style::default().fg(colors.help).add_modifier(Modifier::DIM)
+                } else {
+                    Style::default().fg(colors.help)
+                };
+                spans.push(Span::styled(format!(" / {negate}"), negate_style));
             }
 
             // Value display for string flags
