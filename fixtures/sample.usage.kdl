@@ -56,6 +56,7 @@ cmd "run" help="Run a task" {
     flag "-j --jobs <n>" help="Number of parallel jobs" default="4"
     flag "--dry-run" help="Show what would be run without executing"
     flag "-w --watch" help="Watch for changes and re-run"
+    flag "--color" negate="--no-color" default=#true help="Enable color output"
 }
 
 cmd "deploy" help="Deploy the application" {

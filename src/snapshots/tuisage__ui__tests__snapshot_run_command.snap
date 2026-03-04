@@ -10,9 +10,9 @@ expression: output
 │  config          Manage configuration││  [•] -j, --jobs = 4 (default)     Number of parallel jobs│
 │  │ set (add)       Set a config value││  ○ --dry-run     Show what would be run without executing│
 │  │ get             Get a config value││  ○ -w, --watch               Watch for changes and re-run│
-│  │ list (ls)   List all config values││  [0] -v, --verbose [G]             Enable verbose logging│
-│  │ remove (rm)  Remove a config value││  ○ -q, --quiet [G]                      Enable quiet mode│
-│▶ run                       Run a task││                                                          │
+│  │ list (ls)   List all config values││  ○ --color / --no-color               Enable color output│
+│  │ remove (rm)  Remove a config value││  [0] -v, --verbose [G]             Enable verbose logging│
+│▶ run                       Run a task││  ○ -q, --quiet [G]                      Enable quiet mode│
 │  deploy        Deploy the application││                                                          │
 │  plugin                Manage plugins││                                                          │
 │  │ install (i)       Install a plugin││                                                          │
