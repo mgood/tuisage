@@ -397,10 +397,14 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
             // Flag display (short + long) with highlighting
             let flag_display = flag_display_string(flag);
 
+            // When the negate flag is explicitly active, subdue the positive name
+            let is_negated = matches!(value.map(|(_, v)| v), Some(FlagValue::NegBool(Some(false))));
+            let flag_name_color = if is_negated { colors.help } else { colors.flag };
+
             push_highlighted_name(
                 &mut spans,
                 &flag_display,
-                colors.flag,
+                flag_name_color,
                 &ctx,
                 &ps,
                 colors,
@@ -428,7 +432,14 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
 
             // Negate indicator for negatable flags
             if let Some(ref negate) = flag.negate {
-                let negate_style = if !ctx.is_match && !ps.match_scores.is_empty() {
+                // When negated, highlight the negate string; otherwise subdue it
+                let negate_style = if is_negated {
+                    if !ctx.is_match && !ps.match_scores.is_empty() {
+                        Style::default().fg(colors.flag).add_modifier(Modifier::DIM)
+                    } else {
+                        Style::default().fg(colors.flag)
+                    }
+                } else if !ctx.is_match && !ps.match_scores.is_empty() {
                     Style::default().fg(colors.help).add_modifier(Modifier::DIM)
                 } else {
                     Style::default().fg(colors.help)
