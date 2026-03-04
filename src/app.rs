@@ -964,7 +964,10 @@ impl App {
                         let default = f.default.first().cloned().unwrap_or_default();
                         FlagValue::String(default)
                     } else {
-                        FlagValue::Bool(false)
+                        // Bool flags: respect default=#true
+                        let default_true =
+                            f.default.first().map(|d| d == "true").unwrap_or(false);
+                        FlagValue::Bool(default_true)
                     };
                     (f.name.clone(), val)
                 })
@@ -2273,13 +2276,23 @@ impl App {
 
         match value {
             FlagValue::Bool(true) => {
+                let is_default_true =
+                    flag.default.first().map(|d| d == "true").unwrap_or(false);
+                if flag.negate.is_some() && is_default_true {
+                    return; // already the default, nothing to emit
+                }
                 if let Some(long) = flag.long.first() {
                     parts.push(format!("--{long}"));
                 } else if let Some(short) = flag.short.first() {
                     parts.push(format!("-{short}"));
                 }
             }
-            FlagValue::Bool(false) | FlagValue::Count(0) => {}
+            FlagValue::Bool(false) => {
+                if let Some(negate) = &flag.negate {
+                    parts.push(negate.clone());
+                }
+            }
+            FlagValue::Count(0) => {}
             FlagValue::Count(n) => {
                 if let Some(short) = flag.short.first() {
                     parts.push(format!("-{}", short.to_string().repeat(*n as usize)));
@@ -2323,6 +2336,12 @@ impl App {
 
         match value {
             FlagValue::Bool(true) => {
+                // If flag has a negate and default is true, it's already the default — emit nothing
+                let is_default_true =
+                    flag.default.first().map(|d| d == "true").unwrap_or(false);
+                if flag.negate.is_some() && is_default_true {
+                    return None;
+                }
                 let prefix = if let Some(long) = flag.long.first() {
                     format!("--{long}")
                 } else if let Some(short) = flag.short.first() {
@@ -2332,7 +2351,10 @@ impl App {
                 };
                 Some(prefix)
             }
-            FlagValue::Bool(false) => None,
+            FlagValue::Bool(false) => {
+                // If flag has a negate string, emit it (e.g. "--no-color")
+                flag.negate.clone()
+            }
             FlagValue::Count(0) => None,
             FlagValue::Count(n) => {
                 if let Some(short) = flag.short.first() {
@@ -2778,6 +2800,90 @@ mod tests {
 
         let cmd = app.build_command();
         assert!(cmd.contains("-vvv"));
+    }
+
+    #[test]
+    fn test_negated_flag_default_true_init() {
+        // A bool flag with default=#true should initialize to Bool(true)
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["run"]);
+        let values = app.current_flag_values();
+        let color = values.iter().find(|(n, _)| n == "color");
+        assert_eq!(
+            color,
+            Some(&("color".to_string(), FlagValue::Bool(true))),
+            "--color flag with default=#true should initialize to Bool(true)"
+        );
+    }
+
+    #[test]
+    fn test_negated_flag_emits_nothing_at_default() {
+        // When a negatable flag is at its default (true), the command should not include it
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["run"]);
+        let cmd = app.build_command();
+        assert!(
+            !cmd.contains("--color"),
+            "default-true negatable flag should not appear in command: {cmd}"
+        );
+        assert!(
+            !cmd.contains("--no-color"),
+            "negate should not appear when flag is at default: {cmd}"
+        );
+    }
+
+    #[test]
+    fn test_negated_flag_emits_negate_when_toggled_off() {
+        // Toggling a default=#true negatable flag off should emit --no-color
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["run"]);
+        // Set --color to false
+        let path_key = "run".to_string();
+        if let Some(flags) = app.flag_values.get_mut(&path_key) {
+            for (name, value) in flags.iter_mut() {
+                if name == "color" {
+                    *value = FlagValue::Bool(false);
+                }
+            }
+        }
+        let cmd = app.build_command();
+        assert!(
+            cmd.contains("--no-color"),
+            "toggled-off negatable flag should emit negate string: {cmd}"
+        );
+        assert!(
+            !cmd.contains("--color ") && !cmd.ends_with("--color"),
+            "positive flag should not appear when negated: {cmd}"
+        );
+    }
+
+    #[test]
+    fn test_negated_flag_emits_positive_when_not_default() {
+        // A negatable flag with no default toggled on should emit --flag (not nothing)
+        let spec_text = r#"
+name "test"
+bin "test"
+cmd "run" {
+    flag "--color" negate="--no-color"
+}
+"#;
+        let spec = spec_text.parse::<usage::Spec>().unwrap();
+        let mut app = App::new(spec);
+        app.navigate_to_command(&["run"]);
+        // Default is false (no default=#true); toggle it on
+        let path_key = "run".to_string();
+        if let Some(flags) = app.flag_values.get_mut(&path_key) {
+            for (name, value) in flags.iter_mut() {
+                if name == "color" {
+                    *value = FlagValue::Bool(true);
+                }
+            }
+        }
+        let cmd = app.build_command();
+        assert!(
+            cmd.contains("--color"),
+            "negatable flag toggled on without default should emit positive flag: {cmd}"
+        );
     }
 
     #[test]
