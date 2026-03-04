@@ -217,6 +217,10 @@ pub struct App {
     /// Area of the theme indicator in the help bar (for mouse click detection).
     pub theme_indicator_rect: Option<Rect>,
 
+    /// Column start positions of negate strings in the flag list, keyed by flag index.
+    /// Populated during rendering; used for mouse click detection.
+    pub flag_negate_cols: std::collections::HashMap<usize, u16>,
+
     /// Current mouse cursor position (column, row) for hover highlighting.
     pub mouse_position: Option<(u16, u16)>,
 }
@@ -318,6 +322,7 @@ impl App {
             choice_select: None,
             theme_picker: None,
             theme_indicator_rect: None,
+            flag_negate_cols: std::collections::HashMap::new(),
             mouse_position: None,
         };
         app.sync_state();
@@ -1343,10 +1348,20 @@ impl App {
                                     let item_index = self.flag_scroll() + clicked_offset;
                                     let len = self.current_flag_values().len();
                                     if item_index < len {
+                                        // Check if click landed on the negate string
+                                        let negate_col = self.flag_negate_cols.get(&item_index).copied();
+                                        let clicked_negate = negate_col.is_some_and(|nc| col >= nc);
+
                                         if was_focused && self.flag_index() == item_index {
+                                            if clicked_negate {
+                                                return self.handle_flag_negate_click();
+                                            }
                                             return self.handle_enter();
                                         } else {
                                             self.set_flag_index(item_index);
+                                            if clicked_negate {
+                                                return self.handle_flag_negate_click();
+                                            }
                                         }
                                     }
                                 }
@@ -2144,6 +2159,21 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Handle a mouse click directly on the negate string of a negatable flag.
+    /// Sets the flag to NegBool(Some(false)) — the explicitly-off state.
+    fn handle_flag_negate_click(&mut self) -> Action {
+        let flag_idx = self.flag_index();
+        let values = self.current_flag_values_mut();
+        if let Some((name, FlagValue::NegBool(state))) = values.get_mut(flag_idx) {
+            let flag_name = name.clone();
+            // If already off, toggle back to omitted; otherwise set to off
+            *state = if *state == Some(false) { None } else { Some(false) };
+            let new_val = FlagValue::NegBool(*state);
+            self.sync_global_flag(&flag_name, &new_val);
+        }
+        Action::None
     }
 
     /// Handle Backspace on an argument: clear the argument value.

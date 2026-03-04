@@ -327,11 +327,31 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
 
     // Re-fetch data after mutable borrow ends
     let flags = app.visible_flags();
-    let flag_values = app.current_flag_values();
 
     // Pre-compute default values for each flag so we can show "(default)" indicator
     let flag_defaults: Vec<Option<String>> =
         flags.iter().map(|f| f.default.first().cloned()).collect();
+
+    // Pre-compute negate column positions for mouse hit-testing.
+    // Layout per row: border(1) + cursor(2) + indicator(2) + flag_display + " / "(3) = negate start
+    let flag_scroll = app.flag_scroll();
+    let inner_left = area.x + 1; // past left border
+    let negate_cols: std::collections::HashMap<usize, u16> = flags
+        .iter()
+        .enumerate()
+        .filter(|(_, flag)| flag.negate.is_some())
+        .map(|(i, flag)| {
+            let display_len = flag_display_string(flag).len() as u16;
+            // cursor(2) + indicator(2) + flag_display + " / "(3) — negate starts after " / "
+            let negate_col = inner_left + 2 + 2 + display_len + 3;
+            (flag_scroll + i, negate_col)
+        })
+        .collect();
+    drop(flags); // release borrow so we can mutate app
+    app.flag_negate_cols = negate_cols;
+
+    let flags = app.visible_flags();
+    let flag_values = app.current_flag_values();
 
     // Get hovered index for this panel (only when focused)
     let hovered_index = if ps.is_focused { app.hovered_index(Focus::Flags) } else { None };
@@ -432,19 +452,27 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
 
             // Negate indicator for negatable flags
             if let Some(ref negate) = flag.negate {
-                // When negated, highlight the negate string; otherwise subdue it
-                let negate_style = if is_negated {
-                    if !ctx.is_match && !ps.match_scores.is_empty() {
-                        Style::default().fg(colors.flag).add_modifier(Modifier::DIM)
-                    } else {
-                        Style::default().fg(colors.flag)
-                    }
-                } else if !ctx.is_match && !ps.match_scores.is_empty() {
+                let dim = !ctx.is_match && !ps.match_scores.is_empty();
+                // The " / " separator is always subdued
+                let sep_style = if dim {
                     Style::default().fg(colors.help).add_modifier(Modifier::DIM)
                 } else {
                     Style::default().fg(colors.help)
                 };
-                spans.push(Span::styled(format!(" / {negate}"), negate_style));
+                spans.push(Span::styled(" / ", sep_style));
+                // The negate string is highlighted when the flag is in the negated state
+                let negate_style = if is_negated {
+                    if dim {
+                        Style::default().fg(colors.flag).add_modifier(Modifier::DIM)
+                    } else {
+                        Style::default().fg(colors.flag)
+                    }
+                } else if dim {
+                    Style::default().fg(colors.help).add_modifier(Modifier::DIM)
+                } else {
+                    Style::default().fg(colors.help)
+                };
+                spans.push(Span::styled(negate.clone(), negate_style));
             }
 
             // Value display for string flags
