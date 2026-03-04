@@ -1358,10 +1358,10 @@ impl App {
                                                 return self.handle_enter();
                                             } else if col >= nc {
                                                 // Negate string → set off (or unset if already off)
-                                                return self.handle_flag_negate_click();
+                                                return self.handle_negbool_click(Some(false));
                                             } else {
-                                                // Positive flag name (or separator) → set on (or unset if already on)
-                                                return self.handle_flag_positive_click();
+                                                // Positive flag name → set on (or unset if already on)
+                                                return self.handle_negbool_click(Some(true));
                                             }
                                         } else if was_focused && self.flag_index() == item_index {
                                             return self.handle_enter();
@@ -2000,44 +2000,30 @@ impl App {
                 };
 
                 // Toggle bool flags, start editing string flags
-                let values = self.current_flag_values_mut();
-                if let Some((name, value)) = values.get_mut(flag_idx) {
-                    let flag_name = name.clone();
-                    match value {
-                        FlagValue::Bool(b) => {
-                            *b = !*b;
-                            let new_val = FlagValue::Bool(*b);
-                            self.sync_global_flag(&flag_name, &new_val);
-                        }
-                        FlagValue::NegBool(state) => {
-                            // Cycle: None → Some(true) → Some(false) → None
-                            *state = match *state {
-                                None => Some(true),
-                                Some(true) => Some(false),
-                                Some(false) => None,
-                            };
-                            let new_val = FlagValue::NegBool(*state);
-                            self.sync_global_flag(&flag_name, &new_val);
-                        }
-                        FlagValue::Count(c) => {
-                            *c += 1;
-                            let new_val = FlagValue::Count(*c);
-                            self.sync_global_flag(&flag_name, &new_val);
-                        }
-                        FlagValue::String(s) => {
-                            if let Some(choices) = maybe_choices {
-                                let current = s.clone();
-                                self.open_choice_select(choices, &current);
-                            } else if let Some(ref arg_name) = flag_arg_name {
-                                let current = s.clone();
-                                if self.run_and_open_completion(arg_name, &current).is_none() {
-                                    self.start_editing();
-                                }
-                            } else {
+                let is_string_flag = {
+                    let values = self.current_flag_values();
+                    values
+                        .get(flag_idx)
+                        .is_some_and(|(_, v)| matches!(v, FlagValue::String(_)))
+                };
+
+                if is_string_flag {
+                    let values = self.current_flag_values_mut();
+                    if let Some((_, FlagValue::String(s))) = values.get_mut(flag_idx) {
+                        if let Some(choices) = maybe_choices {
+                            let current = s.clone();
+                            self.open_choice_select(choices, &current);
+                        } else if let Some(ref arg_name) = flag_arg_name {
+                            let current = s.clone();
+                            if self.run_and_open_completion(arg_name, &current).is_none() {
                                 self.start_editing();
                             }
+                        } else {
+                            self.start_editing();
                         }
                     }
+                } else {
+                    self.toggle_simple_flag();
                 }
                 Action::None
             }
@@ -2063,32 +2049,38 @@ impl App {
 
     fn handle_space(&mut self) {
         if self.focus() == Focus::Flags {
-            let flag_idx = self.flag_index();
-            let values = self.current_flag_values_mut();
-            if let Some((name, value)) = values.get_mut(flag_idx) {
-                let flag_name = name.clone();
-                match value {
-                    FlagValue::Bool(b) => {
-                        *b = !*b;
-                        let new_val = FlagValue::Bool(*b);
-                        self.sync_global_flag(&flag_name, &new_val);
-                    }
-                    FlagValue::NegBool(state) => {
-                        *state = match *state {
-                            None => Some(true),
-                            Some(true) => Some(false),
-                            Some(false) => None,
-                        };
-                        let new_val = FlagValue::NegBool(*state);
-                        self.sync_global_flag(&flag_name, &new_val);
-                    }
-                    FlagValue::Count(c) => {
-                        *c += 1;
-                        let new_val = FlagValue::Count(*c);
-                        self.sync_global_flag(&flag_name, &new_val);
-                    }
-                    _ => {}
+            self.toggle_simple_flag();
+        }
+    }
+
+    /// Toggle a Bool, NegBool, or Count flag at the current index.
+    /// Bool: flip. NegBool: cycle None→Some(true)→Some(false)→None. Count: increment.
+    fn toggle_simple_flag(&mut self) {
+        let flag_idx = self.flag_index();
+        let values = self.current_flag_values_mut();
+        if let Some((name, value)) = values.get_mut(flag_idx) {
+            let flag_name = name.clone();
+            match value {
+                FlagValue::Bool(b) => {
+                    *b = !*b;
+                    let new_val = FlagValue::Bool(*b);
+                    self.sync_global_flag(&flag_name, &new_val);
                 }
+                FlagValue::NegBool(state) => {
+                    *state = match *state {
+                        None => Some(true),
+                        Some(true) => Some(false),
+                        Some(false) => None,
+                    };
+                    let new_val = FlagValue::NegBool(*state);
+                    self.sync_global_flag(&flag_name, &new_val);
+                }
+                FlagValue::Count(c) => {
+                    *c += 1;
+                    let new_val = FlagValue::Count(*c);
+                    self.sync_global_flag(&flag_name, &new_val);
+                }
+                _ => {}
             }
         }
     }
@@ -2164,30 +2156,15 @@ impl App {
         }
     }
 
-    /// Handle a mouse click on the positive flag name of a negatable flag.
-    /// Sets the flag to NegBool(Some(true)) — explicitly on — or unsets it if already on.
-    fn handle_flag_positive_click(&mut self) -> Action {
+    /// Handle a mouse click on one side of a negatable flag.
+    /// `target` is the desired state: `Some(true)` for the positive name, `Some(false)` for the negate name.
+    /// If already in the target state, resets to `None` (omitted).
+    fn handle_negbool_click(&mut self, target: Option<bool>) -> Action {
         let flag_idx = self.flag_index();
         let values = self.current_flag_values_mut();
         if let Some((name, FlagValue::NegBool(state))) = values.get_mut(flag_idx) {
             let flag_name = name.clone();
-            // If already on, toggle back to omitted; otherwise set to on
-            *state = if *state == Some(true) { None } else { Some(true) };
-            let new_val = FlagValue::NegBool(*state);
-            self.sync_global_flag(&flag_name, &new_val);
-        }
-        Action::None
-    }
-
-    /// Handle a mouse click directly on the negate string of a negatable flag.
-    /// Sets the flag to NegBool(Some(false)) — explicitly off — or unsets it if already off.
-    fn handle_flag_negate_click(&mut self) -> Action {
-        let flag_idx = self.flag_index();
-        let values = self.current_flag_values_mut();
-        if let Some((name, FlagValue::NegBool(state))) = values.get_mut(flag_idx) {
-            let flag_name = name.clone();
-            // If already off, toggle back to omitted; otherwise set to off
-            *state = if *state == Some(false) { None } else { Some(false) };
+            *state = if *state == target { None } else { target };
             let new_val = FlagValue::NegBool(*state);
             self.sync_global_flag(&flag_name, &new_val);
         }
@@ -2951,9 +2928,10 @@ mod tests {
             cmd.contains("--no-color"),
             "explicit off should emit --no-color: {cmd}"
         );
-        // Should not also include --color
+        // The positive form should not appear separately
+        let without_negate = cmd.replace("--no-color", "");
         assert!(
-            !cmd.contains("--color ") || cmd.contains("--no-color"),
+            !without_negate.contains("--color"),
             "should not include positive flag when negated: {cmd}"
         );
     }

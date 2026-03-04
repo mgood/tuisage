@@ -333,8 +333,7 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
         flags.iter().map(|f| f.default.first().cloned()).collect();
 
     // Pre-compute negate column positions for mouse hit-testing.
-    // Layout per row: border(1) + cursor(2) + indicator(2) + flag_display + " / "(3) = negate start
-    let flag_scroll = app.flag_scroll();
+    // Layout per row: border(1) + cursor(2) + indicator(2) + flag_display + optional [G](4) + optional *(2) + " / "(3) = negate start
     let inner_left = area.x + 1; // past left border
     let negate_cols: std::collections::HashMap<usize, u16> = flags
         .iter()
@@ -342,9 +341,15 @@ fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiCol
         .filter(|(_, flag)| flag.negate.is_some())
         .map(|(i, flag)| {
             let display_len = flag_display_string(flag).len() as u16;
-            // cursor(2) + indicator(2) + flag_display + " / "(3) — negate starts after " / "
-            let negate_col = inner_left + 2 + 2 + display_len + 3;
-            (flag_scroll + i, negate_col)
+            let mut col = inner_left + 2 + 2 + display_len;
+            if flag.global {
+                col += 4; // " [G]"
+            }
+            if flag.required {
+                col += 2; // " *"
+            }
+            col += 3; // " / "
+            (i, col)
         })
         .collect();
     drop(flags); // release borrow so we can mutate app
