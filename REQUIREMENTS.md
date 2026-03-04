@@ -40,6 +40,7 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 
 - Display all flags available for the currently selected command, including inherited global flags.
 - Support boolean flags (toggle on/off).
+- Support **negatable flags** with a tristate model: omitted (use default), explicitly on, explicitly off. This supports the [usage spec negation pattern](https://usage.jdx.dev/spec/reference/flag) (e.g., `flag "--color" negate="--no-color" default=#true`). Users can explicitly control the flag state even when config files or environment variables might override the default.
 - Support count flags (increment/decrement, e.g., `-vvv`).
 - Support clearing/removing flag and argument values via Backspace: decrements count flags, turns off boolean flags, and clears string/choice flag values and argument values.
 - Support flags that take string values (free-text input).

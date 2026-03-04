@@ -96,7 +96,7 @@ The core state and logic module (~5600 lines including ~1400 lines of tests).
 - **`AppMode`** — enum: `Builder` (normal command-building UI) or `Executing` (embedded terminal running).
 - **`ExecutionState`** — struct holding PTY state: `command_display`, `parser` (vt100), `pty_writer`, `pty_master`, `exited` flag, `exit_status`.
 - **`Focus`** — enum of focusable panels: `Commands`, `Flags`, `Args`, `Preview`.
-- **`FlagValue`** — discriminated union: `Bool(bool)`, `String(String)`, `Count(u32)`.
+- **`FlagValue`** — discriminated union: `Bool(bool)`, `NegBool(Option<bool>)` (for negatable flags: None=omitted, Some(true)=on, Some(false)=off), `String(String)`, `Count(u32)`.
 - **`ArgValue`** — struct with `name`, `value`, `required`, `choices`, `help` fields.
 - **`CmdData`** — data stored in each tree node: `name`, `help`, `aliases`.
 - **`ChoiceSelectState`** — state for the inline choice select box: `choices`, `descriptions` (optional per-choice descriptions), `selected_index` (`Option<usize>`, None = no selection), `source_panel`, `source_index`, `filter_active` (starts false so all choices are visible on open; activates on first keystroke). When open, `editing` is also true and `edit_input` serves as both the text value and the filter.
@@ -132,7 +132,7 @@ The core state and logic module (~5600 lines including ~1400 lines of tests).
 - **`current_command()`** — resolves the `command_path` to the current `SpecCommand` in the spec tree.
 - **`visible_subcommands()`** — returns subcommands at the current level (test-only, used for backward compatibility).
 - **`visible_flags()`** — returns all flags for the current command plus inherited global flags (no filtering; rendering applies styling).
-- **`sync_state()`** — initializes or restores flag/arg values when navigating to a new command. Handles defaults.
+- **`sync_state()`** — initializes or restores flag/arg values when navigating to a new command. Handles defaults. Flags with a `negate` field are initialized as `NegBool(None)` (omitted).
 - **`sync_command_path_from_tree()`** — derives `command_path` from the currently selected command in the flat list and calls `sync_state()`.
 - **`handle_key()`** — top-level key dispatcher. Routes to `handle_execution_key()` (when executing), `handle_editing_key()`, `handle_filter_key()`, or direct navigation/action based on current mode. The `/` key only activates filter mode for Commands, Flags, and Args panels (not Preview).
 - **`handle_execution_key()`** — handles keys during command execution: forwards input to the PTY while running, closes execution view on Esc/Enter/q when the process has exited.
@@ -204,7 +204,7 @@ The rendering module (~1950 lines including ~1150 lines of tests). Uses helpers 
 - **`render_execution_view()`** — renders the execution UI: command display at top (3 rows), `PseudoTerminal` widget in the middle (fills remaining space), and status bar at bottom (1 row). Uses `tui-term::PseudoTerminal` to render the `vt100::Parser`'s screen. Shows running/finished state with appropriate border colors and status text.
 - **`render_main_content()`** — splits the area into a 2-column layout: commands on the left (40%) and flags + args stacked vertically on the right (60%). When there are no subcommands, the commands panel is hidden and flags + args fill the full width.
 - **`render_command_list()`** — renders the command list as a flat `List` widget with depth-based indentation (2 spaces per level). Delegates panel chrome, selection cursors, and text highlighting to `widgets.rs` helpers.
-- **`render_flag_list()`** — renders flags with checkbox indicators (✓/○), values, defaults, global tags, and count badges.
+- **`render_flag_list()`** — renders flags with checkbox indicators (✓/○ for boolean, ○/✓/✗ tristate for negatable), values, defaults, global tags, and count badges. Negatable flags also display the negate string after the flag name (e.g., `--color / --no-color`).
 - **`render_arg_list()`** — renders arguments with required indicators, current values, choices, and inline editing.
 - **`render_preview()`** — delegates to the `CommandPreview` widget for colorized command rendering.
 - **`render_help_bar()`** — delegates to the `HelpBar` widget for keybinding hints and theme indicator.

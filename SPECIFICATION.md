@@ -106,7 +106,7 @@ The selected command in the always-visible tree, combined with the live command 
 
 - Lists all flags available for the currently selected command, including global (inherited) flags.
 - Each flag shows:
-  - A checkbox indicator: `✓` (enabled) or `○` (disabled) for boolean flags
+  - A checkbox indicator: `✓` (enabled) or `○` (disabled) for boolean flags; negatable flags show a tristate indicator: `○` (omitted/default), `✓` (explicitly on), `✗` (explicitly off)
   - The flag name (long form preferred, short form shown alongside)
   - Current value for value-bearing flags
   - `(default: X)` indicator when a default value exists
@@ -202,6 +202,7 @@ The selected command's full path (e.g., `["config", "set"]`) is computed from th
 Flag values are stored in a `HashMap` keyed by a command-path string (e.g., `"deploy"` or `"plugin>install"`). Each command's flags are stored as a `HashMap<String, FlagValue>` where:
 
 - `FlagValue::Bool(bool)` — for boolean/toggle flags
+- `FlagValue::NegBool(Option<bool>)` — for negatable flags (with a `negate` field in the spec). `None` = omitted (use default), `Some(true)` = explicitly on, `Some(false)` = explicitly off
 - `FlagValue::String(String)` — for flags that take a value
 - `FlagValue::Count(u32)` — for count flags (e.g., `-vvv`)
 
@@ -251,14 +252,17 @@ When the user navigates to a new command, the state is synchronized:
 |---|---|---|
 | `Enter` | Commands panel | Navigate into the selected command (move to first child, same as →/l) |
 | `Enter` | Flags panel (boolean) | Toggle the flag |
+| `Enter` | Flags panel (negatable) | Cycle tristate: omitted → on → off → omitted |
 | `Enter` | Flags panel (value) | Start editing the flag value |
 | `Enter` | Flags panel (choices) | Cycle to the next choice |
 | `Enter` | Args panel | Start editing the argument / cycle choice |
 | `Enter` | Preview panel | Execute the built command in an embedded PTY |
 | `Space` | Flags panel (boolean) | Toggle the flag |
+| `Space` | Flags panel (negatable) | Cycle tristate: omitted → on → off → omitted |
 | `Space` | Flags panel (count) | Increment the count |
 | `Backspace` | Flags panel (count) | Decrement the count (floor at 0) |
 | `Backspace` | Flags panel (bool) | Turn the flag off |
+| `Backspace` | Flags panel (negatable) | Reset to omitted (use default) |
 | `Backspace` | Flags panel (string/choices) | Clear the flag value |
 | `Backspace` | Args panel | Clear the argument value |
 | `/` | Commands, Flags, or Args panel | Activate fuzzy filter mode (no effect in Preview panel) |
@@ -449,6 +453,7 @@ The `build_command_parts()` method produces a `Vec<String>` of separate argument
 - Long flags are preferred (`--verbose` over `-v`) except for count flags which use the short form repeated.
 - Flags with both long and short forms use the long form in the output.
 - Boolean flags that are `false` (off) are omitted.
+- Negatable flags (`NegBool`) that are `None` (omitted) emit nothing. `Some(true)` emits the positive flag (e.g., `--color`). `Some(false)` emits the negate string (e.g., `--no-color`).
 - Count flags with count 0 are omitted.
 - String flags with empty values are omitted.
 
