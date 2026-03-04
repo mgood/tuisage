@@ -1343,25 +1343,28 @@ impl App {
                         Focus::Flags => {
                             if let Some(area) = self.flag_area() {
                                 let inner_top = area.y + 1;
+                                let inner_left = area.x + 1;
                                 if row >= inner_top {
                                     let clicked_offset = (row - inner_top) as usize;
                                     let item_index = self.flag_scroll() + clicked_offset;
                                     let len = self.current_flag_values().len();
                                     if item_index < len {
-                                        // Check if click landed on the negate string
+                                        self.set_flag_index(item_index);
                                         let negate_col = self.flag_negate_cols.get(&item_index).copied();
-                                        let clicked_negate = negate_col.is_some_and(|nc| col >= nc);
-
-                                        if was_focused && self.flag_index() == item_index {
-                                            if clicked_negate {
+                                        if let Some(nc) = negate_col {
+                                            // Negatable flag: dispatch based on which region was clicked
+                                            if col < inner_left + 4 {
+                                                // Icon region → cycle through all states
+                                                return self.handle_enter();
+                                            } else if col >= nc {
+                                                // Negate string → set off (or unset if already off)
                                                 return self.handle_flag_negate_click();
+                                            } else {
+                                                // Positive flag name (or separator) → set on (or unset if already on)
+                                                return self.handle_flag_positive_click();
                                             }
+                                        } else if was_focused && self.flag_index() == item_index {
                                             return self.handle_enter();
-                                        } else {
-                                            self.set_flag_index(item_index);
-                                            if clicked_negate {
-                                                return self.handle_flag_negate_click();
-                                            }
                                         }
                                     }
                                 }
@@ -2161,8 +2164,23 @@ impl App {
         }
     }
 
+    /// Handle a mouse click on the positive flag name of a negatable flag.
+    /// Sets the flag to NegBool(Some(true)) — explicitly on — or unsets it if already on.
+    fn handle_flag_positive_click(&mut self) -> Action {
+        let flag_idx = self.flag_index();
+        let values = self.current_flag_values_mut();
+        if let Some((name, FlagValue::NegBool(state))) = values.get_mut(flag_idx) {
+            let flag_name = name.clone();
+            // If already on, toggle back to omitted; otherwise set to on
+            *state = if *state == Some(true) { None } else { Some(true) };
+            let new_val = FlagValue::NegBool(*state);
+            self.sync_global_flag(&flag_name, &new_val);
+        }
+        Action::None
+    }
+
     /// Handle a mouse click directly on the negate string of a negatable flag.
-    /// Sets the flag to NegBool(Some(false)) — the explicitly-off state.
+    /// Sets the flag to NegBool(Some(false)) — explicitly off — or unsets it if already off.
     fn handle_flag_negate_click(&mut self) -> Action {
         let flag_idx = self.flag_index();
         let values = self.current_flag_values_mut();

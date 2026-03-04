@@ -357,6 +357,9 @@ Mouse support is enabled via crossterm's `EnableMouseCapture`.
 |---|---|
 | Left click on a panel | Focus that panel and select the clicked item |
 | Left click on an already-selected item | Activate it (same as Enter for the focused panel) |
+| Left click on indicator (○/✓/✗) of a negatable flag | Cycle through states: omitted → on → off → omitted |
+| Left click on positive flag name (e.g. `--color`) | Set to on, or unset if already on |
+| Left click on negate string (e.g. `--no-color`) | Set to off, or unset if already off |
 | Scroll wheel up | Move selection up in the panel under the cursor |
 | Scroll wheel down | Move selection down in the panel under the cursor |
 
