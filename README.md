@@ -14,6 +14,18 @@ A terminal UI for running [mise tasks](https://mise.jdx.dev/tasks/) or other com
 
 ## Installation
 
+### Binaries
+
+Binary downloads are available from the [releases](https://github.com/mgood/tuisage/releases).
+
+They can also be fetched and installed with [mise](https://mise.jdx.dev):
+
+```sh
+mise u github:mgood/tuisage
+```
+
+### Building from source
+
 Automatically build from crates.io:
 
 ```sh
