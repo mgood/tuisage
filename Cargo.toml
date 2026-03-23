@@ -1,6 +1,6 @@
 [package]
 name = "tuisage"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "TUI application for interacting with CLI commands defined by usage specs"
 license = "MIT"
