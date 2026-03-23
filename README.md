@@ -14,13 +14,19 @@ A terminal UI for running [mise tasks](https://mise.jdx.dev/tasks/) or other com
 
 ## Installation
 
-Clone the repo, then:
+Automatically build from crates.io:
+
+```sh
+cargo install tuisage
+```
+
+From a local clone:
 
 ```sh
 cargo install --path .
 ```
 
-Or build from source:
+Or build inside the clone:
 
 ```sh
 cargo build --release
