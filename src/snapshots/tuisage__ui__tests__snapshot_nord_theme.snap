@@ -25,4 +25,4 @@ expression: output
 │                                      ││                                                          │
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
- ↑↓: navigate  ⇥: next  /: filter  ^r: run  q: quit                                       T: [Nord]
+ ↑↓ navigate  ⇥ next  / filter  ^r run  q quit                                            T: [Nord]

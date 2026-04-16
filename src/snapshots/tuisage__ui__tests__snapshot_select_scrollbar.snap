@@ -25,4 +25,4 @@ expression: output
 │                                      ││            │opt04  │                                     │
 │                                      ││            │opt05  │                                     │
 └──────────────────────────────────────┘└────────────└───────┘─────────────────────────────────────┘
- ↑↓: select  ⏎: confirm  Esc: keep text                                                T: [Dracula]
+ ↑↓ select  ⏎ confirm  Esc keep text                                                   T: [Dracula]

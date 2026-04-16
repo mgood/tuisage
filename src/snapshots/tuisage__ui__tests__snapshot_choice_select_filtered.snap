@@ -25,4 +25,4 @@ expression: output
 │                                      ││                                                          │
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
- ↑↓: select  ⏎: confirm  Esc: keep text                                                T: [Dracula]
+ ↑↓ select  ⏎ confirm  Esc keep text                                                   T: [Dracula]

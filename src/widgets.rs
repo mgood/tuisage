@@ -636,6 +636,40 @@ impl<'a> HelpBar<'a> {
         let indicator_x = area.x + area.width.saturating_sub(theme_indicator_len);
         Rect::new(indicator_x, area.y, theme_indicator_len, 1)
     }
+
+    /// Build styled spans for the keybinds text.
+    ///
+    /// Each shortcut is split on `": "`: the key part is rendered in the
+    /// high-contrast `active_border` color and the description in the
+    /// subdued `help` color. The colon is removed; entries are separated
+    /// by two spaces.  Returns the spans and their total display width.
+    fn styled_keybind_spans(&self) -> (Vec<Span<'a>>, u16) {
+        let mut spans: Vec<Span<'a>> = vec![Span::raw(" ")];
+        let mut total_len: u16 = 1; // leading space
+
+        for (i, part) in self.keybinds.split("  ").enumerate() {
+            if i > 0 {
+                spans.push(Span::raw("  "));
+                total_len += 2;
+            }
+            if let Some(idx) = part.find(": ") {
+                let key = &part[..idx];
+                let desc = &part[idx + 2..];
+                spans.push(Span::styled(
+                    key,
+                    Style::default().fg(self.colors.active_border),
+                ));
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(desc, Style::default().fg(self.colors.help)));
+                total_len += (key.chars().count() + 1 + desc.chars().count()) as u16;
+            } else {
+                spans.push(Span::styled(part, Style::default().fg(self.colors.help)));
+                total_len += part.chars().count() as u16;
+            }
+        }
+
+        (spans, total_len)
+    }
 }
 
 impl Widget for HelpBar<'_> {
@@ -643,20 +677,18 @@ impl Widget for HelpBar<'_> {
         let theme_indicator = format!("T: [{}] ", self.theme_display);
         let theme_indicator_len = theme_indicator.len() as u16;
 
-        let keybinds_text = format!(" {}", self.keybinds);
-        let keybinds_len = keybinds_text.chars().count() as u16;
+        let (mut spans, keybinds_len) = self.styled_keybind_spans();
         let padding_len = area.width.saturating_sub(keybinds_len + theme_indicator_len);
         let padding = " ".repeat(padding_len as usize);
 
-        let paragraph = Paragraph::new(Line::from(vec![
-            Span::styled(keybinds_text, Style::default().fg(self.colors.help)),
-            Span::styled(padding, Style::default()),
-            Span::styled(
-                theme_indicator,
-                Style::default().fg(self.colors.active_border).italic(),
-            ),
-        ]))
-        .style(Style::default().bg(self.colors.bar_bg));
+        spans.push(Span::styled(padding, Style::default()));
+        spans.push(Span::styled(
+            theme_indicator,
+            Style::default().fg(self.colors.active_border).italic(),
+        ));
+
+        let paragraph = Paragraph::new(Line::from(spans))
+            .style(Style::default().bg(self.colors.bar_bg));
 
         paragraph.render(area, buf);
     }

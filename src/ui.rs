@@ -2082,7 +2082,7 @@ flag "-q --quiet" help="Quiet mode"
         let output = render_to_string(&mut app, 100, 24);
 
         assert!(
-            output.contains("⏎: confirm") && output.contains("Esc: cancel"),
+            output.contains("⏎ confirm") && output.contains("Esc cancel"),
             "Help bar should show theme picker keybinds"
         );
     }
