@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4](https://github.com/mgood/tuisage/compare/v0.1.3...v0.1.4) - 2026-04-16
+
+### Added
+
+- *(ui)* cleaner styling for keyboard shortcut bar ([#19](https://github.com/mgood/tuisage/pull/19))
+
+### Other
+
+- Fix test failures from "echo" change
+
 ## [0.1.3](https://github.com/mgood/tuisage/compare/v0.1.2...v0.1.3) - 2026-03-23
 
 ### Other
