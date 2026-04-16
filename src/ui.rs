@@ -16,7 +16,7 @@ extern crate insta;
 use crate::app::{flatten_command_tree, App, AppMode, FlagValue, Focus};
 use crate::widgets::{
     build_help_line, panel_block, panel_title, push_edit_cursor, push_highlighted_name,
-    push_selection_cursor, render_help_overlays, selection_bg, CommandPreview, HelpBar,
+    push_selection_cursor, render_help_overlays, selection_bg, CommandPreview, HelpBar, Keybind,
     ItemContext, PanelState, SelectList, SelectListScrollState, UiColors,
 };
 
@@ -900,28 +900,65 @@ fn render_theme_picker(frame: &mut Frame, app: &mut App, terminal_area: Rect, co
 }
 
 fn render_help_bar(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
-    let keybinds = if app.is_theme_picking() {
-        "↑↓: navigate  ⏎: confirm  Esc: cancel"
+    let keybinds: &[Keybind] = if app.is_theme_picking() {
+        &[
+            Keybind { key: "↑↓", desc: "navigate" },
+            Keybind { key: "⏎", desc: "confirm" },
+            Keybind { key: "Esc", desc: "cancel" },
+        ]
     } else if app.is_choosing() {
-        "↑↓: select  ⏎: confirm  Esc: keep text"
+        &[
+            Keybind { key: "↑↓", desc: "select" },
+            Keybind { key: "⏎", desc: "confirm" },
+            Keybind { key: "Esc", desc: "keep text" },
+        ]
     } else if app.editing {
-        "⏎: confirm  Esc: cancel"
+        &[
+            Keybind { key: "⏎", desc: "confirm" },
+            Keybind { key: "Esc", desc: "cancel" },
+        ]
     } else if app.filtering {
-        "⏎: apply  Esc: clear  ↑↓: navigate"
+        &[
+            Keybind { key: "⏎", desc: "apply" },
+            Keybind { key: "Esc", desc: "clear" },
+            Keybind { key: "↑↓", desc: "navigate" },
+        ]
     } else if app.filter_active() {
-        "↑↓/jk: next match  /: new filter  Esc: clear filter"
+        &[
+            Keybind { key: "↑↓/jk", desc: "next match" },
+            Keybind { key: "/", desc: "new filter" },
+            Keybind { key: "Esc", desc: "clear filter" },
+        ]
     } else {
         match app.focus() {
-            Focus::Commands => {
-                "↑↓: navigate  ⇥: next  /: filter  ^r: run  q: quit"
-            }
-            Focus::Flags => {
-                "⏎/Space: toggle  ↑↓: navigate  ⇥: next  /: filter  ^r: run  q: quit"
-            }
-            Focus::Args => {
-                "⏎: edit  ↑↓: navigate  ⇥: next  /: filter  ^r: run  q: quit"
-            }
-            Focus::Preview => "⏎: run  ⇥: next  q: quit",
+            Focus::Commands => &[
+                Keybind { key: "↑↓", desc: "navigate" },
+                Keybind { key: "⇥", desc: "next" },
+                Keybind { key: "/", desc: "filter" },
+                Keybind { key: "^r", desc: "run" },
+                Keybind { key: "q", desc: "quit" },
+            ],
+            Focus::Flags => &[
+                Keybind { key: "⏎/Space", desc: "toggle" },
+                Keybind { key: "↑↓", desc: "navigate" },
+                Keybind { key: "⇥", desc: "next" },
+                Keybind { key: "/", desc: "filter" },
+                Keybind { key: "^r", desc: "run" },
+                Keybind { key: "q", desc: "quit" },
+            ],
+            Focus::Args => &[
+                Keybind { key: "⏎", desc: "edit" },
+                Keybind { key: "↑↓", desc: "navigate" },
+                Keybind { key: "⇥", desc: "next" },
+                Keybind { key: "/", desc: "filter" },
+                Keybind { key: "^r", desc: "run" },
+                Keybind { key: "q", desc: "quit" },
+            ],
+            Focus::Preview => &[
+                Keybind { key: "⏎", desc: "run" },
+                Keybind { key: "⇥", desc: "next" },
+                Keybind { key: "q", desc: "quit" },
+            ],
         }
     };
 

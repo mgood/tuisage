@@ -607,20 +607,27 @@ impl Widget for CommandPreview<'_> {
     }
 }
 
+/// A single keyboard shortcut entry: a key (e.g. `"↑↓"`) and its description
+/// (e.g. `"navigate"`).
+pub struct Keybind<'a> {
+    pub key: &'a str,
+    pub desc: &'a str,
+}
+
 /// A widget that renders the context-sensitive help/status bar.
 ///
 /// Shows keyboard shortcuts for the current mode on the left and
 /// the active theme indicator on the right.
 pub struct HelpBar<'a> {
-    /// The help text string to display.
-    pub keybinds: &'a str,
+    /// Structured key/description pairs to display.
+    pub keybinds: &'a [Keybind<'a>],
     /// Theme display name for the right-aligned indicator.
     pub theme_display: &'a str,
     pub colors: &'a UiColors,
 }
 
 impl<'a> HelpBar<'a> {
-    pub fn new(keybinds: &'a str, theme_display: &'a str, colors: &'a UiColors) -> Self {
+    pub fn new(keybinds: &'a [Keybind<'a>], theme_display: &'a str, colors: &'a UiColors) -> Self {
         Self {
             keybinds,
             theme_display,
@@ -637,35 +644,24 @@ impl<'a> HelpBar<'a> {
         Rect::new(indicator_x, area.y, theme_indicator_len, 1)
     }
 
-    /// Build styled spans for the keybinds text.
+    /// Build styled spans for the keybinds.
     ///
-    /// Each shortcut is split on `": "`: the key part is rendered in the
-    /// high-contrast `active_border` color and the description in the
-    /// subdued `help` color. The colon is removed; entries are separated
+    /// Each entry's key is rendered in the high-contrast `active_border` color
+    /// and its description in the subdued `help` color.  Entries are separated
     /// by two spaces.  Returns the spans and their total display width.
     fn styled_keybind_spans(&self) -> (Vec<Span<'a>>, u16) {
         let mut spans: Vec<Span<'a>> = vec![Span::raw(" ")];
         let mut total_len: u16 = 1; // leading space
 
-        for (i, part) in self.keybinds.split("  ").enumerate() {
+        for (i, kb) in self.keybinds.iter().enumerate() {
             if i > 0 {
                 spans.push(Span::raw("  "));
                 total_len += 2;
             }
-            if let Some(idx) = part.find(": ") {
-                let key = &part[..idx];
-                let desc = &part[idx + 2..];
-                spans.push(Span::styled(
-                    key,
-                    Style::default().fg(self.colors.active_border),
-                ));
-                spans.push(Span::raw(" "));
-                spans.push(Span::styled(desc, Style::default().fg(self.colors.help)));
-                total_len += (key.chars().count() + 1 + desc.chars().count()) as u16;
-            } else {
-                spans.push(Span::styled(part, Style::default().fg(self.colors.help)));
-                total_len += part.chars().count() as u16;
-            }
+            spans.push(Span::styled(kb.key, Style::default().fg(self.colors.active_border)));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(kb.desc, Style::default().fg(self.colors.help)));
+            total_len += (kb.key.chars().count() + 1 + kb.desc.chars().count()) as u16;
         }
 
         (spans, total_len)
