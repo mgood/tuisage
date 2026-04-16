@@ -25,4 +25,4 @@ expression: output
 │                                      ││                                                          │
 │                                      ││                                                          │
 └──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
- ⏎/Space: toggle  ↑↓: navigate  ⇥: next  /: filter  ^r: run  q: quit                   T: [Dracula]
+ ⏎/Space toggle  ↑↓ navigate  ⇥ next  / filter  ^r run  q quit                         T: [Dracula]
