@@ -1398,7 +1398,32 @@ impl App {
                 Action::None
             }
             MouseEventKind::Down(MouseButton::Right) => {
-                // Right-click in commands area (no-op now that tree is always flat)
+                // Right-click on a count flag in the flags panel decrements the count
+                if let Some(&clicked_panel) = self.click_regions.handle_click(col, row) {
+                    if clicked_panel == Focus::Flags {
+                        if let Some(area) = self.flag_area() {
+                            let inner_top = area.y + 1;
+                            if row >= inner_top {
+                                let clicked_offset = (row - inner_top) as usize;
+                                let item_index = self.flag_scroll() + clicked_offset;
+                                let len = self.current_flag_values().len();
+                                if item_index < len
+                                    && matches!(
+                                        self.current_flag_values()[item_index].1,
+                                        FlagValue::Count(_)
+                                    )
+                                {
+                                    if self.editing {
+                                        self.finish_editing();
+                                    }
+                                    self.set_focus(Focus::Flags);
+                                    self.set_flag_index(item_index);
+                                    self.decrement_count_flag(item_index);
+                                }
+                            }
+                        }
+                    }
+                }
                 Action::None
             }
             MouseEventKind::ScrollUp => {
@@ -2153,6 +2178,17 @@ impl App {
                     self.sync_global_flag(&flag_name, &new_val);
                 }
             }
+        }
+    }
+
+    /// Decrement the Count flag at the given index. No-op if the flag is not a Count flag.
+    fn decrement_count_flag(&mut self, flag_idx: usize) {
+        let values = self.current_flag_values_mut();
+        if let Some((name, FlagValue::Count(c))) = values.get_mut(flag_idx) {
+            let flag_name = name.clone();
+            *c = c.saturating_sub(1);
+            let new_val = FlagValue::Count(*c);
+            self.sync_global_flag(&flag_name, &new_val);
         }
     }
 
@@ -3966,6 +4002,79 @@ mod tests {
 
         // Decrement again — should stay at 0 (floor)
         app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(
+            app.current_flag_values()[fidx].1,
+            FlagValue::Count(0),
+            "Count should not go below 0"
+        );
+    }
+
+    #[test]
+    fn test_count_flag_decrement_via_right_click() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+        let mut app = App::new(sample_spec());
+
+        // verbose is a count flag at the root level
+        app.set_focus(Focus::Flags);
+        let fidx = app
+            .current_flag_values()
+            .iter()
+            .position(|(n, _)| n == "verbose")
+            .unwrap();
+        app.set_flag_index(fidx);
+
+        // Increment via space three times
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        for _ in 0..3 {
+            app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        }
+        assert_eq!(
+            app.current_flag_values()[fidx].1,
+            FlagValue::Count(3),
+            "Space should increment count to 3"
+        );
+
+        // Set up click region — flags panel at x=40, y=1, inner_top = y+1 = 2
+        // Item row = inner_top + fidx = 2 + fidx
+        app.click_regions.clear();
+        app.click_regions
+            .register(ratatui::layout::Rect::new(40, 1, 60, 18), Focus::Flags);
+
+        let flag_row = 2 + fidx as u16; // inner_top (2) + item offset
+        let right_click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: 50,
+            row: flag_row,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+
+        // Right-click once — should decrement from 3 to 2
+        app.handle_mouse(right_click);
+        assert_eq!(
+            app.current_flag_values()[fidx].1,
+            FlagValue::Count(2),
+            "Right-click should decrement count to 2"
+        );
+
+        // Right-click again — should decrement to 1
+        app.handle_mouse(right_click);
+        assert_eq!(
+            app.current_flag_values()[fidx].1,
+            FlagValue::Count(1),
+            "Right-click should decrement count to 1"
+        );
+
+        // Right-click again — should decrement to 0
+        app.handle_mouse(right_click);
+        assert_eq!(
+            app.current_flag_values()[fidx].1,
+            FlagValue::Count(0),
+            "Right-click should decrement count to 0"
+        );
+
+        // Right-click again — should stay at 0 (floor)
+        app.handle_mouse(right_click);
         assert_eq!(
             app.current_flag_values()[fidx].1,
             FlagValue::Count(0),
