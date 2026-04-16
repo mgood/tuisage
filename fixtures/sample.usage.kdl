@@ -1,5 +1,5 @@
 name "My CLI"
-bin "echo --"
+bin "mycli"
 about "A sample CLI for testing tuisage"
 version "1.0.0"
 
