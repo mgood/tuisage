@@ -1192,33 +1192,35 @@ impl App {
         self.mouse_position = Some((col, row));
 
         match event.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                // If theme picker is open, handle its clicks
-                if self.is_theme_picking() {
-                    if let Some(action) =
-                        self.theme_picker
-                            .click_at(col, row, self.layout.theme_overlay_rect)
-                    {
-                        self.process_theme_picker_action(action);
-                    }
-                    return Action::None;
-                }
+            MouseEventKind::Down(MouseButton::Left | MouseButton::Right) => {
+                let is_left = matches!(event.kind, MouseEventKind::Down(MouseButton::Left));
 
-                // Check if click is on the theme indicator in the help bar
-                if let Some(rect) = self.layout.theme_indicator_rect {
-                    if col >= rect.x
-                        && col < rect.x + rect.width
-                        && row >= rect.y
-                        && row < rect.y + rect.height
-                    {
-                        self.open_theme_picker();
+                // Left-click only: theme picker / indicator / choice overlay
+                if is_left {
+                    if self.is_theme_picking() {
+                        if let Some(action) =
+                            self.theme_picker
+                                .click_at(col, row, self.layout.theme_overlay_rect)
+                        {
+                            self.process_theme_picker_action(action);
+                        }
                         return Action::None;
                     }
-                }
 
-                // Delegate overlay clicks to the focused panel's component
-                if self.is_choosing() {
-                    return self.delegate_mouse_to_choosing_panel(event);
+                    if let Some(rect) = self.layout.theme_indicator_rect {
+                        if col >= rect.x
+                            && col < rect.x + rect.width
+                            && row >= rect.y
+                            && row < rect.y + rect.height
+                        {
+                            self.open_theme_picker();
+                            return Action::None;
+                        }
+                    }
+
+                    if self.is_choosing() {
+                        return self.delegate_mouse_to_choosing_panel(event);
+                    }
                 }
 
                 // Determine which panel was clicked and delegate
@@ -1250,7 +1252,7 @@ impl App {
                             })
                         }
                         Focus::Preview => {
-                            if !switching_focus {
+                            if is_left && !switching_focus {
                                 return self.handle_enter();
                             }
                             Action::None
@@ -3348,6 +3350,51 @@ cmd "other" {
         // Backspace should decrement to 2
         app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         assert_eq!(app.current_flag_values()[fidx].1, FlagValue::Count(2));
+    }
+
+    #[test]
+    fn test_right_click_decrements_count_flag() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Flags);
+
+        // Find verbose (count flag)
+        let fidx = app
+            .current_flag_values()
+            .iter()
+            .position(|(n, _)| n == "verbose")
+            .unwrap();
+        app.set_flag_index(fidx);
+
+        // Increment to 2 via keyboard
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert_eq!(app.current_flag_values()[fidx].1, FlagValue::Count(2));
+
+        // Set up a fake layout so right-click lands in the flags panel
+        let flags_area = ratatui::layout::Rect::new(40, 1, 60, 18);
+        app.layout = UiLayout::new();
+        app.layout
+            .click_regions
+            .register(flags_area, Focus::Flags);
+        // The verbose flag is at row (flags_area.y + 1 + fidx) within the panel
+        let flag_row = flags_area.y + 1 + fidx as u16;
+
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: flags_area.x + 5,
+            row: flag_row,
+            modifiers: KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse);
+
+        // Right-click should decrement count from 2 to 1
+        assert_eq!(
+            app.current_flag_values()[fidx].1,
+            FlagValue::Count(1),
+            "Right-click should decrement count flag"
+        );
     }
 
     #[test]
