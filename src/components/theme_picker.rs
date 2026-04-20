@@ -27,6 +27,8 @@ pub struct ThemePickerComponent {
     state: Option<ThemePickerInner>,
     /// The viewport area, set by the UI coordinator before collecting overlays.
     viewport: Rect,
+    /// Mouse position from parent, used for hover highlighting.
+    mouse_position: Option<(u16, u16)>,
 }
 
 struct ThemePickerInner {
@@ -39,6 +41,7 @@ impl ThemePickerComponent {
         Self {
             state: None,
             viewport: Rect::ZERO,
+            mouse_position: None,
         }
     }
 
@@ -63,6 +66,11 @@ impl ThemePickerComponent {
     /// Set the viewport so collect_overlays can compute the anchor position.
     pub fn set_viewport(&mut self, viewport: Rect) {
         self.viewport = viewport;
+    }
+
+    /// Update the mouse position for hover highlighting in the overlay.
+    pub fn set_mouse_position(&mut self, pos: Option<(u16, u16)>) {
+        self.mouse_position = pos;
     }
 
     #[cfg(test)]
@@ -193,6 +201,7 @@ impl Component for ThemePickerComponent {
             content: Box::new(ThemePickerOverlay {
                 labels,
                 selected_index: inner.selected_index,
+                mouse_position: self.mouse_position,
             }),
         }]
     }
@@ -201,10 +210,35 @@ impl Component for ThemePickerComponent {
 struct ThemePickerOverlay {
     labels: Vec<String>,
     selected_index: usize,
+    mouse_position: Option<(u16, u16)>,
+}
+
+impl ThemePickerOverlay {
+    /// Compute hovered item index from mouse position relative to the overlay area.
+    fn hovered_index(&self, area: Rect) -> Option<usize> {
+        let (col, row) = self.mouse_position?;
+        let inner_top = area.y + 1; // skip top border
+        let inner_bottom = area.y + area.height.saturating_sub(1);
+        if col >= area.x
+            && col < area.x + area.width
+            && row >= inner_top
+            && row < inner_bottom
+        {
+            let idx = (row - inner_top) as usize;
+            if idx < self.labels.len() {
+                Some(idx)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
 }
 
 impl OverlayContent for ThemePickerOverlay {
     fn render(&self, area: Rect, buf: &mut Buffer, colors: &UiColors) {
+        let hovered = self.hovered_index(area);
         let widget = SelectList::new(
             " Theme ".to_string(),
             &self.labels,
@@ -213,7 +247,8 @@ impl OverlayContent for ThemePickerOverlay {
             colors.value,
             colors,
         )
-        .with_cursor();
+        .with_cursor()
+        .with_hovered(hovered);
         Widget::render(widget, area, buf);
     }
 }
@@ -361,5 +396,46 @@ mod tests {
         let result = tp.click_at(5, 5, Some(Rect::new(80, 5, 18, 12)));
         assert_eq!(result, Some(ThemePickerAction::Cancelled(ThemeName::Nord)));
         assert!(!tp.is_open());
+    }
+
+    #[test]
+    fn test_hover_highlight_on_theme_item() {
+        use crate::theme::UiColors;
+        use ratatui::buffer::Buffer;
+
+        let mut tp = ThemePickerComponent::new();
+        tp.set_viewport(Rect::new(0, 0, 100, 24));
+        tp.open(ThemeName::Dracula);
+
+        // Set mouse position over the second item row.
+        // Overlay area: x=80, y=10, inner_top = 11, so row 12 = item index 1.
+        let overlay_area = Rect::new(80, 10, 18, 12);
+        let hovered_row = 12u16;
+        tp.set_mouse_position(Some((85, hovered_row)));
+
+        let overlays = tp.collect_overlays();
+        assert_eq!(overlays.len(), 1);
+
+        let palette = ratatui_themes::Theme::default().palette();
+        let colors = UiColors::from_palette(&palette);
+        let mut buf = Buffer::empty(overlay_area);
+        overlays[0].content.render(overlay_area, &mut buf, &colors);
+
+        // The hovered row should have a non-reset background
+        let cell = buf.cell((81, hovered_row)).unwrap();
+        assert_ne!(
+            cell.bg,
+            ratatui::style::Color::Reset,
+            "Hovered theme item row should have a background highlight"
+        );
+
+        // The non-hovered, non-selected row below should not have a hover background
+        let non_hover_row = hovered_row + 1;
+        let cell_below = buf.cell((81, non_hover_row)).unwrap();
+        assert_eq!(
+            cell_below.bg,
+            ratatui::style::Color::Reset,
+            "Non-hovered theme item should not have a background highlight"
+        );
     }
 }
