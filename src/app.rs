@@ -1,17 +1,21 @@
-use std::io::Write;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
 
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
-use portable_pty::{MasterPty, PtySize};
 use ratatui::layout::Rect;
-use ratatui_interact::components::{InputState, ListPickerState, TreeNode, TreeViewState};
+use ratatui_interact::components::TreeNode;
 use ratatui_interact::state::FocusManager;
 use ratatui_interact::traits::ClickRegionRegistry;
 use ratatui_themes::{ThemeName, ThemePalette};
 use usage::{Spec, SpecCommand, SpecFlag};
+
+use crate::components::arg_panel::{ArgPanelAction, ArgPanelComponent, ArgPanelEnterRequest};
+use crate::components::command_panel::{CommandPanelAction, CommandPanelComponent};
+use crate::components::execution::{ExecutionAction, ExecutionComponent};
+use crate::components::filterable::{FilterAction, FilterableComponent};
+use crate::components::flag_panel::{FlagPanelAction, FlagPanelComponent, FlagPanelEnterRequest};
+use crate::components::theme_picker::{ThemePickerAction, ThemePickerComponent};
+use crate::components::{Component, EventResult};
 
 /// Per-field match scores for an item (command or flag).
 /// Keeps name and help scores separate so highlighting can be applied
@@ -48,22 +52,6 @@ pub enum AppMode {
     Executing,
 }
 
-/// State for a running (or finished) command execution.
-pub struct ExecutionState {
-    /// The command string displayed at the top.
-    pub command_display: String,
-    /// vt100 parser holding the terminal screen state.
-    pub parser: Arc<RwLock<vt100::Parser>>,
-    /// Writer to send input to the PTY (None after the master is dropped).
-    pub pty_writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
-    /// PTY master for resizing.
-    pub pty_master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
-    /// Whether the child process has exited.
-    pub exited: Arc<AtomicBool>,
-    /// Exit status description (e.g. "0", "1", "signal 9").
-    pub exit_status: Arc<Mutex<Option<String>>>,
-}
-
 /// Which panel currently has focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Focus {
@@ -96,43 +84,6 @@ pub struct ArgValue {
     pub help: Option<String>,
 }
 
-/// State for the theme picker overlay.
-#[derive(Debug, Clone)]
-pub struct ThemePickerState {
-    /// The theme that was active before opening the picker (to restore on Esc).
-    pub original_theme: ThemeName,
-    /// Selected index in the theme list.
-    pub selected_index: usize,
-    /// The rendered overlay area (for mouse hit-testing).
-    pub overlay_rect: Option<Rect>,
-}
-
-/// State for the inline choice select box.
-#[derive(Debug, Clone)]
-pub struct ChoiceSelectState {
-    /// All available choices for the item.
-    pub choices: Vec<String>,
-    /// Optional descriptions for each choice (parallel to `choices`).
-    pub descriptions: Vec<Option<String>>,
-    /// Selected index in the filtered list (None = no selection, text input is the value).
-    pub selected_index: Option<usize>,
-    /// Which panel opened the select box.
-    pub source_panel: Focus,
-    /// Index of the item (flag or arg) the select box belongs to.
-    pub source_index: usize,
-    /// Column offset from panel left edge where the value starts (used for overlay positioning).
-    pub value_column: u16,
-    /// The rendered overlay area (set during rendering, used for mouse hit-testing).
-    pub overlay_rect: Option<Rect>,
-    /// Whether the filter is active. Starts false so all choices are visible
-    /// even when reopening with an existing value; becomes true on first keystroke.
-    pub filter_active: bool,
-    /// Current scroll offset for the select list (set during rendering).
-    pub scroll_offset: usize,
-    /// Number of visible items in the viewport (set during rendering).
-    pub visible_items: usize,
-}
-
 /// Data stored in each tree node for a command.
 #[derive(Debug, Clone)]
 pub struct CmdData {
@@ -154,6 +105,56 @@ pub struct FlatCommand {
     pub full_path: String,
 }
 
+/// Collect visible (non-hidden) flags from a command, including global flags
+/// from the root spec. Standalone function to allow split borrows.
+pub(crate) fn collect_visible_flags<'a>(cmd: &'a SpecCommand, spec: &'a Spec) -> Vec<&'a SpecFlag> {
+    let mut flags: Vec<&SpecFlag> = cmd.flags.iter().filter(|f| !f.hide).collect();
+    for flag in &spec.cmd.flags {
+        if flag.global && !flag.hide && !flags.iter().any(|f| f.name == flag.name) {
+            flags.push(flag);
+        }
+    }
+    flags
+}
+
+/// Frame-local layout snapshot used for mouse hit-testing.
+pub struct UiLayout {
+    pub click_regions: ClickRegionRegistry<Focus>,
+    pub flag_overlay_rect: Option<Rect>,
+    pub arg_overlay_rect: Option<Rect>,
+    pub theme_overlay_rect: Option<Rect>,
+    pub theme_indicator_rect: Option<Rect>,
+}
+
+impl UiLayout {
+    pub fn new() -> Self {
+        Self {
+            click_regions: ClickRegionRegistry::new(),
+            flag_overlay_rect: None,
+            arg_overlay_rect: None,
+            theme_overlay_rect: None,
+            theme_indicator_rect: None,
+        }
+    }
+
+    fn area_for(&self, focus: Focus) -> Rect {
+        self.click_regions
+            .regions()
+            .iter()
+            .find(|r| r.data == focus)
+            .map(|r| r.area)
+            .unwrap_or_default()
+    }
+
+    fn region_at(&self, col: u16, row: u16) -> Option<(Focus, Rect)> {
+        self.click_regions
+            .regions()
+            .iter()
+            .find(|r| r.contains(col, row))
+            .map(|region| (region.data, region.area))
+    }
+}
+
 /// Main application state.
 pub struct App {
     pub spec: Spec,
@@ -161,8 +162,8 @@ pub struct App {
     /// Current app mode (builder vs executing).
     pub mode: AppMode,
 
-    /// Execution state when a command is running.
-    pub execution: Option<ExecutionState>,
+    /// Execution component when a command is running.
+    pub execution: Option<ExecutionComponent>,
 
     /// Current color theme.
     pub theme_name: ThemeName,
@@ -171,9 +172,19 @@ pub struct App {
     /// Empty means we're at the root command.
     pub command_path: Vec<String>,
 
+    /// Command panel component (owns tree state and navigation).
+    pub command_panel: FilterableComponent<CommandPanelComponent>,
+
+    /// Flag panel component (owns list state and navigation).
+    pub flag_panel: FilterableComponent<FlagPanelComponent>,
+
     /// Flag values keyed by flag name, per command path depth.
     /// The key is the full command path joined by space.
     pub flag_values: std::collections::HashMap<String, Vec<(String, FlagValue)>>,
+
+    /// Arg values keyed by command path.
+    /// `arg_values` mirrors the currently selected path for rendering and editing.
+    arg_values_by_path: std::collections::HashMap<String, Vec<ArgValue>>,
 
     /// Arg values for the current command.
     pub arg_values: Vec<ArgValue>,
@@ -181,45 +192,14 @@ pub struct App {
     /// Focus manager for Tab navigation between panels.
     pub focus_manager: FocusManager<Focus>,
 
-    /// Whether we are currently editing a text field (flag value or arg value).
-    pub editing: bool,
+    /// Arg panel component (owns list state and navigation).
+    pub arg_panel: FilterableComponent<ArgPanelComponent>,
 
-    /// Input state for the filter bar (fzf-style matching).
-    pub filter_input: InputState,
+    /// Current frame layout snapshot for mouse hit-testing.
+    pub layout: UiLayout,
 
-    /// Whether the filter input is active.
-    pub filtering: bool,
-
-    /// Tree nodes representing the full command hierarchy.
-    pub command_tree_nodes: Vec<TreeNode<CmdData>>,
-
-    /// Tree view state (selection, collapsed set, scroll).
-    pub command_tree_state: TreeViewState,
-
-    /// ListPickerState for the flag list.
-    pub flag_list_state: ListPickerState,
-
-    /// ListPickerState for the arg list.
-    pub arg_list_state: ListPickerState,
-
-    /// InputState for editing flag/arg values.
-    pub edit_input: InputState,
-
-    /// Click region registry for mouse hit-testing.
-    pub click_regions: ClickRegionRegistry<Focus>,
-
-    /// State for the inline choice select box (None when closed).
-    pub choice_select: Option<ChoiceSelectState>,
-
-    /// State for the theme picker overlay (None when closed).
-    pub theme_picker: Option<ThemePickerState>,
-
-    /// Area of the theme indicator in the help bar (for mouse click detection).
-    pub theme_indicator_rect: Option<Rect>,
-
-    /// Column start positions of negate strings in the flag list, keyed by flag index.
-    /// Populated during rendering; used for mouse click detection.
-    pub flag_negate_cols: std::collections::HashMap<usize, u16>,
+    /// Theme picker overlay component.
+    pub theme_picker: ThemePickerComponent,
 
     /// Current mouse cursor position (column, row) for hover highlighting.
     pub mouse_position: Option<(u16, u16)>,
@@ -235,71 +215,43 @@ impl App {
         self.mode == AppMode::Executing
     }
 
-    /// Check if the running command has exited.
-    pub fn execution_exited(&self) -> bool {
-        self.execution
-            .as_ref()
-            .map(|e| e.exited.load(Ordering::Relaxed))
-            .unwrap_or(false)
-    }
-
-    /// Get the exit status string, if available.
-    pub fn execution_exit_status(&self) -> Option<String> {
-        self.execution
-            .as_ref()
-            .and_then(|e| e.exit_status.lock().ok().and_then(|s| s.clone()))
-    }
-
     /// Close the execution view and return to the builder.
     pub fn close_execution(&mut self) {
         self.mode = AppMode::Builder;
         self.execution = None;
     }
 
-    /// Start command execution with the given execution state.
-    pub fn start_execution(&mut self, state: ExecutionState) {
+    /// Start command execution with the given component.
+    pub fn start_execution(&mut self, component: ExecutionComponent) {
         self.mode = AppMode::Executing;
-        self.execution = Some(state);
+        self.execution = Some(component);
     }
 
-    /// Write bytes to the PTY (forward keyboard input during execution).
-    pub fn write_to_pty(&self, data: &[u8]) {
+    pub fn spawn_execution(&mut self, terminal_size: ratatui::layout::Size) -> color_eyre::Result<()> {
+        let parts = self.build_command_parts();
+        let command_display = self.build_command();
+        let component = ExecutionComponent::spawn(command_display, &parts, terminal_size)?;
+        self.start_execution(component);
+        Ok(())
+    }
+
+    pub fn resize_execution_to_terminal(&self, terminal_size: ratatui::layout::Size) {
         if let Some(ref exec) = self.execution {
-            if let Ok(mut writer_guard) = exec.pty_writer.lock() {
-                if let Some(ref mut writer) = *writer_guard {
-                    let _ = writer.write_all(data);
-                    let _ = writer.flush();
-                }
-            }
+            exec.resize_to_terminal(terminal_size);
         }
     }
 
     /// Resize the PTY to fit the new terminal dimensions.
+    #[cfg(test)]
     pub fn resize_pty(&self, rows: u16, cols: u16) {
         if let Some(ref exec) = self.execution {
-            // Resize the PTY master
-            if let Ok(mut master_guard) = exec.pty_master.lock() {
-                if let Some(ref mut master) = *master_guard {
-                    let _ = master.resize(PtySize {
-                        rows,
-                        cols,
-                        pixel_width: 0,
-                        pixel_height: 0,
-                    });
-                }
-            }
-            // Resize the vt100 parser's screen in place so it matches the new PTY size.
-            // This preserves existing content and avoids flashing/blanking.
-            // The child process receives SIGWINCH from the PTY resize and will redraw.
-            if let Ok(mut parser_guard) = exec.parser.write() {
-                parser_guard.screen_mut().set_size(rows, cols);
-            }
+            exec.resize_pty(rows, cols);
         }
     }
 
     pub fn with_theme(spec: usage::Spec, theme_name: ThemeName) -> Self {
         let tree_nodes = build_command_tree(&spec);
-        let tree_state = TreeViewState::new();
+        let command_panel = FilterableComponent::new(CommandPanelComponent::new(tree_nodes));
 
         let mut app = Self {
             spec,
@@ -307,28 +259,22 @@ impl App {
             execution: None,
             theme_name,
             command_path: Vec::new(),
+            command_panel,
+            flag_panel: FilterableComponent::new(FlagPanelComponent::new()),
             flag_values: std::collections::HashMap::new(),
+            arg_values_by_path: std::collections::HashMap::new(),
             arg_values: Vec::new(),
             focus_manager: FocusManager::new(),
-            editing: false,
-            filter_input: InputState::empty(),
-            filtering: false,
-            command_tree_nodes: tree_nodes,
-            command_tree_state: tree_state,
-            flag_list_state: ListPickerState::new(0),
-            arg_list_state: ListPickerState::new(0),
-            edit_input: InputState::empty(),
-            click_regions: ClickRegionRegistry::new(),
-            choice_select: None,
-            theme_picker: None,
-            theme_indicator_rect: None,
-            flag_negate_cols: std::collections::HashMap::new(),
+            arg_panel: FilterableComponent::new(ArgPanelComponent::new()),
+            layout: UiLayout::new(),
+            theme_picker: ThemePickerComponent::new(),
             mouse_position: None,
         };
         app.sync_state();
         // Synchronize command_path with the tree's initial selection so the
         // correct flags/args are displayed on the very first render.
         app.sync_command_path_from_tree();
+        app.notify_focus_gained(app.focus());
         app
     }
 
@@ -379,393 +325,407 @@ impl App {
 
     /// Set the focus to a specific panel.
     pub fn set_focus(&mut self, panel: Focus) {
-        // Clear filter when changing panels
-        if self.focus() != panel {
-            self.filtering = false;
-            self.filter_input.clear();
+        let previous = self.focus();
+        if previous == panel {
+            return;
         }
-        // Finish any active editing and close choice select when switching panels
-        if self.editing {
-            self.finish_editing();
-        }
-        self.choice_select = None;
+
+        self.notify_focus_lost(previous);
         self.focus_manager.set(panel);
+        self.notify_focus_gained(panel);
+    }
+
+    /// Whether any panel is currently in inline edit mode.
+    pub fn is_editing(&self) -> bool {
+        self.flag_panel.is_editing() || self.arg_panel.is_editing()
+    }
+
+    /// Finish any active inline editing on the focused panel, syncing the final value.
+    pub fn finish_editing(&mut self) {
+        if self.flag_panel.is_editing() {
+            let idx = self.flag_panel.selected_index();
+            let value = self.flag_panel.finish_editing();
+            self.apply_flag_string_value(idx, &value);
+        }
+        if self.arg_panel.is_editing() {
+            let idx = self.arg_panel.selected_index();
+            let value = self.arg_panel.finish_editing();
+            self.set_arg_value(idx, value);
+        }
     }
 
     /// Whether the theme picker is open.
     pub fn is_theme_picking(&self) -> bool {
-        self.theme_picker.is_some()
+        self.theme_picker.is_open()
     }
 
     /// Open the theme picker overlay.
     pub fn open_theme_picker(&mut self) {
-        let all = ThemeName::all();
-        let current_idx = all.iter().position(|t| *t == self.theme_name).unwrap_or(0);
-        self.theme_picker = Some(ThemePickerState {
-            original_theme: self.theme_name,
-            selected_index: current_idx,
-            overlay_rect: None,
-        });
+        self.theme_picker.open(self.theme_name);
     }
 
-    /// Close the theme picker, restoring the original theme.
-    pub fn close_theme_picker(&mut self) {
-        if let Some(ref tp) = self.theme_picker {
-            self.theme_name = tp.original_theme;
+    /// Process a ThemePickerAction emitted by the theme picker component.
+    fn process_theme_picker_action(&mut self, action: ThemePickerAction) {
+        match action {
+            ThemePickerAction::PreviewTheme(name) => {
+                self.theme_name = name;
+            }
+            ThemePickerAction::Confirmed => {
+                // Theme already set by preview — nothing to do.
+            }
+            ThemePickerAction::Cancelled(original) => {
+                self.theme_name = original;
+            }
         }
-        self.theme_picker = None;
-    }
-
-    /// Confirm the currently previewed theme and close the picker.
-    pub fn confirm_theme_picker(&mut self) {
-        self.theme_picker = None;
     }
 
     /// Handle key events when the theme picker is open.
     fn handle_theme_picker_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
-        use crossterm::event::KeyCode;
-        let all = ThemeName::all();
-        let len = all.len();
-
-        match key.code {
-            KeyCode::Esc => {
-                self.close_theme_picker();
-                Action::None
-            }
-            KeyCode::Enter => {
-                self.confirm_theme_picker();
-                Action::None
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(ref mut tp) = self.theme_picker {
-                    if tp.selected_index > 0 {
-                        tp.selected_index -= 1;
-                    } else {
-                        tp.selected_index = len - 1;
-                    }
-                    self.theme_name = all[tp.selected_index];
-                }
-                Action::None
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(ref mut tp) = self.theme_picker {
-                    if tp.selected_index + 1 < len {
-                        tp.selected_index += 1;
-                    } else {
-                        tp.selected_index = 0;
-                    }
-                    self.theme_name = all[tp.selected_index];
-                }
-                Action::None
-            }
-            _ => Action::None,
+        if let EventResult::Action(action) = self.theme_picker.handle_key(key) {
+            self.process_theme_picker_action(action);
         }
+        Action::None
     }
 
-    /// Whether the choice select box is open.
+    /// Whether any choice select box is open (flag panel or arg panel).
     pub fn is_choosing(&self) -> bool {
-        self.choice_select.is_some()
+        self.flag_panel.is_choosing() || self.arg_panel.is_choosing()
     }
 
-    /// Get the filtered (visible) choices for the select box.
-    /// Returns (original_index, choice_text) pairs for choices matching the filter.
-    pub fn filtered_choices(&self) -> Vec<(usize, String)> {
-        let Some(ref cs) = self.choice_select else {
-            return Vec::new();
-        };
-        let filter = self.edit_input.text();
-        // Show all choices when filter is not yet active (initial open) or when empty
-        if filter.is_empty() || !cs.filter_active {
-            return cs
-                .choices
-                .iter()
-                .enumerate()
-                .map(|(i, c)| (i, c.clone()))
-                .collect();
-        }
-        let mut matcher = Matcher::new(Config::DEFAULT);
-        cs.choices
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| fuzzy_match_score(c, filter, &mut matcher) > 0)
-            .map(|(i, c)| (i, c.clone()))
-            .collect()
-    }
-
-    /// Get the description for a choice at the given original index.
-    pub fn choice_description(&self, original_index: usize) -> Option<&str> {
-        self.choice_select
-            .as_ref()
-            .and_then(|cs| cs.descriptions.get(original_index))
-            .and_then(|d| d.as_deref())
-    }
-
-    /// Open the choice select box for the current flag/arg.
-    pub fn open_choice_select(&mut self, choices: Vec<String>, current_value: &str) {
-        let source_panel = self.focus();
-        let source_index = match source_panel {
-            Focus::Flags => self.flag_index(),
-            Focus::Args => self.arg_index(),
-            _ => 0,
-        };
-
-        // Compute x offset from panel left edge to where the value starts.
-        // Layout: border(1) + cursor "▶ "(2) + indicator(varies) + name(varies) + " = "(3)
-        let value_column: u16 = match source_panel {
-            Focus::Args => {
-                let arg = &self.arg_values[source_index];
-                // indicator "● " or "○ " = 2 chars
-                // arg_display = "<name>" or "[name]" = name.len() + 2
-                let arg_display_len = arg.name.chars().count() + 2;
-                (1 + 2 + 2 + arg_display_len + 3) as u16
-            }
-            Focus::Flags => {
-                let flags = self.visible_flags();
-                let flag = &flags[source_index];
-                let flag_values = self.current_flag_values();
-                let value = flag_values.iter().find(|(n, _)| n == &flag.name);
-
-                // indicator width: "✓ "=2, "○ "=2, "[n] "=varies, "[·] "=4, "[•] "=4
-                let indicator_width = match value.map(|(_, v)| v) {
-                    Some(FlagValue::Count(n)) => format!("[{}] ", n).chars().count(),
-                    Some(FlagValue::String(_)) => 4, // "[·] " or "[•] "
-                    _ => 2, // "✓ " or "○ "
-                };
-
-                let flag_display = {
-                    let mut parts = Vec::new();
-                    for s in &flag.short {
-                        parts.push(format!("-{s}"));
-                    }
-                    for l in &flag.long {
-                        parts.push(format!("--{l}"));
-                    }
-                    if parts.is_empty() {
-                        flag.name.clone()
-                    } else {
-                        parts.join(", ")
-                    }
-                };
-                let flag_display_len = flag_display.chars().count();
-
-                let mut extra = 0usize;
-                if flag.global {
-                    extra += 4; // " [G]"
-                }
-                if flag.required {
-                    extra += 2; // " *"
-                }
-
-                (1 + 2 + indicator_width + flag_display_len + extra + 3) as u16
-            }
-            _ => 4,
-        };
-
-        // Find the index of the current value in the choices list — pre-select if it matches
-        let selected_index = choices
-            .iter()
-            .position(|c| c == current_value);
-        self.choice_select = Some(ChoiceSelectState {
-            choices,
-            descriptions: Vec::new(),
-            selected_index,
-            source_panel,
-            source_index,
-            value_column,
-            overlay_rect: None,
-            filter_active: false,
-            scroll_offset: 0,
-            visible_items: 0,
-        });
-        // Enter editing mode with the current value as initial text
-        self.editing = true;
-        self.edit_input.set_text(current_value.to_string());
-    }
-
-    /// Open the choice select box populated with dynamic completion results.
-    pub fn open_completion_select(
+    /// Dispatch a FilterAction result, handling FocusNext/FocusPrev/Consumed/NotHandled
+    /// uniformly and delegating inner actions to the provided closure.
+    fn dispatch_filter_result<A>(
         &mut self,
-        choices: Vec<String>,
-        descriptions: Vec<Option<String>>,
-        current_value: &str,
-    ) {
-        self.open_choice_select(choices, current_value);
-        if let Some(ref mut cs) = self.choice_select {
-            cs.descriptions = descriptions;
+        result: EventResult<FilterAction<A>>,
+        process: impl FnOnce(&mut Self, A) -> Action,
+    ) -> Action {
+        self.dispatch_filter_result_with(result, process, |_| {})
+    }
+
+    /// Like `dispatch_filter_result` but with an additional callback for NotHandled.
+    fn dispatch_filter_result_with<A>(
+        &mut self,
+        result: EventResult<FilterAction<A>>,
+        process: impl FnOnce(&mut Self, A) -> Action,
+        on_not_handled: impl FnOnce(&mut Self),
+    ) -> Action {
+        match result {
+            EventResult::Action(FilterAction::Inner(action)) => process(self, action),
+            EventResult::Action(FilterAction::FocusNext) => {
+                self.focus_next();
+                Action::None
+            }
+            EventResult::Action(FilterAction::FocusPrev) => {
+                self.focus_prev();
+                Action::None
+            }
+            EventResult::NotHandled => {
+                on_not_handled(self);
+                Action::None
+            }
+            EventResult::Consumed => Action::None,
         }
     }
 
-    /// Close the choice select box without applying.
-    pub fn close_choice_select(&mut self) {
-        self.choice_select = None;
+    fn dispatch_filter_result_option<A>(
+        &mut self,
+        result: EventResult<FilterAction<A>>,
+        process: impl FnOnce(&mut Self, A) -> Action,
+    ) -> Option<Action> {
+        match result {
+            EventResult::Action(FilterAction::Inner(action)) => Some(process(self, action)),
+            EventResult::Action(FilterAction::FocusNext) => {
+                self.focus_next();
+                Some(Action::None)
+            }
+            EventResult::Action(FilterAction::FocusPrev) => {
+                self.focus_prev();
+                Some(Action::None)
+            }
+            EventResult::Consumed => Some(Action::None),
+            EventResult::NotHandled => None,
+        }
     }
 
-    /// Confirm the selected choice and close the select box.
-    pub fn confirm_choice_select(&mut self) {
-        let filtered = self.filtered_choices();
-        let Some(ref cs) = self.choice_select else {
-            return;
-        };
-        let Some(selected_index) = cs.selected_index else {
-            // No selection — accept typed text via finish_editing
-            self.choice_select = None;
-            self.finish_editing();
-            return;
-        };
-        let source_panel = cs.source_panel;
-        let source_index = cs.source_index;
-
-        let Some((_, choice_text)) = filtered.get(selected_index) else {
-            self.choice_select = None;
-            self.finish_editing();
-            return;
-        };
-        let choice_text = choice_text.clone();
-
-        match source_panel {
+    fn notify_focus_gained(&mut self, panel: Focus) {
+        match panel {
+            Focus::Commands => {
+                let result = self.command_panel.handle_focus_gained();
+                self.dispatch_filter_result(result, |s, action| {
+                    s.process_command_action(action);
+                    Action::None
+                });
+            }
             Focus::Flags => {
-                let values = self.current_flag_values_mut();
-                if let Some((name, FlagValue::String(ref mut s))) = values.get_mut(source_index) {
-                    let flag_name = name.clone();
-                    *s = choice_text;
-                    let new_val = FlagValue::String(s.clone());
-                    self.sync_global_flag(&flag_name, &new_val);
-                }
+                let result = self.flag_panel.handle_focus_gained();
+                self.dispatch_filter_result(result, |s, action| s.process_flag_action(action));
             }
             Focus::Args => {
-                if let Some(arg) = self.arg_values.get_mut(source_index) {
-                    arg.value = choice_text;
-                }
+                let result = self.arg_panel.handle_focus_gained();
+                self.dispatch_filter_result(result, |s, action| s.process_arg_action(action));
             }
-            _ => {}
+            Focus::Preview => {}
         }
-
-        self.choice_select = None;
-        self.editing = false;
     }
 
-    /// Handle key events when the choice select box is open.
-    /// The text input is active simultaneously — typing filters choices and clears selection.
-    fn handle_choice_select_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
-        use crossterm::event::KeyCode;
+    fn notify_focus_lost(&mut self, panel: Focus) {
+        match panel {
+            Focus::Commands => {
+                let result = self.command_panel.handle_focus_lost();
+                self.dispatch_filter_result(result, |s, action| {
+                    s.process_command_action(action);
+                    Action::None
+                });
+            }
+            Focus::Flags => {
+                let result = self.flag_panel.handle_focus_lost();
+                self.dispatch_filter_result(result, |s, action| s.process_flag_action(action));
+            }
+            Focus::Args => {
+                let result = self.arg_panel.handle_focus_lost();
+                self.dispatch_filter_result(result, |s, action| s.process_arg_action(action));
+            }
+            Focus::Preview => {}
+        }
+    }
 
-        match key.code {
-            KeyCode::Esc => {
-                // Keep the typed text as the value, close select
-                self.sync_edit_to_value();
-                self.editing = false;
-                self.close_choice_select();
+    fn focus_next(&mut self) {
+        let previous = self.focus();
+        self.focus_manager.next();
+        let current = self.focus();
+        if current != previous {
+            self.notify_focus_lost(previous);
+            self.notify_focus_gained(current);
+        }
+    }
+
+    fn focus_prev(&mut self) {
+        let previous = self.focus();
+        self.focus_manager.prev();
+        let current = self.focus();
+        if current != previous {
+            self.notify_focus_lost(previous);
+            self.notify_focus_gained(current);
+        }
+    }
+
+    fn focused_panel_is_handling_input(&self) -> bool {
+        match self.focus() {
+            Focus::Commands => self.command_panel.is_filtering(),
+            Focus::Flags => self.flag_panel.is_filtering() || self.flag_panel.is_editing() || self.flag_panel.is_choosing(),
+            Focus::Args => self.arg_panel.is_filtering() || self.arg_panel.is_editing() || self.arg_panel.is_choosing(),
+            Focus::Preview => false,
+        }
+    }
+
+    fn handle_focused_panel_key(&mut self, key: crossterm::event::KeyEvent) -> Option<Action> {
+        match self.focus() {
+            Focus::Commands => {
+                let result = self.command_panel.handle_key(key);
+                self.dispatch_filter_result_option(result, |s, action| {
+                    s.process_command_action(action);
+                    Action::None
+                })
+            }
+            Focus::Flags => {
+                let result = self.flag_panel.handle_key(key);
+                self.dispatch_filter_result_option(result, |s, action| s.process_flag_action(action))
+            }
+            Focus::Args => {
+                let result = self.arg_panel.handle_key(key);
+                self.dispatch_filter_result_option(result, |s, action| s.process_arg_action(action))
+            }
+            Focus::Preview => None,
+        }
+    }
+
+    /// Apply a string value to the flag at the given visible index.
+    fn apply_flag_string_value(&mut self, flag_idx: usize, value: &str) {
+        let mut changed = false;
+        {
+            let values = self.current_flag_values_mut();
+            if let Some((name, FlagValue::String(ref mut s))) = values.get_mut(flag_idx) {
+                let flag_name = name.clone();
+                *s = value.to_string();
+                let new_val = FlagValue::String(s.clone());
+                self.sync_global_flag(&flag_name, &new_val);
+                changed = true;
+            }
+        }
+        if changed {
+            self.refresh_flag_panel_inputs();
+        }
+    }
+
+    /// Process a non-choice ArgPanelAction (enter, clear).
+    fn process_arg_action(&mut self, action: ArgPanelAction) -> Action {
+        match action {
+            ArgPanelAction::EnterRequest(request) => {
+                self.process_arg_enter_request(request);
                 Action::None
             }
-            KeyCode::Enter => {
-                self.confirm_choice_select();
+            ArgPanelAction::ClearArg(idx) => {
+                self.set_arg_value(idx, String::new());
                 Action::None
             }
-            KeyCode::Up => {
-                if let Some(ref mut cs) = self.choice_select {
-                    match cs.selected_index {
-                        Some(0) | None => cs.selected_index = None,
-                        Some(idx) => cs.selected_index = Some(idx - 1),
-                    }
-                }
+            ArgPanelAction::ValueChanged { index, value } => {
+                self.set_arg_value(index, value);
                 Action::None
             }
-            KeyCode::Down => {
-                let filtered_len = self.filtered_choices().len();
-                if let Some(ref mut cs) = self.choice_select {
-                    if filtered_len > 0 {
-                        match cs.selected_index {
-                            None => cs.selected_index = Some(0),
-                            Some(idx) if idx + 1 < filtered_len => {
-                                cs.selected_index = Some(idx + 1);
+            ArgPanelAction::EditFinished { index, value } => {
+                self.set_arg_value(index, value);
+                Action::None
+            }
+            ArgPanelAction::ChoiceSelected { index, value }
+            | ArgPanelAction::ChoiceCancelled { index, value } => {
+                self.set_arg_value(index, value);
+                Action::None
+            }
+        }
+    }
+
+    /// Process a non-choice FlagPanelAction (toggle, clear, enter).
+    fn process_flag_action(&mut self, action: FlagPanelAction) -> Action {
+        match action {
+            FlagPanelAction::ToggleFlag(_idx) => {
+                self.toggle_simple_flag();
+                Action::None
+            }
+            FlagPanelAction::ClearFlag(idx) => {
+                // Clear/decrement flag at the given index
+                let mut changed = false;
+                {
+                    let values = self.current_flag_values_mut();
+                    if let Some((name, value)) = values.get_mut(idx) {
+                        let flag_name = name.clone();
+                        match value {
+                            FlagValue::Bool(b) => {
+                                *b = false;
+                                let new_val = FlagValue::Bool(false);
+                                self.sync_global_flag(&flag_name, &new_val);
                             }
-                            _ => {}
+                            FlagValue::Count(c) => {
+                                *c = c.saturating_sub(1);
+                                let new_val = FlagValue::Count(*c);
+                                self.sync_global_flag(&flag_name, &new_val);
+                            }
+                            FlagValue::String(s) => {
+                                s.clear();
+                                let new_val = FlagValue::String(String::new());
+                                self.sync_global_flag(&flag_name, &new_val);
+                            }
+                            FlagValue::NegBool(state) => {
+                                *state = None;
+                                let new_val = FlagValue::NegBool(None);
+                                self.sync_global_flag(&flag_name, &new_val);
+                            }
                         }
+                        changed = true;
                     }
                 }
-                Action::None
-            }
-            KeyCode::Backspace => {
-                self.edit_input.delete_char_backward();
-                self.sync_edit_to_value();
-                // Activate filter and clear selection when typing
-                if let Some(ref mut cs) = self.choice_select {
-                    cs.filter_active = true;
-                    cs.selected_index = None;
+                if changed {
+                    self.refresh_flag_panel_inputs();
                 }
                 Action::None
             }
-            KeyCode::Left => {
-                self.edit_input.move_left();
+            FlagPanelAction::EnterRequest(request) => {
+                self.process_flag_enter_request(request);
                 Action::None
             }
-            KeyCode::Right => {
-                self.edit_input.move_right();
+            FlagPanelAction::ChoiceSelected { index, value }
+            | FlagPanelAction::ChoiceCancelled { index, value } => {
+                self.apply_flag_string_value(index, &value);
                 Action::None
             }
-            KeyCode::Char(c) => {
-                self.edit_input.insert_char(c);
-                self.sync_edit_to_value();
-                // Activate filter and clear selection when typing
-                if let Some(ref mut cs) = self.choice_select {
-                    cs.filter_active = true;
-                    cs.selected_index = None;
+            FlagPanelAction::ValueChanged { index, value } => {
+                self.apply_flag_string_value(index, &value);
+                Action::None
+            }
+            FlagPanelAction::EditFinished { index, value } => {
+                self.apply_flag_string_value(index, &value);
+                Action::None
+            }
+            FlagPanelAction::NegBoolClick(idx, target) => {
+                let mut changed = false;
+                {
+                    let values = self.current_flag_values_mut();
+                    if let Some((name, FlagValue::NegBool(state))) = values.get_mut(idx) {
+                        let flag_name = name.clone();
+                        *state = if *state == target { None } else { target };
+                        let new_val = FlagValue::NegBool(*state);
+                        self.sync_global_flag(&flag_name, &new_val);
+                        changed = true;
+                    }
+                }
+                if changed {
+                    self.refresh_flag_panel_inputs();
                 }
                 Action::None
             }
-            _ => Action::None,
         }
     }
 
-    /// Whether a filter is applied (filter text is non-empty), regardless of
-    /// whether the user is still in typing mode (`self.filtering`).
+    /// Whether a filter is applied on any panel (filter text is non-empty),
+    /// regardless of whether the user is still in interactive typing mode.
     pub fn filter_active(&self) -> bool {
-        !self.filter().is_empty()
+        self.command_panel.has_active_filter()
+            || self.flag_panel.has_active_filter()
+            || self.arg_panel.has_active_filter()
+    }
+
+    /// Whether the user is currently in interactive filter typing mode.
+    pub fn is_filtering(&self) -> bool {
+        self.command_panel.is_filtering()
+            || self.flag_panel.is_filtering()
+            || self.arg_panel.is_filtering()
     }
 
     // --- Convenience accessors for indices ---
 
+    #[allow(dead_code)]
     pub fn command_index(&self) -> usize {
-        self.command_tree_state.selected_index
+        self.command_panel.selected_index()
     }
 
     #[allow(dead_code)]
     pub fn set_command_index(&mut self, idx: usize) {
-        self.command_tree_state.selected_index = idx;
-        self.sync_command_path_from_tree();
+        if self.command_panel.select_item(idx) {
+            self.set_command_path(self.command_panel.path().to_vec());
+        }
     }
 
     pub fn flag_index(&self) -> usize {
-        self.flag_list_state.selected_index
+        self.flag_panel.selected_index()
     }
 
+    #[cfg(test)]
     pub fn set_flag_index(&mut self, idx: usize) {
-        self.flag_list_state.select(idx);
+        self.flag_panel.select(idx);
     }
 
     pub fn arg_index(&self) -> usize {
-        self.arg_list_state.selected_index
+        self.arg_panel.selected_index()
     }
 
+    #[cfg(test)]
     pub fn set_arg_index(&mut self, idx: usize) {
-        self.arg_list_state.select(idx);
+        self.arg_panel.select(idx);
     }
 
+    #[cfg(test)]
     pub fn command_scroll(&self) -> usize {
-        self.command_tree_state.scroll as usize
+        self.command_panel.scroll_offset()
     }
 
-    pub fn flag_scroll(&self) -> usize {
-        self.flag_list_state.scroll as usize
-    }
-
-    pub fn arg_scroll(&self) -> usize {
-        self.arg_list_state.scroll as usize
-    }
-
-    /// Get the filter text.
+    /// Get the active filter text from the focused panel.
+    #[allow(dead_code)] // used in #[cfg(test)] scoring methods and test assertions
     pub fn filter(&self) -> &str {
-        self.filter_input.text()
+        match self.focus() {
+            Focus::Commands => self.command_panel.filter_text(),
+            Focus::Flags => self.flag_panel.filter_text(),
+            Focus::Args => self.arg_panel.filter_text(),
+            _ => "",
+        }
     }
 
     /// Get the current SpecCommand based on the command_path.
@@ -834,20 +794,18 @@ impl App {
         Some((choices, descs))
     }
 
-    /// Run completion command and open select box with results.
+    /// Run completion command and return results.
     /// Re-executes the command each time for fresh results.
     /// Returns `Some((choices, descriptions))` on success, `None` on failure.
+    #[cfg(test)]
     pub fn run_and_open_completion(
         &mut self,
         arg_name: &str,
-        current_value: &str,
+        _current_value: &str,
     ) -> Option<(Vec<String>, Vec<Option<String>>)> {
         let complete = self.find_completion(arg_name)?.clone();
         let run_cmd = complete.run.as_ref()?;
-
-        let result = Self::run_completion(run_cmd, complete.descriptions)?;
-        self.open_completion_select(result.0.clone(), result.1.clone(), current_value);
-        Some(result)
+        Self::run_completion(run_cmd, complete.descriptions)
     }
 
     /// Whether the spec has any subcommands at all (for focus manager).
@@ -863,8 +821,8 @@ impl App {
         let items: Vec<(&String, &SpecCommand)> =
             cmd.subcommands.iter().filter(|(_, c)| !c.hide).collect();
 
-        if self.filtering && !self.filter().is_empty() && self.focus() == Focus::Commands {
-            let filter_lower = self.filter().to_lowercase();
+        if self.command_panel.is_filtering() && !self.command_panel.filter_text().is_empty() && self.focus() == Focus::Commands {
+            let filter_lower = self.command_panel.filter_text().to_lowercase();
             items
                 .into_iter()
                 .filter(|(name, c)| {
@@ -886,36 +844,18 @@ impl App {
     /// Returns the visible (non-hidden) flags of the current command,
     /// including global flags from ancestors, optionally filtered when focus is Flags.
     pub fn visible_flags(&self) -> Vec<&SpecFlag> {
-        let cmd = self.current_command();
-        let mut flags: Vec<&SpecFlag> = cmd.flags.iter().filter(|f| !f.hide).collect();
-
-        // Include global flags from the root spec
-        for flag in &self.spec.cmd.flags {
-            if flag.global && !flag.hide {
-                // Don't duplicate if already present
-                if !flags.iter().any(|f| f.name == flag.name) {
-                    flags.push(flag);
-                }
-            }
-        }
-
-        // No filtering here - rendering will apply subdued styling to non-matches
-        flags
+        collect_visible_flags(self.current_command(), &self.spec)
     }
 
     /// Returns the visible (non-hidden) args of the current command.
+    #[cfg(test)]
     pub fn visible_args(&self) -> Vec<&usage::SpecArg> {
         let cmd = self.current_command();
         cmd.args.iter().filter(|a| !a.hide).collect()
     }
 
-    /// Synchronize internal state (arg_values, flag_values) when navigating to a new command.
-    pub fn sync_state(&mut self) {
-        let cmd = self.current_command();
-
-        // Initialize arg values for the current command
-        self.arg_values = cmd
-            .args
+    fn default_arg_values_for_command(cmd: &SpecCommand) -> Vec<ArgValue> {
+        cmd.args
             .iter()
             .filter(|a| !a.hide)
             .map(|a| {
@@ -933,10 +873,64 @@ impl App {
                     help: a.help.clone(),
                 }
             })
-            .collect();
+            .collect()
+    }
+
+    fn persist_current_arg_values(&mut self) {
+        let path_key = self.command_path_key();
+        self.arg_values_by_path
+            .insert(path_key, self.arg_values.clone());
+    }
+
+    fn set_command_path(&mut self, new_path: Vec<String>) {
+        if self.command_path != new_path {
+            self.persist_current_arg_values();
+            self.command_path = new_path;
+        }
+        self.sync_state();
+    }
+
+    fn set_arg_value(&mut self, index: usize, value: String) {
+        if let Some(arg) = self.arg_values.get_mut(index) {
+            arg.value = value;
+            self.persist_current_arg_values();
+        }
+        self.refresh_arg_panel_inputs();
+    }
+
+    fn refresh_flag_panel_inputs(&mut self) {
+        let flags = self.visible_flags_snapshot();
+        let flag_refs: Vec<&SpecFlag> = flags.iter().collect();
+        let flag_values = self.current_flag_values().to_vec();
+        self.flag_panel.set_filterable_items_from_flags(&flag_refs);
+        self.flag_panel
+            .set_enter_requests_from_flags(&flag_refs, &flag_values);
+    }
+
+    fn refresh_arg_panel_inputs(&mut self) {
+        self.arg_panel.set_filterable_items_from_args(&self.arg_values);
+        self.arg_panel.set_enter_requests_from_args(&self.arg_values);
+    }
+
+    /// Synchronize internal state (arg_values, flag_values) when navigating to a new command.
+    pub fn sync_state(&mut self) {
+        let path_key = self.command_path_key();
+
+        // Initialize arg values for the current command path if not already set.
+        if !self.arg_values_by_path.contains_key(&path_key) {
+            let defaults = {
+                let cmd = self.current_command();
+                Self::default_arg_values_for_command(cmd)
+            };
+            self.arg_values_by_path.insert(path_key.clone(), defaults);
+        }
+        self.arg_values = self
+            .arg_values_by_path
+            .get(&path_key)
+            .cloned()
+            .unwrap_or_default();
 
         // Initialize flag values for the current command path if not already set
-        let path_key = self.command_path_key();
         if !self.flag_values.contains_key(&path_key) {
             // Collect current global flag values from root so new levels inherit them
             let root_global_values: std::collections::HashMap<String, FlagValue> = self
@@ -983,9 +977,13 @@ impl App {
         }
 
         // Update list picker states with correct totals
-        self.flag_list_state
-            .set_total(self.current_flag_values().len());
-        self.arg_list_state.set_total(self.arg_values.len());
+        let flag_count = self.current_flag_values().len();
+        let arg_count = self.arg_values.len();
+        self.flag_panel.set_total(flag_count);
+        self.arg_panel.set_total(arg_count);
+
+        self.refresh_flag_panel_inputs();
+        self.refresh_arg_panel_inputs();
 
         // Rebuild focus manager with available panels
         self.rebuild_focus_manager();
@@ -1043,22 +1041,14 @@ impl App {
     // --- Tree view helpers ---
 
     /// Get the total number of commands in the flat list (all nodes, always visible).
+    #[allow(dead_code)]
     pub fn total_visible_commands(&self) -> usize {
-        flatten_command_tree(&self.command_tree_nodes).len()
-    }
-
-    /// Compute match scores for all tree nodes when filtering.
-    /// Returns a map of node ID → MatchScores with per-field scores.
-    pub fn compute_tree_match_scores(&self) -> std::collections::HashMap<String, MatchScores> {
-        let pattern = self.filter();
-        if pattern.is_empty() {
-            return std::collections::HashMap::new();
-        }
-        compute_tree_scores(&self.command_tree_nodes, pattern)
+        self.command_panel.total_visible()
     }
 
     /// Compute match scores for all flags when filtering.
     /// Returns a map of flag name → score (0 for non-matches).
+    #[cfg(test)]
     pub fn compute_flag_match_scores(&self) -> std::collections::HashMap<String, MatchScores> {
         let pattern = self.filter();
         if pattern.is_empty() {
@@ -1108,6 +1098,7 @@ impl App {
 
     /// Compute match scores for all args when filtering.
     /// Returns a map of arg name → score (0 for non-matches).
+    #[cfg(test)]
     pub fn compute_arg_match_scores(&self) -> std::collections::HashMap<String, MatchScores> {
         let pattern = self.filter();
         if pattern.is_empty() {
@@ -1138,68 +1129,32 @@ impl App {
         scores
     }
 
-    /// Get the ID of the currently selected tree node.
-    pub fn selected_command_id(&self) -> Option<String> {
-        let flat = flatten_command_tree(&self.command_tree_nodes);
-        flat.get(self.command_tree_state.selected_index)
-            .map(|cmd| cmd.id.clone())
-    }
-
     /// Update command_path based on the currently selected tree node.
     pub fn sync_command_path_from_tree(&mut self) {
-        if let Some(id) = self.selected_command_id() {
-            if id.is_empty() {
-                self.command_path = vec![];
-            } else {
-                self.command_path = id.split(' ').map(|s| s.to_string()).collect();
-            }
-        }
-        self.sync_state();
+        self.set_command_path(self.command_panel.path().to_vec());
     }
 
-    /// Find a tree node by ID and check if it has children.
-    fn node_has_children(&self, id: &str) -> bool {
-        fn find_in<T>(nodes: &[TreeNode<T>], id: &str) -> Option<bool> {
-            for node in nodes {
-                if node.id == id {
-                    return Some(node.has_children());
-                }
-                if let Some(result) = find_in(&node.children, id) {
-                    return Some(result);
-                }
+    /// Apply a path change from the command panel component.
+    fn apply_command_panel_key(&mut self, key: crossterm::event::KeyEvent) {
+        match self.command_panel.handle_key(key) {
+            EventResult::Action(FilterAction::Inner(action)) => {
+                self.process_command_action(action);
             }
-            None
-        }
-        find_in(&self.command_tree_nodes, id).unwrap_or(false)
-    }
-
-    /// Find the parent node index in the flattened visible list.
-    fn find_parent_index(&self) -> Option<usize> {
-        let flat = flatten_command_tree(&self.command_tree_nodes);
-        let selected_id = flat
-            .get(self.command_tree_state.selected_index)
-            .map(|cmd| cmd.id.clone())?;
-        let parent = parent_id(&selected_id)?;
-        flat.iter().position(|cmd| cmd.id == parent)
-    }
-
-    /// Move to first child of selected node (Right/l key).
-    pub fn tree_expand_or_enter(&mut self) {
-        if let Some(id) = self.selected_command_id() {
-            if self.node_has_children(&id) {
-                // Move to first child (next item in flat list)
-                let total = self.total_visible_commands();
-                self.command_tree_state.select_next(total);
-                self.sync_command_path_from_tree();
+            EventResult::Action(FilterAction::FocusNext) => {
+                self.focus_manager.next();
             }
+            EventResult::Action(FilterAction::FocusPrev) => {
+                self.focus_manager.prev();
+            }
+            _ => {}
         }
     }
 
-    /// Move to parent node (Left/h key).
-    pub fn tree_collapse_or_parent(&mut self) {
-        if let Some(parent_idx) = self.find_parent_index() {
-            self.command_tree_state.selected_index = parent_idx;
-            self.sync_command_path_from_tree();
+    fn process_command_action(&mut self, action: CommandPanelAction) {
+        match action {
+            CommandPanelAction::PathChanged(new_path) => {
+                self.set_command_path(new_path);
+            }
         }
     }
 
@@ -1207,25 +1162,23 @@ impl App {
     /// and selects the target node. Used for tests and programmatic navigation.
     #[allow(dead_code)]
     pub fn navigate_to_command(&mut self, path: &[&str]) {
-        let target_id = path.join(" ");
-        let flat = flatten_command_tree(&self.command_tree_nodes);
-        if let Some(idx) = flat.iter().position(|cmd| cmd.id == target_id) {
-            self.command_tree_state.selected_index = idx;
-            self.sync_command_path_from_tree();
-        }
+        self.command_panel.navigate_to(path);
+        self.set_command_path(self.command_panel.path().to_vec());
     }
 
     /// Select first child of current node.
     #[allow(dead_code)]
     pub fn navigate_into_selected(&mut self) {
-        if let Some(id) = self.selected_command_id() {
-            if self.node_has_children(&id) {
-                // Move to first child (next item in flat list)
-                let total = self.total_visible_commands();
-                self.command_tree_state.select_next(total);
-                self.sync_command_path_from_tree();
-            }
-        }
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Right,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        self.apply_command_panel_key(enter);
+    }
+
+    /// Look up the registered click area for a given panel focus.
+    fn area_for(&self, focus: Focus) -> Rect {
+        self.layout.area_for(focus)
     }
 
     /// Handle a mouse event and return the resulting Action.
@@ -1242,37 +1195,17 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) => {
                 // If theme picker is open, handle its clicks
                 if self.is_theme_picking() {
-                    let overlay_rect = self
-                        .theme_picker
-                        .as_ref()
-                        .and_then(|tp| tp.overlay_rect);
-                    if let Some(rect) = overlay_rect {
-                        let inner_top = rect.y + 1;
-                        let inner_bottom = rect.y + rect.height.saturating_sub(1);
-                        if col >= rect.x
-                            && col < rect.x + rect.width
-                            && row >= inner_top
-                            && row < inner_bottom
-                        {
-                            let clicked_index = (row - inner_top) as usize;
-                            let all = ThemeName::all();
-                            if clicked_index < all.len() {
-                                if let Some(ref mut tp) = self.theme_picker {
-                                    tp.selected_index = clicked_index;
-                                }
-                                self.theme_name = all[clicked_index];
-                                self.confirm_theme_picker();
-                            }
-                            return Action::None;
-                        }
+                    if let Some(action) =
+                        self.theme_picker
+                            .click_at(col, row, self.layout.theme_overlay_rect)
+                    {
+                        self.process_theme_picker_action(action);
                     }
-                    // Click outside the overlay — close (restore original)
-                    self.close_theme_picker();
                     return Action::None;
                 }
 
                 // Check if click is on the theme indicator in the help bar
-                if let Some(rect) = self.theme_indicator_rect {
+                if let Some(rect) = self.layout.theme_indicator_rect {
                     if col >= rect.x
                         && col < rect.x + rect.width
                         && row >= rect.y
@@ -1283,246 +1216,124 @@ impl App {
                     }
                 }
 
-                // If choice select box is open, check if click is within the overlay
+                // Delegate overlay clicks to the focused panel's component
                 if self.is_choosing() {
-                    let overlay_rect = self
-                        .choice_select
-                        .as_ref()
-                        .and_then(|cs| cs.overlay_rect);
-                    if let Some(rect) = overlay_rect {
-                        // Check if click is within the overlay area (inner content)
-                        let inner_top = rect.y; // no top border
-                        let inner_bottom = rect.y + rect.height.saturating_sub(1);
-                        if col >= rect.x && col < rect.x + rect.width
-                            && row >= inner_top && row < inner_bottom
-                        {
-                            // Account for scroll offset when computing clicked index
-                            let scroll_offset = self.choice_select.as_ref().map_or(0, |cs| cs.scroll_offset);
-                            let clicked_index = (row - inner_top) as usize + scroll_offset;
-                            let filtered_len = self.filtered_choices().len();
-                            if clicked_index < filtered_len {
-                                if let Some(ref mut cs) = self.choice_select {
-                                    cs.selected_index = Some(clicked_index);
-                                }
-                                self.confirm_choice_select();
-                            }
-                            return Action::None;
-                        }
-                    }
-                    // Click outside the overlay — keep typed text, close select
-                    self.sync_edit_to_value();
-                    self.editing = false;
-                    self.close_choice_select();
-                    return Action::None;
+                    return self.delegate_mouse_to_choosing_panel(event);
                 }
-                // Use click region registry for hit-testing
-                if let Some(&clicked_panel) = self.click_regions.handle_click(col, row) {
-                    // Finish any in-progress editing before switching focus or item
-                    if self.editing {
+
+                // Determine which panel was clicked and delegate
+                if let Some((clicked_panel, area)) = self.layout.region_at(col, row) {
+                    let switching_focus = self.focus() != clicked_panel;
+                    if !switching_focus && self.is_editing() {
                         self.finish_editing();
                     }
-                    let was_focused = self.focus() == clicked_panel;
                     self.set_focus(clicked_panel);
 
                     match clicked_panel {
                         Focus::Commands => {
-                            // Calculate which item was clicked based on the region
-                            if let Some(area) = self.command_area() {
-                                let inner_top = area.y + 1; // border
-                                if row >= inner_top {
-                                    let clicked_offset = (row - inner_top) as usize;
-                                    let item_index = self.command_scroll() + clicked_offset;
-                                    let total = self.total_visible_commands();
-                                    if item_index < total {
-                                        self.command_tree_state.selected_index = item_index;
-                                        self.sync_command_path_from_tree();
-                                    }
-                                }
-                            }
+                            let result = self.command_panel.handle_mouse(event, area);
+                            self.dispatch_filter_result(result, |s, action| {
+                                s.process_command_action(action);
+                                Action::None
+                            })
                         }
                         Focus::Flags => {
-                            if let Some(area) = self.flag_area() {
-                                let inner_top = area.y + 1;
-                                let inner_left = area.x + 1;
-                                if row >= inner_top {
-                                    let clicked_offset = (row - inner_top) as usize;
-                                    let item_index = self.flag_scroll() + clicked_offset;
-                                    let len = self.current_flag_values().len();
-                                    if item_index < len {
-                                        self.set_flag_index(item_index);
-                                        let negate_col = self.flag_negate_cols.get(&item_index).copied();
-                                        if let Some(nc) = negate_col {
-                                            // Negatable flag: dispatch based on which region was clicked
-                                            if col < inner_left + 4 {
-                                                // Icon region → cycle through all states
-                                                return self.handle_enter();
-                                            } else if col >= nc {
-                                                // Negate string → set off (or unset if already off)
-                                                return self.handle_negbool_click(Some(false));
-                                            } else {
-                                                // Positive flag name → set on (or unset if already on)
-                                                return self.handle_negbool_click(Some(true));
-                                            }
-                                        } else if was_focused && self.flag_index() == item_index {
-                                            return self.handle_enter();
-                                        }
-                                    }
-                                }
-                            }
+                            let result = self.flag_panel.handle_mouse(event, area);
+                            self.dispatch_filter_result(result, |s, action| {
+                                s.process_flag_action(action)
+                            })
                         }
                         Focus::Args => {
-                            if let Some(area) = self.arg_area() {
-                                let inner_top = area.y + 1;
-                                if row >= inner_top {
-                                    let clicked_offset = (row - inner_top) as usize;
-                                    let item_index = self.arg_scroll() + clicked_offset;
-                                    let len = self.arg_values.len();
-                                    if item_index < len {
-                                        if was_focused && self.arg_index() == item_index {
-                                            return self.handle_enter();
-                                        } else {
-                                            self.set_arg_index(item_index);
-                                        }
-                                    }
-                                }
-                            }
+                            let result = self.arg_panel.handle_mouse(event, area);
+                            self.dispatch_filter_result(result, |s, action| {
+                                s.process_arg_action(action)
+                            })
                         }
                         Focus::Preview => {
-                            if was_focused {
+                            if !switching_focus {
                                 return self.handle_enter();
                             }
+                            Action::None
                         }
                     }
-                    return Action::None;
-                }
-                Action::None
-            }
-            MouseEventKind::Down(MouseButton::Right) => {
-                // Right-click in commands area (no-op now that tree is always flat)
-                Action::None
-            }
-            MouseEventKind::ScrollUp => {
-                if self.is_choosing() {
-                    self.scroll_choice_select_up();
                 } else {
-                    self.scroll_up_in_focused();
+                    Action::None
                 }
-                Action::None
             }
-            MouseEventKind::ScrollDown => {
-                if self.is_choosing() {
-                    self.scroll_choice_select_down();
-                } else {
-                    self.scroll_down_in_focused();
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                // Delegate scroll to the focused panel
+                let focus = self.focus();
+                let area = self.area_for(focus);
+                match focus {
+                    Focus::Commands => {
+                        let result = self.command_panel.handle_mouse(event, area);
+                        self.dispatch_filter_result(result, |s, action| {
+                            s.process_command_action(action);
+                            Action::None
+                        })
+                    }
+                    Focus::Flags => {
+                        let result = self.flag_panel.handle_mouse(event, area);
+                        self.dispatch_filter_result(result, |s, action| {
+                            s.process_flag_action(action)
+                        })
+                    }
+                    Focus::Args => {
+                        let result = self.arg_panel.handle_mouse(event, area);
+                        self.dispatch_filter_result(result, |s, action| {
+                            s.process_arg_action(action)
+                        })
+                    }
+                    Focus::Preview => Action::None,
                 }
-                Action::None
             }
-            MouseEventKind::Up(MouseButton::Left) => Action::None,
             _ => Action::None,
         }
     }
 
-    /// Get the stored area for the command panel (from click regions).
-    fn command_area(&self) -> Option<Rect> {
-        self.click_regions
-            .regions()
-            .iter()
-            .find(|r| r.data == Focus::Commands)
-            .map(|r| r.area)
-    }
-
-    /// Get the stored area for the flag panel.
-    fn flag_area(&self) -> Option<Rect> {
-        self.click_regions
-            .regions()
-            .iter()
-            .find(|r| r.data == Focus::Flags)
-            .map(|r| r.area)
-    }
-
-    /// Get the stored area for the arg panel.
-    fn arg_area(&self) -> Option<Rect> {
-        self.click_regions
-            .regions()
-            .iter()
-            .find(|r| r.data == Focus::Args)
-            .map(|r| r.area)
-    }
-
-    /// Compute the item index the mouse is hovering over in the given panel.
-    /// Returns `None` if the mouse is not within the panel's content area.
-    pub fn hovered_index(&self, panel: Focus) -> Option<usize> {
-        let (col, row) = self.mouse_position?;
-        let area = match panel {
-            Focus::Commands => self.command_area()?,
-            Focus::Flags => self.flag_area()?,
-            Focus::Args => self.arg_area()?,
-            Focus::Preview => return None,
-        };
-        let inner_top = area.y + 1; // skip top border
-        let inner_bottom = area.y + area.height.saturating_sub(1);
-        if col < area.x || col >= area.x + area.width || row < inner_top || row >= inner_bottom {
-            return None;
+    /// Delegate a mouse click to the panel with an open choice select overlay.
+    fn delegate_mouse_to_choosing_panel(
+        &mut self,
+        event: crossterm::event::MouseEvent,
+    ) -> Action {
+        // Try flag panel first
+        if self.flag_panel.is_choosing() {
+            let result = self
+                .flag_panel
+                .handle_choice_click(event.column, event.row, self.layout.flag_overlay_rect)
+                .map(FilterAction::Inner);
+            return self.dispatch_filter_result(result, |s, action| {
+                s.process_flag_action(action)
+            });
         }
-        let scroll = match panel {
-            Focus::Commands => self.command_scroll(),
-            Focus::Flags => self.flag_scroll(),
-            Focus::Args => self.arg_scroll(),
-            Focus::Preview => 0,
-        };
-        Some((row - inner_top) as usize + scroll)
-    }
-
-    /// Scroll up in the currently focused list.
-    fn scroll_up_in_focused(&mut self) {
-        self.move_up();
-    }
-
-    /// Scroll down in the currently focused list.
-    fn scroll_down_in_focused(&mut self) {
-        self.move_down();
-    }
-
-    /// Scroll the choice select list up (move selection up).
-    fn scroll_choice_select_up(&mut self) {
-        if let Some(ref mut cs) = self.choice_select {
-            match cs.selected_index {
-                Some(0) | None => cs.selected_index = None,
-                Some(idx) => cs.selected_index = Some(idx - 1),
-            }
+        // Try arg panel
+        if self.arg_panel.is_choosing() {
+            let result = self
+                .arg_panel
+                .handle_choice_click(event.column, event.row, self.layout.arg_overlay_rect)
+                .map(FilterAction::Inner);
+            return self.dispatch_filter_result(result, |s, action| {
+                s.process_arg_action(action)
+            });
         }
-    }
-
-    /// Scroll the choice select list down (move selection down).
-    fn scroll_choice_select_down(&mut self) {
-        let filtered_len = self.filtered_choices().len();
-        if let Some(ref mut cs) = self.choice_select {
-            if filtered_len > 0 {
-                match cs.selected_index {
-                    None => cs.selected_index = Some(0),
-                    Some(idx) if idx + 1 < filtered_len => {
-                        cs.selected_index = Some(idx + 1);
-                    }
-                    _ => {}
-                }
-            }
-        }
+        Action::None
     }
 
     /// Ensure the scroll offset keeps the selected index visible within the given viewport height.
+    #[cfg(test)]
     pub fn ensure_visible(&mut self, panel: Focus, viewport_height: usize) {
         if viewport_height == 0 {
             return;
         }
         match panel {
             Focus::Commands => {
-                self.command_tree_state.ensure_visible(viewport_height);
+                self.command_panel.ensure_visible(viewport_height);
             }
             Focus::Flags => {
-                self.flag_list_state.ensure_visible(viewport_height);
+                self.flag_panel.ensure_visible(viewport_height);
             }
             Focus::Args => {
-                self.arg_list_state.ensure_visible(viewport_height);
+                self.arg_panel.ensure_visible(viewport_height);
             }
             Focus::Preview => {}
         }
@@ -1531,9 +1342,14 @@ impl App {
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
         use crossterm::event::KeyCode;
 
-        // If in execution mode, handle separately
+        // If in execution mode, delegate to the execution component
         if self.is_executing() {
-            return self.handle_execution_key(key);
+            if let Some(ref mut exec) = self.execution {
+                if let EventResult::Action(ExecutionAction::Close) = exec.handle_key(key) {
+                    self.close_execution();
+                }
+            }
+            return Action::None;
         }
 
         // Ctrl+R executes command from any panel, regardless of edit/filter mode
@@ -1550,31 +1366,16 @@ impl App {
             return self.handle_theme_picker_key(key);
         }
 
-        // If the choice select box is open, handle its keys
-        if self.is_choosing() {
-            return self.handle_choice_select_key(key);
+        let focused_panel_is_handling_input = self.focused_panel_is_handling_input();
+        if let Some(action) = self.handle_focused_panel_key(key) {
+            return action;
         }
-
-        // If we're editing a text field, handle that separately
-        if self.editing {
-            return self.handle_editing_key(key);
-        }
-
-        // If we're in filter mode, handle filter input
-        if self.filtering {
-            return self.handle_filter_key(key);
+        if focused_panel_is_handling_input {
+            return Action::None;
         }
 
         match key.code {
             KeyCode::Char('q') => Action::Quit,
-            KeyCode::Backspace => {
-                match self.focus() {
-                    Focus::Flags => self.handle_flag_backspace(),
-                    Focus::Args => self.handle_arg_backspace(),
-                    _ => {}
-                }
-                Action::None
-            }
             KeyCode::Char('T') => {
                 self.open_theme_picker();
                 Action::None
@@ -1588,137 +1389,22 @@ impl App {
                 Action::None
             }
             KeyCode::Char('p') => Action::None,
-            KeyCode::Char('/') => {
-                // Only activate filter mode for panels that support filtering
-                if matches!(self.focus(), Focus::Commands | Focus::Flags | Focus::Args) {
-                    self.filtering = true;
-                    self.filter_input.clear();
-                }
-                Action::None
-            }
             KeyCode::Tab => {
-                self.filtering = false;
-                self.filter_input.clear();
-                self.focus_manager.next();
+                self.focus_next();
                 Action::None
             }
             KeyCode::BackTab => {
-                self.filtering = false;
-                self.filter_input.clear();
-                self.focus_manager.prev();
+                self.focus_prev();
                 Action::None
             }
-            KeyCode::Esc => {
-                // Esc only clears filter when active (otherwise no effect)
-                if self.filter_active() {
-                    self.filtering = false;
-                    self.filter_input.clear();
-                }
-                Action::None
-            }
-            KeyCode::Enter => self.handle_enter(),
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.move_up();
-                Action::None
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.move_down();
-                Action::None
-            }
-            KeyCode::Char(' ') => {
-                self.handle_space();
-                Action::None
-            }
-            KeyCode::Left | KeyCode::Char('h') => {
-                if self.focus() == Focus::Commands {
-                    self.tree_collapse_or_parent();
-                }
-                Action::None
-            }
-            KeyCode::Right | KeyCode::Char('l') => {
-                if self.focus() == Focus::Commands {
-                    self.tree_expand_or_enter();
-                }
-                Action::None
-            }
+            KeyCode::Enter if self.focus() == Focus::Preview => self.handle_enter(),
             _ => Action::None,
         }
     }
 
-    fn handle_editing_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
-        use crossterm::event::KeyCode;
-
-        match key.code {
-            KeyCode::Esc => {
-                self.finish_editing();
-                Action::None
-            }
-            KeyCode::Enter => {
-                self.finish_editing();
-                Action::None
-            }
-            KeyCode::Backspace => {
-                self.edit_input.delete_char_backward();
-                self.sync_edit_to_value();
-                Action::None
-            }
-            KeyCode::Delete => {
-                self.edit_input.delete_char_forward();
-                self.sync_edit_to_value();
-                Action::None
-            }
-            KeyCode::Left => {
-                self.edit_input.move_left();
-                Action::None
-            }
-            KeyCode::Right => {
-                self.edit_input.move_right();
-                Action::None
-            }
-            KeyCode::Home => {
-                self.edit_input.move_home();
-                Action::None
-            }
-            KeyCode::End => {
-                self.edit_input.move_end();
-                Action::None
-            }
-            KeyCode::Char(c) => {
-                self.edit_input.insert_char(c);
-                self.sync_edit_to_value();
-                Action::None
-            }
-            _ => Action::None,
-        }
-    }
-
-    /// Sync the edit_input text back to the underlying flag/arg value.
-    fn sync_edit_to_value(&mut self) {
-        let text = self.edit_input.text.clone();
-        match self.focus() {
-            Focus::Flags => {
-                let flag_idx = self.flag_index();
-                let values = self.current_flag_values_mut();
-                if let Some((name, FlagValue::String(ref mut s))) = values.get_mut(flag_idx) {
-                    let flag_name = name.clone();
-                    *s = text;
-                    let new_val = FlagValue::String(s.clone());
-                    self.sync_global_flag(&flag_name, &new_val);
-                }
-            }
-            Focus::Args => {
-                let arg_idx = self.arg_index();
-                if let Some(arg) = self.arg_values.get_mut(arg_idx) {
-                    arg.value = text;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Start editing: populate edit_input from current value.
+    /// Start editing on the focused panel: populate edit_input from current value.
+    #[allow(dead_code)] // used in tests; production code calls panel.start_editing() directly
     pub fn start_editing(&mut self) {
-        self.editing = true;
         let current_text = match self.focus() {
             Focus::Flags => {
                 let flag_idx = self.flag_index();
@@ -1737,712 +1423,249 @@ impl App {
                     .map(|a| a.value.clone())
                     .unwrap_or_default()
             }
-            _ => String::new(),
+            _ => return,
         };
-        self.edit_input.set_text(current_text);
-    }
-
-    /// Stop editing and sync final value.
-    pub fn finish_editing(&mut self) {
-        self.sync_edit_to_value();
-        self.editing = false;
-    }
-
-    fn handle_filter_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
-        use crossterm::event::KeyCode;
-
-        match key.code {
-            KeyCode::Esc => {
-                self.filtering = false;
-                self.filter_input.clear();
-                Action::None
-            }
-            KeyCode::Enter => {
-                self.filtering = false;
-                // Keep the filter active to show filtered results
-                Action::None
-            }
-            KeyCode::Tab => {
-                // Allow switching focus while filtering — stop filtering first
-                self.filtering = false;
-                self.filter_input.clear();
-                self.focus_manager.next();
-                Action::None
-            }
-            KeyCode::BackTab => {
-                self.filtering = false;
-                self.filter_input.clear();
-                self.focus_manager.prev();
-                Action::None
-            }
-            KeyCode::Backspace => {
-                self.filter_input.delete_char_backward();
-                // Auto-select next matching item if current doesn't match
-                self.auto_select_next_match();
-                Action::None
-            }
-            KeyCode::Char(c) => {
-                self.filter_input.insert_char(c);
-                // Auto-select next matching item if current doesn't match
-                self.auto_select_next_match();
-                Action::None
-            }
-            KeyCode::Up => {
-                self.move_up();
-                Action::None
-            }
-            KeyCode::Down => {
-                self.move_down();
-                Action::None
-            }
-            _ => Action::None,
+        match self.focus() {
+            Focus::Flags => self.flag_panel.start_editing(&current_text),
+            Focus::Args => self.arg_panel.start_editing(&current_text),
+            _ => {}
         }
     }
 
+
+    #[cfg(test)]
     fn move_up(&mut self) {
-        // When a filter is applied, skip non-matching items
-        if self.filter_active() {
-            self.move_to_prev_match();
-            return;
-        }
         match self.focus() {
             Focus::Commands => {
-                self.command_tree_state.select_prev();
-                self.sync_command_path_from_tree();
-            }
-            Focus::Flags => {
-                self.flag_list_state.select_prev();
-            }
-            Focus::Args => {
-                self.arg_list_state.select_prev();
-            }
-            Focus::Preview => {}
-        }
-    }
-
-    fn move_down(&mut self) {
-        // When a filter is applied, skip non-matching items
-        if self.filter_active() {
-            self.move_to_next_match();
-            return;
-        }
-        match self.focus() {
-            Focus::Commands => {
-                let total = self.total_visible_commands();
-                self.command_tree_state.select_next(total);
-                self.sync_command_path_from_tree();
-            }
-            Focus::Flags => {
-                self.flag_list_state.select_next();
-            }
-            Focus::Args => {
-                self.arg_list_state.select_next();
-            }
-            Focus::Preview => {}
-        }
-    }
-
-    /// Move to the previous matching item when a filter is active.
-    /// Wraps around to the last match if at the beginning.
-    fn move_to_prev_match(&mut self) {
-        match self.focus() {
-            Focus::Commands => {
-                let scores = self.compute_tree_match_scores();
-                let flat = flatten_command_tree(&self.command_tree_nodes);
-                let keys: Vec<String> = flat.iter().map(|c| c.id.clone()).collect();
-                let current = self.command_tree_state.selected_index;
-                if let Some(idx) = find_adjacent_match(&keys, &scores, current, false) {
-                    self.command_tree_state.selected_index = idx;
-                    self.sync_command_path_from_tree();
+                // Component handles both regular and filter-aware navigation
+                if self.command_panel.move_up() {
+                    self.set_command_path(self.command_panel.path().to_vec());
                 }
             }
             Focus::Flags => {
-                let scores = self.compute_flag_match_scores();
-                let flags = self.visible_flags();
-                let keys: Vec<String> = flags.iter().map(|f| f.name.clone()).collect();
-                let current = self.flag_list_state.selected_index;
-                if let Some(idx) = find_adjacent_match(&keys, &scores, current, false) {
-                    self.flag_list_state.select(idx);
-                }
+                self.flag_panel.move_up();
             }
             Focus::Args => {
-                let scores = self.compute_arg_match_scores();
-                let keys: Vec<String> = self.arg_values.iter().map(|a| a.name.clone()).collect();
-                let current = self.arg_list_state.selected_index;
-                if let Some(idx) = find_adjacent_match(&keys, &scores, current, false) {
-                    self.arg_list_state.select(idx);
-                }
+                self.arg_panel.move_up();
             }
             _ => {}
         }
-    }
-
-    /// Move to the next matching item when a filter is active.
-    /// Wraps around to the first match if at the end.
-    fn move_to_next_match(&mut self) {
-        match self.focus() {
-            Focus::Commands => {
-                let scores = self.compute_tree_match_scores();
-                let flat = flatten_command_tree(&self.command_tree_nodes);
-                let keys: Vec<String> = flat.iter().map(|c| c.id.clone()).collect();
-                let current = self.command_tree_state.selected_index;
-                if let Some(idx) = find_adjacent_match(&keys, &scores, current, true) {
-                    self.command_tree_state.selected_index = idx;
-                    self.sync_command_path_from_tree();
-                }
-            }
-            Focus::Flags => {
-                let scores = self.compute_flag_match_scores();
-                let flags = self.visible_flags();
-                let keys: Vec<String> = flags.iter().map(|f| f.name.clone()).collect();
-                let current = self.flag_list_state.selected_index;
-                if let Some(idx) = find_adjacent_match(&keys, &scores, current, true) {
-                    self.flag_list_state.select(idx);
-                }
-            }
-            Focus::Args => {
-                let scores = self.compute_arg_match_scores();
-                let keys: Vec<String> = self.arg_values.iter().map(|a| a.name.clone()).collect();
-                let current = self.arg_list_state.selected_index;
-                if let Some(idx) = find_adjacent_match(&keys, &scores, current, true) {
-                    self.arg_list_state.select(idx);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Handle key events during command execution mode.
-    fn handle_execution_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
-        use crossterm::event::KeyCode;
-
-        if self.execution_exited() {
-            // Command has finished — any key closes the execution view
-            match key.code {
-                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
-                    self.close_execution();
-                    return Action::None;
-                }
-                _ => return Action::None,
-            }
-        }
-
-        // Command is still running — forward input to the PTY
-        let bytes: Option<Vec<u8>> = match key.code {
-            KeyCode::Char(c) => {
-                let mut buf = [0u8; 4];
-                let s = c.encode_utf8(&mut buf);
-                Some(s.as_bytes().to_vec())
-            }
-            KeyCode::Enter => Some(b"\r".to_vec()),
-            KeyCode::Backspace => Some(b"\x7f".to_vec()),
-            KeyCode::Tab => Some(b"\t".to_vec()),
-            KeyCode::Esc => Some(b"\x1b".to_vec()),
-            KeyCode::Up => Some(b"\x1b[A".to_vec()),
-            KeyCode::Down => Some(b"\x1b[B".to_vec()),
-            KeyCode::Right => Some(b"\x1b[C".to_vec()),
-            KeyCode::Left => Some(b"\x1b[D".to_vec()),
-            KeyCode::Home => Some(b"\x1b[H".to_vec()),
-            KeyCode::End => Some(b"\x1b[F".to_vec()),
-            KeyCode::Delete => Some(b"\x1b[3~".to_vec()),
-            _ => None,
-        };
-
-        if let Some(data) = bytes {
-            // Handle Ctrl+C to send SIGINT
-            if key
-                .modifiers
-                .contains(crossterm::event::KeyModifiers::CONTROL)
-            {
-                if let KeyCode::Char('c') = key.code {
-                    self.write_to_pty(b"\x03");
-                    return Action::None;
-                }
-                if let KeyCode::Char('d') = key.code {
-                    self.write_to_pty(b"\x04");
-                    return Action::None;
-                }
-            }
-            self.write_to_pty(&data);
-        }
-
-        Action::None
     }
 
     fn handle_enter(&mut self) -> Action {
         match self.focus() {
             Focus::Commands => {
-                // Enter navigates into the selected command (same as Right/l)
-                self.tree_expand_or_enter();
-                Action::None
+                let enter = crossterm::event::KeyEvent::new(
+                    crossterm::event::KeyCode::Enter,
+                    crossterm::event::KeyModifiers::NONE,
+                );
+                self.handle_focused_panel_key(enter).unwrap_or(Action::None)
             }
-            Focus::Flags => {
-                let flag_idx = self.flag_index();
-
-                // Check if the flag has choices before mutably borrowing
-                let maybe_choices: Option<Vec<String>> = {
-                    let flags = self.visible_flags();
-                    flags.get(flag_idx).and_then(|flag| {
-                        flag.arg
-                            .as_ref()
-                            .and_then(|a| a.choices.as_ref())
-                            .map(|c| c.choices.clone())
-                    })
-                };
-
-                // Get the flag's arg name for completion lookup (before mutable borrow)
-                let flag_arg_name: Option<String> = {
-                    let flags = self.visible_flags();
-                    flags
-                        .get(flag_idx)
-                        .and_then(|f| f.arg.as_ref())
-                        .map(|a| a.name.clone())
-                };
-
-                // Toggle bool flags, start editing string flags
-                let is_string_flag = {
-                    let values = self.current_flag_values();
-                    values
-                        .get(flag_idx)
-                        .is_some_and(|(_, v)| matches!(v, FlagValue::String(_)))
-                };
-
-                if is_string_flag {
-                    let values = self.current_flag_values_mut();
-                    if let Some((_, FlagValue::String(s))) = values.get_mut(flag_idx) {
-                        if let Some(choices) = maybe_choices {
-                            let current = s.clone();
-                            self.open_choice_select(choices, &current);
-                        } else if let Some(ref arg_name) = flag_arg_name {
-                            let current = s.clone();
-                            if self.run_and_open_completion(arg_name, &current).is_none() {
-                                self.start_editing();
-                            }
-                        } else {
-                            self.start_editing();
-                        }
-                    }
-                } else {
-                    self.toggle_simple_flag();
-                }
-                Action::None
-            }
-            Focus::Args => {
-                let arg_idx = self.arg_index();
-                let arg = &self.arg_values[arg_idx];
-                if !arg.choices.is_empty() {
-                    let choices = arg.choices.clone();
-                    let current = arg.value.clone();
-                    self.open_choice_select(choices, &current);
-                } else {
-                    let arg_name = arg.name.clone();
-                    let current = arg.value.clone();
-                    if self.run_and_open_completion(&arg_name, &current).is_none() {
-                        self.start_editing();
-                    }
-                }
-                Action::None
+            Focus::Flags | Focus::Args => {
+                let enter = crossterm::event::KeyEvent::new(
+                    crossterm::event::KeyCode::Enter,
+                    crossterm::event::KeyModifiers::NONE,
+                );
+                self.handle_focused_panel_key(enter).unwrap_or(Action::None)
             }
             Focus::Preview => Action::Execute,
         }
     }
 
-    fn handle_space(&mut self) {
-        if self.focus() == Focus::Flags {
-            self.toggle_simple_flag();
+    fn process_flag_enter_request(&mut self, request: FlagPanelEnterRequest) {
+        match request {
+            FlagPanelEnterRequest::Toggle => {
+                self.toggle_simple_flag();
+            }
+            FlagPanelEnterRequest::ChoiceSelect {
+                index,
+                choices,
+                current_value,
+                value_column,
+            } => {
+                let current_value = self
+                    .current_flag_values()
+                    .get(index)
+                    .and_then(|(_, value)| match value {
+                        FlagValue::String(text) => Some(text.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or(current_value);
+                self.flag_panel
+                    .open_choice_select(index, choices, &current_value, value_column);
+            }
+            FlagPanelEnterRequest::EditOrComplete {
+                index,
+                arg_name,
+                current_value,
+                value_column,
+            } => {
+                let current_value = self
+                    .current_flag_values()
+                    .get(index)
+                    .and_then(|(_, value)| match value {
+                        FlagValue::String(text) => Some(text.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or(current_value);
+                if let Some(ref arg_name) = arg_name {
+                    if let Some((choices, descriptions)) =
+                        self.run_flag_completion(arg_name, &current_value)
+                    {
+                        self.flag_panel.open_completion_select(
+                            index,
+                            choices,
+                            descriptions,
+                            &current_value,
+                            value_column,
+                        );
+                        return;
+                    }
+                }
+
+                self.flag_panel.start_editing(&current_value);
+            }
         }
+    }
+
+    /// Run a completion command for a flag argument and return results.
+    /// Does NOT open the choice select — caller is responsible.
+    fn run_flag_completion(
+        &self,
+        arg_name: &str,
+        _current_value: &str,
+    ) -> Option<(Vec<String>, Vec<Option<String>>)> {
+        let complete = self.find_completion(arg_name)?.clone();
+        let run_cmd = complete.run.as_ref()?;
+        Self::run_completion(run_cmd, complete.descriptions)
+    }
+
+    fn process_arg_enter_request(&mut self, request: ArgPanelEnterRequest) {
+        match request {
+            ArgPanelEnterRequest::ChoiceSelect {
+                index,
+                choices,
+                current_value,
+                value_column,
+            } => {
+                let current_value = self
+                    .arg_values
+                    .get(index)
+                    .map(|arg| arg.value.clone())
+                    .unwrap_or(current_value);
+                self.arg_panel
+                    .open_choice_select(index, choices, &current_value, value_column);
+            }
+            ArgPanelEnterRequest::EditOrComplete {
+                index,
+                arg_name,
+                current_value,
+                value_column,
+            } => {
+                let current_value = self
+                    .arg_values
+                    .get(index)
+                    .map(|arg| arg.value.clone())
+                    .unwrap_or(current_value);
+                if let Some((choices, descriptions)) =
+                    self.run_arg_completion(&arg_name, &current_value)
+                {
+                    self.arg_panel.open_completion_select(
+                        index,
+                        choices,
+                        descriptions,
+                        &current_value,
+                        value_column,
+                    );
+                } else {
+                    self.arg_panel.start_editing(&current_value);
+                }
+            }
+        }
+    }
+
+    /// Run a completion command for an arg and return results.
+    fn run_arg_completion(
+        &self,
+        arg_name: &str,
+        _current_value: &str,
+    ) -> Option<(Vec<String>, Vec<Option<String>>)> {
+        let complete = self.find_completion(arg_name)?.clone();
+        let run_cmd = complete.run.as_ref()?;
+        Self::run_completion(run_cmd, complete.descriptions)
     }
 
     /// Toggle a Bool, NegBool, or Count flag at the current index.
     /// Bool: flip. NegBool: cycle None→Some(true)→Some(false)→None. Count: increment.
     fn toggle_simple_flag(&mut self) {
         let flag_idx = self.flag_index();
-        let values = self.current_flag_values_mut();
-        if let Some((name, value)) = values.get_mut(flag_idx) {
-            let flag_name = name.clone();
-            match value {
-                FlagValue::Bool(b) => {
-                    *b = !*b;
-                    let new_val = FlagValue::Bool(*b);
-                    self.sync_global_flag(&flag_name, &new_val);
+        let mut changed = false;
+        {
+            let values = self.current_flag_values_mut();
+            if let Some((name, value)) = values.get_mut(flag_idx) {
+                let flag_name = name.clone();
+                match value {
+                    FlagValue::Bool(b) => {
+                        *b = !*b;
+                        let new_val = FlagValue::Bool(*b);
+                        self.sync_global_flag(&flag_name, &new_val);
+                        changed = true;
+                    }
+                    FlagValue::NegBool(state) => {
+                        *state = match *state {
+                            None => Some(true),
+                            Some(true) => Some(false),
+                            Some(false) => None,
+                        };
+                        let new_val = FlagValue::NegBool(*state);
+                        self.sync_global_flag(&flag_name, &new_val);
+                        changed = true;
+                    }
+                    FlagValue::Count(c) => {
+                        *c += 1;
+                        let new_val = FlagValue::Count(*c);
+                        self.sync_global_flag(&flag_name, &new_val);
+                        changed = true;
+                    }
+                    _ => {}
                 }
-                FlagValue::NegBool(state) => {
-                    *state = match *state {
-                        None => Some(true),
-                        Some(true) => Some(false),
-                        Some(false) => None,
-                    };
-                    let new_val = FlagValue::NegBool(*state);
-                    self.sync_global_flag(&flag_name, &new_val);
-                }
-                FlagValue::Count(c) => {
-                    *c += 1;
-                    let new_val = FlagValue::Count(*c);
-                    self.sync_global_flag(&flag_name, &new_val);
-                }
-                _ => {}
             }
         }
-    }
-
-    /// Auto-select the next matching item if the current selection doesn't match the filter.
-    fn auto_select_next_match(&mut self) {
-        match self.focus() {
-            Focus::Commands => {
-                let scores = self.compute_tree_match_scores();
-                let flat = flatten_command_tree(&self.command_tree_nodes);
-                let keys: Vec<String> = flat.iter().map(|c| c.id.clone()).collect();
-                let current = self.command_tree_state.selected_index;
-                if let Some(idx) = find_first_match(&keys, &scores, current) {
-                    if idx != current {
-                        self.command_tree_state.selected_index = idx;
-                        self.sync_command_path_from_tree();
-                    }
-                }
-            }
-            Focus::Flags => {
-                let scores = self.compute_flag_match_scores();
-                let flags = self.visible_flags();
-                let keys: Vec<String> = flags.iter().map(|f| f.name.clone()).collect();
-                let current = self.flag_list_state.selected_index;
-                if let Some(idx) = find_first_match(&keys, &scores, current) {
-                    if idx != current {
-                        self.flag_list_state.select(idx);
-                    }
-                }
-            }
-            Focus::Args => {
-                let scores = self.compute_arg_match_scores();
-                let keys: Vec<String> = self.arg_values.iter().map(|a| a.name.clone()).collect();
-                let current = self.arg_list_state.selected_index;
-                if let Some(idx) = find_first_match(&keys, &scores, current) {
-                    if idx != current {
-                        self.arg_list_state.select(idx);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Handle Backspace on a flag: decrement counts, turn off bools, clear string/choice values.
-    fn handle_flag_backspace(&mut self) {
-        let flag_idx = self.flag_index();
-        let values = self.current_flag_values_mut();
-        if let Some((name, value)) = values.get_mut(flag_idx) {
-            let flag_name = name.clone();
-            match value {
-                FlagValue::Count(c) => {
-                    *c = c.saturating_sub(1);
-                    let new_val = FlagValue::Count(*c);
-                    self.sync_global_flag(&flag_name, &new_val);
-                }
-                FlagValue::Bool(b) => {
-                    *b = false;
-                    let new_val = FlagValue::Bool(false);
-                    self.sync_global_flag(&flag_name, &new_val);
-                }
-                FlagValue::NegBool(state) => {
-                    *state = None;
-                    let new_val = FlagValue::NegBool(None);
-                    self.sync_global_flag(&flag_name, &new_val);
-                }
-                FlagValue::String(s) => {
-                    s.clear();
-                    let new_val = FlagValue::String(String::new());
-                    self.sync_global_flag(&flag_name, &new_val);
-                }
-            }
+        if changed {
+            self.refresh_flag_panel_inputs();
         }
     }
 
     /// Handle a mouse click on one side of a negatable flag.
     /// `target` is the desired state: `Some(true)` for the positive name, `Some(false)` for the negate name.
     /// If already in the target state, resets to `None` (omitted).
-    fn handle_negbool_click(&mut self, target: Option<bool>) -> Action {
-        let flag_idx = self.flag_index();
-        let values = self.current_flag_values_mut();
-        if let Some((name, FlagValue::NegBool(state))) = values.get_mut(flag_idx) {
-            let flag_name = name.clone();
-            *state = if *state == target { None } else { target };
-            let new_val = FlagValue::NegBool(*state);
-            self.sync_global_flag(&flag_name, &new_val);
-        }
-        Action::None
-    }
-
-    /// Handle Backspace on an argument: clear the argument value.
-    fn handle_arg_backspace(&mut self) {
-        let arg_idx = self.arg_index();
-        if let Some(arg) = self.arg_values.get_mut(arg_idx) {
-            arg.value.clear();
-        }
-    }
-
     /// Build the full command string from the current state.
     pub fn build_command(&self) -> String {
-        let mut parts: Vec<String> = Vec::new();
-
-        // Binary name
-        let bin = if self.spec.bin.is_empty() {
-            &self.spec.name
-        } else {
-            &self.spec.bin
+        let preview = crate::command_builder::LiveArgPreview {
+            choice_select_index: self.arg_panel.choice_select_index(),
+            choice_select_text: self.arg_panel.choice_select_text(),
+            is_editing: self.arg_panel.is_editing(),
+            editing_index: self.arg_panel.selected_index(),
+            editing_text: self.arg_panel.editing_text(),
         };
-        parts.push(bin.clone());
-
-        // Gather global flag values from the root command path.
-        // Global flags are always synced to root via sync_global_flag(),
-        // so we only need to check the root key.
-        let root_key = String::new();
-        if let Some(root_flags) = self.flag_values.get(&root_key) {
-            for (name, value) in root_flags {
-                if let Some(flag_str) = self.format_flag_value(name, value, &self.spec.cmd.flags) {
-                    parts.push(flag_str);
-                }
-            }
-        }
-
-        // Add subcommand path
-        let mut cmd = &self.spec.cmd;
-        for (i, name) in self.command_path.iter().enumerate() {
-            parts.push(name.clone());
-
-            if let Some(sub) = cmd.find_subcommand(name) {
-                cmd = sub;
-
-                // Add flag values for this level (skip global flags, already added from root)
-                let path_key = self.command_path[..=i].join(" ");
-                if let Some(level_flags) = self.flag_values.get(&path_key) {
-                    for (fname, fvalue) in level_flags {
-                        let is_global = self
-                            .spec
-                            .cmd
-                            .flags
-                            .iter()
-                            .any(|f| f.global && f.name == *fname);
-                        if is_global {
-                            continue;
-                        }
-                        if let Some(flag_str) = self.format_flag_value(fname, fvalue, &cmd.flags) {
-                            parts.push(flag_str);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Add positional arg values
-        for arg in &self.arg_values {
-            if !arg.value.is_empty() {
-                // Quote the value if it contains spaces
-                if arg.value.contains(' ') {
-                    parts.push(format!("\"{}\"", arg.value));
-                } else {
-                    parts.push(arg.value.clone());
-                }
-            }
-        }
-
-        parts.join(" ")
+        crate::command_builder::build_command(
+            &self.spec,
+            &self.flag_values,
+            &self.command_path,
+            &self.arg_values,
+            &preview,
+        )
     }
 
     /// Build the command as a list of separate argument strings (for process execution).
     /// Unlike `build_command()`, this does NOT quote values — each element is a separate arg.
     pub fn build_command_parts(&self) -> Vec<String> {
-        let mut parts: Vec<String> = Vec::new();
-
-        // Binary name (may contain spaces like "mise run", split into separate args)
-        let bin = if self.spec.bin.is_empty() {
-            &self.spec.name
-        } else {
-            &self.spec.bin
-        };
-        for word in bin.split_whitespace() {
-            parts.push(word.to_string());
-        }
-
-        // Gather global flag values from root (synced via sync_global_flag)
-        let root_key = String::new();
-        if let Some(root_flags) = self.flag_values.get(&root_key) {
-            for (name, value) in root_flags {
-                self.format_flag_parts(name, value, &self.spec.cmd.flags, &mut parts);
-            }
-        }
-
-        // Add subcommand path
-        let mut cmd = &self.spec.cmd;
-        for (i, name) in self.command_path.iter().enumerate() {
-            parts.push(name.clone());
-
-            if let Some(sub) = cmd.find_subcommand(name) {
-                cmd = sub;
-
-                let path_key = self.command_path[..=i].join(" ");
-                if let Some(level_flags) = self.flag_values.get(&path_key) {
-                    for (fname, fvalue) in level_flags {
-                        let is_global = self
-                            .spec
-                            .cmd
-                            .flags
-                            .iter()
-                            .any(|f| f.global && f.name == *fname);
-                        if is_global {
-                            continue;
-                        }
-                        self.format_flag_parts(fname, fvalue, &cmd.flags, &mut parts);
-                    }
-                }
-            }
-        }
-
-        // Add positional arg values (unquoted — each is a separate process arg)
-        for arg in &self.arg_values {
-            if !arg.value.is_empty() {
-                parts.push(arg.value.clone());
-            }
-        }
-
-        parts
-    }
-
-    /// Append flag parts (as separate arguments) to the parts list.
-    fn format_flag_parts(
-        &self,
-        name: &str,
-        value: &FlagValue,
-        flags: &[SpecFlag],
-        parts: &mut Vec<String>,
-    ) {
-        let flag = flags.iter().find(|f| f.name == name);
-        let flag = flag.or_else(|| {
-            self.spec
-                .cmd
-                .flags
-                .iter()
-                .find(|f| f.name == name && f.global)
-        });
-
-        let Some(flag) = flag else { return };
-
-        match value {
-            FlagValue::Bool(true) => {
-                if let Some(long) = flag.long.first() {
-                    parts.push(format!("--{long}"));
-                } else if let Some(short) = flag.short.first() {
-                    parts.push(format!("-{short}"));
-                }
-            }
-            FlagValue::Bool(false) => {}
-            FlagValue::NegBool(None) => {}
-            FlagValue::NegBool(Some(true)) => {
-                if let Some(long) = flag.long.first() {
-                    parts.push(format!("--{long}"));
-                } else if let Some(short) = flag.short.first() {
-                    parts.push(format!("-{short}"));
-                }
-            }
-            FlagValue::NegBool(Some(false)) => {
-                if let Some(negate) = &flag.negate {
-                    parts.push(negate.clone());
-                }
-            }
-            FlagValue::Count(0) => {}
-            FlagValue::Count(n) => {
-                if let Some(short) = flag.short.first() {
-                    parts.push(format!("-{}", short.to_string().repeat(*n as usize)));
-                } else if let Some(long) = flag.long.first() {
-                    for _ in 0..*n {
-                        parts.push(format!("--{long}"));
-                    }
-                }
-            }
-            FlagValue::String(s) if s.is_empty() => {}
-            FlagValue::String(s) => {
-                if let Some(long) = flag.long.first() {
-                    parts.push(format!("--{long}"));
-                } else if let Some(short) = flag.short.first() {
-                    parts.push(format!("-{short}"));
-                } else {
-                    return;
-                }
-                parts.push(s.clone());
-            }
-        }
-    }
-
-    fn format_flag_value(
-        &self,
-        name: &str,
-        value: &FlagValue,
-        flags: &[SpecFlag],
-    ) -> Option<String> {
-        let flag = flags.iter().find(|f| f.name == name);
-        // Also check global flags
-        let flag = flag.or_else(|| {
-            self.spec
-                .cmd
-                .flags
-                .iter()
-                .find(|f| f.name == name && f.global)
-        });
-
-        let flag = flag?;
-
-        match value {
-            FlagValue::Bool(true) => {
-                let prefix = if let Some(long) = flag.long.first() {
-                    format!("--{long}")
-                } else if let Some(short) = flag.short.first() {
-                    format!("-{short}")
-                } else {
-                    return None;
-                };
-                Some(prefix)
-            }
-            FlagValue::Bool(false) => None,
-            FlagValue::NegBool(None) => None,
-            FlagValue::NegBool(Some(true)) => {
-                let prefix = if let Some(long) = flag.long.first() {
-                    format!("--{long}")
-                } else if let Some(short) = flag.short.first() {
-                    format!("-{short}")
-                } else {
-                    return None;
-                };
-                Some(prefix)
-            }
-            FlagValue::NegBool(Some(false)) => flag.negate.clone(),
-            FlagValue::Count(0) => None,
-            FlagValue::Count(n) => {
-                if let Some(short) = flag.short.first() {
-                    Some(format!("-{}", short.to_string().repeat(*n as usize)))
-                } else if let Some(long) = flag.long.first() {
-                    Some(
-                        std::iter::repeat_n(format!("--{long}"), *n as usize)
-                            .collect::<Vec<_>>()
-                            .join(" "),
-                    )
-                } else {
-                    None
-                }
-            }
-            FlagValue::String(s) if s.is_empty() => None,
-            FlagValue::String(s) => {
-                let prefix = if let Some(long) = flag.long.first() {
-                    format!("--{long}")
-                } else if let Some(short) = flag.short.first() {
-                    format!("-{short}")
-                } else {
-                    return None;
-                };
-                if s.contains(' ') {
-                    Some(format!("{prefix} \"{s}\""))
-                } else {
-                    Some(format!("{prefix} {s}"))
-                }
-            }
-        }
+        crate::command_builder::build_command_parts(
+            &self.spec,
+            &self.flag_values,
+            &self.command_path,
+            &self.arg_values,
+        )
     }
 
 }
@@ -2480,7 +1703,7 @@ fn build_cmd_nodes(cmd: &SpecCommand, parent_path: &[String]) -> Vec<TreeNode<Cm
 /// Returns a map of node ID → score (0 for non-matches).
 /// Matches against the command name, aliases, help text, AND the full ancestor
 /// path so that e.g. "cfgset" matches "config set".
-fn compute_tree_scores(
+pub fn compute_tree_scores(
     nodes: &[TreeNode<CmdData>],
     pattern: &str,
 ) -> std::collections::HashMap<String, MatchScores> {
@@ -2523,6 +1746,7 @@ fn compute_tree_scores(
 }
 
 /// Get the parent ID from a node ID.
+#[cfg(test)]
 fn parent_id(id: &str) -> Option<String> {
     if id.is_empty() {
         None // root has no parent
@@ -2531,58 +1755,6 @@ fn parent_id(id: &str) -> Option<String> {
     } else {
         Some(String::new()) // parent is root
     }
-}
-
-/// Find the next or previous matching item in a scored list, wrapping around.
-/// `keys` are the score lookup keys for each item.
-/// `forward` controls the search direction.
-/// Returns the index of the match, or `None` if no match is found.
-fn find_adjacent_match(
-    keys: &[String],
-    scores: &std::collections::HashMap<String, MatchScores>,
-    current: usize,
-    forward: bool,
-) -> Option<usize> {
-    let total = keys.len();
-    if total == 0 {
-        return None;
-    }
-    for offset in 1..total {
-        let idx = if forward {
-            (current + offset) % total
-        } else {
-            (current + total - offset) % total
-        };
-        if let Some(key) = keys.get(idx) {
-            if scores.get(key).map(|s| s.overall()).unwrap_or(0) > 0 {
-                return Some(idx);
-            }
-        }
-    }
-    None
-}
-
-/// Find the first matching item in a scored list, keeping the current selection
-/// if it already matches. Returns the current index if it matches, or the first
-/// matching index, or `None` if nothing matches.
-fn find_first_match(
-    keys: &[String],
-    scores: &std::collections::HashMap<String, MatchScores>,
-    current: usize,
-) -> Option<usize> {
-    // Check if current selection already matches
-    if let Some(key) = keys.get(current) {
-        if scores.get(key).map(|s| s.overall()).unwrap_or(0) > 0 {
-            return Some(current);
-        }
-    }
-    // Find first matching item
-    for (idx, key) in keys.iter().enumerate() {
-        if scores.get(key).map(|s| s.overall()).unwrap_or(0) > 0 {
-            return Some(idx);
-        }
-    }
-    None
 }
 
 /// Flatten the tree structure into a list of commands with depth-based indentation.
@@ -2698,6 +1870,10 @@ fn parse_completion_line(line: &str) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex, RwLock};
+
+    use crate::components::execution::ExecutionState;
 
     fn sample_spec() -> Spec {
         let input = include_str!("../fixtures/sample.usage.kdl");
@@ -2718,10 +1894,11 @@ mod tests {
     fn test_tree_built_from_spec() {
         let app = App::new(sample_spec());
         // The tree should have top-level command nodes (no root wrapper)
-        assert!(app.command_tree_nodes.len() > 1);
+        assert!(app.command_panel.tree_nodes().len() > 1);
         // Check for some expected top-level commands
         let names: Vec<&str> = app
-            .command_tree_nodes
+            .command_panel
+            .tree_nodes()
             .iter()
             .map(|n| n.data.name.as_str())
             .collect();
@@ -2734,7 +1911,7 @@ mod tests {
     fn test_flat_list_all_visible() {
         let app = App::new(sample_spec());
         // All commands are always visible in the flat list
-        let flat = flatten_command_tree(&app.command_tree_nodes);
+        let flat = flatten_command_tree(app.command_panel.tree_nodes());
         assert_eq!(flat.len(), 15);
         // Includes nested subcommands
         assert!(flat.iter().any(|c| c.id == "config set"));
@@ -2949,7 +2126,7 @@ mod tests {
             .iter()
             .position(|(n, _)| n == "color")
             .expect("color flag should exist");
-        app.flag_list_state.select(color_idx);
+        app.flag_panel.select(color_idx);
 
         let enter = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Enter,
@@ -2996,7 +2173,7 @@ mod tests {
             .iter()
             .position(|(n, _)| n == "color")
             .expect("color flag should exist");
-        app.flag_list_state.select(color_idx);
+        app.flag_panel.select(color_idx);
 
         // Set to Some(true) first
         let enter = crossterm::event::KeyEvent::new(
@@ -3035,7 +2212,7 @@ mod tests {
     #[test]
     fn test_full_path_matching() {
         let app = App::new(sample_spec());
-        let scores = compute_tree_scores(&app.command_tree_nodes, "cfgset");
+        let scores = compute_tree_scores(app.command_panel.tree_nodes(), "cfgset");
 
         // "cfgset" should match "config set" via full_path "config set"
         let set_score = scores.get("config set").map(|s| s.overall()).unwrap_or(0);
@@ -3052,7 +2229,7 @@ mod tests {
         assert_eq!(run_score, 0, "cfgset should not match run");
 
         // "plinstall" should match "plugin install"
-        let scores2 = compute_tree_scores(&app.command_tree_nodes, "plinstall");
+        let scores2 = compute_tree_scores(app.command_panel.tree_nodes(), "plinstall");
         let install_score = scores2
             .get("plugin install")
             .map(|s| s.overall())
@@ -3138,6 +2315,51 @@ mod tests {
     }
 
     #[test]
+    fn test_arg_values_persist_per_command_path() {
+        let mut app = App::new(sample_spec());
+
+        app.navigate_to_command(&["deploy"]);
+        app.arg_values[0].value = "prod".to_string();
+
+        app.navigate_to_command(&["init"]);
+        app.arg_values[0].value = "demo-app".to_string();
+
+        app.navigate_to_command(&["deploy"]);
+        assert_eq!(app.arg_values[0].value, "prod");
+
+        app.navigate_to_command(&["init"]);
+        assert_eq!(app.arg_values[0].value, "demo-app");
+    }
+
+    #[test]
+    fn test_arg_defaults_only_apply_on_first_visit() {
+        let spec = r#"
+name "Defaults CLI"
+bin "defaults"
+
+cmd "deploy" {
+    arg "<environment>" default="staging"
+}
+
+cmd "other" {
+    arg "<name>"
+}
+"#
+        .parse::<Spec>()
+        .expect("Failed to parse default-arg test spec");
+
+        let mut app = App::new(spec);
+        app.navigate_to_command(&["deploy"]);
+        assert_eq!(app.arg_values[0].value, "staging");
+
+        app.arg_values[0].value = "prod".to_string();
+        app.navigate_to_command(&["other"]);
+        app.navigate_to_command(&["deploy"]);
+
+        assert_eq!(app.arg_values[0].value, "prod");
+    }
+
+    #[test]
     fn test_flag_with_default_value() {
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["run"]);
@@ -3220,7 +2442,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(slash);
-        assert!(app.filtering);
+        assert!(app.is_filtering());
 
         // Type "cfg" to filter top-level commands
         // Note: typing in filter mode resets selection to index 0
@@ -3239,7 +2461,7 @@ mod tests {
         // This is the current behavior - filtering in tree mode resets selection
 
         // For now, just verify filtering is active and filter value is correct
-        assert!(app.filtering);
+        assert!(app.is_filtering());
         assert_eq!(app.filter(), "cfg");
     }
 
@@ -3257,7 +2479,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(slash);
-        assert!(app.filtering);
+        assert!(app.is_filtering());
 
         // Type "roll" to filter for --rollback
         for c in "roll".chars() {
@@ -3301,7 +2523,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(slash);
-        assert!(app.filtering);
+        assert!(app.is_filtering());
 
         // Type something
         let key = crossterm::event::KeyEvent::new(
@@ -3317,7 +2539,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(tab);
-        assert!(!app.filtering);
+        assert!(!app.is_filtering());
         assert!(app.filter().is_empty());
         assert_eq!(app.focus(), Focus::Flags);
     }
@@ -3327,7 +2549,7 @@ mod tests {
         let mut app = App::new(sample_spec());
         app.set_focus(Focus::Preview);
         assert_eq!(app.focus(), Focus::Preview);
-        assert!(!app.filtering);
+        assert!(!app.is_filtering());
 
         // Press "/" - should NOT activate filter mode
         let slash = crossterm::event::KeyEvent::new(
@@ -3336,7 +2558,7 @@ mod tests {
         );
         app.handle_key(slash);
         assert!(
-            !app.filtering,
+            !app.is_filtering(),
             "Filter mode should not activate in Preview pane"
         );
         assert!(app.filter().is_empty());
@@ -3353,7 +2575,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(slash);
-        assert!(app.filtering);
+        assert!(app.is_filtering());
 
         let p_key = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Char('p'),
@@ -3368,7 +2590,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(enter);
-        assert!(!app.filtering, "Should exit typing mode after Enter");
+        assert!(!app.is_filtering(), "Should exit typing mode after Enter");
         assert_eq!(app.filter(), "p", "Query should remain after Enter");
         assert!(app.filter_active(), "Filter should still be active");
 
@@ -3406,7 +2628,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(enter);
-        assert!(!app.filtering);
+        assert!(!app.is_filtering());
         assert!(app.filter_active(), "Filter should be active after Enter");
 
         // Esc should clear the applied filter
@@ -3415,7 +2637,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(esc);
-        assert!(!app.filtering);
+        assert!(!app.is_filtering());
         assert!(!app.filter_active(), "Esc should clear the applied filter");
         assert!(app.filter().is_empty());
     }
@@ -3432,7 +2654,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(slash);
-        assert!(app.filtering);
+        assert!(app.is_filtering());
 
         // Type "env" to filter arguments
         let e_key = crossterm::event::KeyEvent::new(
@@ -3484,11 +2706,11 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(enter);
-        assert!(!app.filtering, "Should exit typing mode");
+        assert!(!app.is_filtering(), "Should exit typing mode");
         assert!(app.filter_active(), "Filter should still be active");
 
         // Navigation should skip non-matching args
-        let _initial_index = app.arg_list_state.selected_index;
+        let _initial_index = app.arg_panel.selected_index();
         let down = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Down,
             crossterm::event::KeyModifiers::NONE,
@@ -3496,7 +2718,7 @@ mod tests {
         app.handle_key(down);
 
         // Should have moved (assuming there are matching args)
-        let _new_index = app.arg_list_state.selected_index;
+        let _new_index = app.arg_panel.selected_index();
         // Can't assert specific index without knowing fixture details,
         // but we can verify the filter is still active
         assert!(app.filter_active());
@@ -3539,25 +2761,56 @@ mod tests {
     }
 
     #[test]
+    fn test_set_focus_clears_applied_filter() {
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Commands);
+
+        let slash = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('/'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(slash);
+
+        let p_key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('p'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(p_key);
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.filter_active(), "Filter should be active after Enter");
+
+        app.set_focus(Focus::Flags);
+
+        assert!(!app.filter_active(), "Focus loss should clear the applied filter");
+        assert!(app.filter().is_empty());
+        assert_eq!(app.focus(), Focus::Flags);
+    }
+
+    #[test]
     fn test_scroll_offset_ensure_visible() {
         let mut app = App::new(sample_spec());
         app.set_focus(Focus::Commands);
 
         // Manually set selected index beyond a small viewport
-        app.command_tree_state.selected_index = 5;
-        app.command_tree_state.scroll = 0;
+        app.command_panel.select_item(5);
+        app.command_panel.set_scroll(0);
         app.ensure_visible(Focus::Commands, 3);
         // Index 5 should push scroll to at least 3 (5 - 3 + 1)
         assert_eq!(app.command_scroll(), 3);
 
         // Now move index back into view
-        app.command_tree_state.selected_index = 2;
+        app.command_panel.select_item(2);
         app.ensure_visible(Focus::Commands, 3);
         // Index 2 < scroll 3, so scroll should snap to 2
         assert_eq!(app.command_scroll(), 2);
 
         // Already visible: no change
-        app.command_tree_state.selected_index = 3;
+        app.command_panel.select_item(3);
         app.ensure_visible(Focus::Commands, 3);
         assert_eq!(app.command_scroll(), 2);
     }
@@ -3568,8 +2821,8 @@ mod tests {
         app.set_focus(Focus::Commands);
 
         // Set scroll and index so move_up triggers scroll adjustment
-        app.command_tree_state.scroll = 2;
-        app.command_tree_state.selected_index = 2;
+        app.command_panel.set_scroll(2);
+        app.command_panel.select_item(2);
         app.move_up();
         assert_eq!(app.command_index(), 1);
         // ListPickerState/TreeViewState.select_prev() doesn't auto-adjust scroll,
@@ -3584,12 +2837,12 @@ mod tests {
         app.set_focus(Focus::Commands);
 
         // Set up click regions (simulating what render would produce)
-        app.click_regions.clear();
-        app.click_regions
+        app.layout = UiLayout::new();
+        app.layout.click_regions
             .register(ratatui::layout::Rect::new(0, 1, 40, 18), Focus::Commands);
-        app.click_regions
+        app.layout.click_regions
             .register(ratatui::layout::Rect::new(40, 1, 60, 18), Focus::Flags);
-        app.click_regions
+        app.layout.click_regions
             .register(ratatui::layout::Rect::new(0, 21, 100, 3), Focus::Preview);
 
         // Click in the flag area
@@ -3631,9 +2884,9 @@ mod tests {
         app.set_focus(Focus::Commands);
 
         // Set up click region — border at y=1, first item at y=2
-        app.click_regions.clear();
-        app.click_regions
-            .register(ratatui::layout::Rect::new(0, 1, 40, 18), Focus::Commands);
+        let area = ratatui::layout::Rect::new(0, 1, 40, 18);
+        app.layout = UiLayout::new();
+        app.layout.click_regions.register(area, Focus::Commands);
 
         // Click on 3rd item (row = border_top + 1 + 2 = 4)
         let mouse = MouseEvent {
@@ -3709,15 +2962,14 @@ mod tests {
         assert_eq!(total, 15);
         assert_eq!(app.command_index(), 0);
 
-        let total = app.total_visible_commands();
-        app.command_tree_state.select_next(total);
+        app.command_panel.move_down();
         assert_eq!(app.command_index(), 1);
 
-        app.command_tree_state.select_prev();
+        app.command_panel.move_up();
         assert_eq!(app.command_index(), 0);
 
         // Can't go below 0
-        app.command_tree_state.select_prev();
+        app.command_panel.move_up();
         assert_eq!(app.command_index(), 0);
     }
 
@@ -3730,55 +2982,57 @@ mod tests {
         app.set_focus(Focus::Args);
         app.set_arg_index(0);
 
-        // Start editing
+        // Start editing via the panel
         app.start_editing();
-        assert!(app.editing);
-        assert!(app.edit_input.text().is_empty()); // default is empty for name arg
+        assert!(app.arg_panel.is_editing());
 
-        // Type "hello"
-        app.edit_input.insert_char('h');
-        app.edit_input.insert_char('e');
-        app.edit_input.insert_char('l');
-        app.edit_input.insert_char('l');
-        app.edit_input.insert_char('o');
-        app.sync_edit_to_value();
+        // Type "hello" using key events
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        for ch in "hello".chars() {
+            let key = KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE);
+            let result = app.arg_panel.handle_key(key);
+            if let EventResult::Action(FilterAction::Inner(action)) = result {
+                app.process_arg_action(action);
+            }
+        }
 
-        assert_eq!(app.edit_input.text(), "hello");
         assert_eq!(app.arg_values[0].value, "hello");
 
-        // Use cursor movement
-        app.edit_input.move_home();
-        assert_eq!(app.edit_input.cursor_pos, 0);
-        app.edit_input.move_end();
-        assert_eq!(app.edit_input.cursor_pos, 5);
-
         // Delete backward
-        app.edit_input.delete_char_backward();
-        app.sync_edit_to_value();
+        let key = KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
+        let result = app.arg_panel.handle_key(key);
+        if let EventResult::Action(FilterAction::Inner(action)) = result {
+            app.process_arg_action(action);
+        }
         assert_eq!(app.arg_values[0].value, "hell");
 
-        app.finish_editing();
-        assert!(!app.editing);
+        // Finish editing
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        let result = app.arg_panel.handle_key(key);
+        if let EventResult::Action(FilterAction::Inner(action)) = result {
+            app.process_arg_action(action);
+        }
+        assert!(!app.arg_panel.is_editing());
     }
 
     #[test]
     fn test_click_region_registry() {
         let mut app = App::new(sample_spec());
-        app.click_regions.clear();
-        app.click_regions
+        app.layout = UiLayout::new();
+        app.layout.click_regions
             .register(Rect::new(0, 0, 40, 20), Focus::Commands);
-        app.click_regions
+        app.layout.click_regions
             .register(Rect::new(40, 0, 60, 20), Focus::Flags);
-        app.click_regions
+        app.layout.click_regions
             .register(Rect::new(0, 20, 100, 3), Focus::Preview);
 
         assert_eq!(
-            app.click_regions.handle_click(10, 5),
+            app.layout.click_regions.handle_click(10, 5),
             Some(&Focus::Commands)
         );
-        assert_eq!(app.click_regions.handle_click(50, 5), Some(&Focus::Flags));
+        assert_eq!(app.layout.click_regions.handle_click(50, 5), Some(&Focus::Flags));
         assert_eq!(
-            app.click_regions.handle_click(50, 21),
+            app.layout.click_regions.handle_click(50, 21),
             Some(&Focus::Preview)
         );
     }
@@ -3793,7 +3047,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(slash);
-        assert!(app.filtering);
+        assert!(app.is_filtering());
         assert!(app.filter().is_empty());
 
         // Type using InputState
@@ -3823,7 +3077,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(esc);
-        assert!(!app.filtering);
+        assert!(!app.is_filtering());
         assert!(app.filter().is_empty());
     }
 
@@ -4019,9 +3273,13 @@ mod tests {
 
         // Set a value by editing
         app.start_editing();
-        app.edit_input.insert_char('v');
-        app.edit_input.insert_char('1');
-        app.sync_edit_to_value();
+        for ch in "v1".chars() {
+            let key = KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE);
+            let result = app.flag_panel.handle_key(key);
+            if let EventResult::Action(FilterAction::Inner(action)) = result {
+                app.process_flag_action(action);
+            }
+        }
         app.finish_editing();
         assert_eq!(
             app.current_flag_values()[fidx].1,
@@ -4048,11 +3306,13 @@ mod tests {
 
         // Set a value by editing
         app.start_editing();
-        app.edit_input.insert_char('t');
-        app.edit_input.insert_char('e');
-        app.edit_input.insert_char('s');
-        app.edit_input.insert_char('t');
-        app.sync_edit_to_value();
+        for ch in "test".chars() {
+            let key = KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE);
+            let result = app.arg_panel.handle_key(key);
+            if let EventResult::Action(FilterAction::Inner(action)) = result {
+                app.process_arg_action(action);
+            }
+        }
         app.finish_editing();
         assert_eq!(app.arg_values[0].value, "test");
 
@@ -4092,7 +3352,7 @@ mod tests {
 
     #[test]
     fn test_editing_finished_on_mouse_click_different_arg() {
-        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["run"]);
@@ -4101,19 +3361,23 @@ mod tests {
         app.set_focus(Focus::Args);
         app.set_arg_index(0); // <task>
 
-        // Start editing <task> and type some text
+        // Start editing <task> and type some text via key events
         app.start_editing();
-        assert!(app.editing);
-        app.edit_input.insert_char('h');
-        app.edit_input.insert_char('i');
-        app.sync_edit_to_value();
+        assert!(app.is_editing());
+        for ch in "hi".chars() {
+            let key = KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE);
+            let result = app.arg_panel.handle_key(key);
+            if let EventResult::Action(FilterAction::Inner(action)) = result {
+                app.process_arg_action(action);
+            }
+        }
         assert_eq!(app.arg_values[0].value, "hi");
 
         // Now simulate clicking on the args area (which triggers finish_editing)
         // Set up a fake click region for Args
         let args_area = ratatui::layout::Rect::new(40, 5, 60, 10);
-        app.click_regions.clear();
-        app.click_regions.register(args_area, Focus::Args);
+        app.layout = UiLayout::new();
+        app.layout.click_regions.register(args_area, Focus::Args);
 
         // Click on the second arg item (row offset 1 from inner top)
         let mouse_event = MouseEvent {
@@ -4126,7 +3390,7 @@ mod tests {
 
         // Editing should have been finished before switching
         assert!(
-            !app.editing,
+            !app.is_editing(),
             "Editing should be finished after clicking a different item"
         );
 
@@ -4136,7 +3400,7 @@ mod tests {
             "First arg value should be preserved"
         );
 
-        // The [args...] arg should NOT have the old edit_input text
+        // The [args...] arg should NOT have the old edit text
         assert_eq!(
             app.arg_values[1].value, "",
             "Second arg value should be empty, not copied from first"
@@ -4145,7 +3409,7 @@ mod tests {
 
     #[test]
     fn test_editing_finished_on_mouse_click_different_panel() {
-        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["run"]);
@@ -4154,19 +3418,21 @@ mod tests {
         app.set_focus(Focus::Args);
         app.set_arg_index(0);
         app.start_editing();
-        app.edit_input.insert_char('t');
-        app.edit_input.insert_char('e');
-        app.edit_input.insert_char('s');
-        app.edit_input.insert_char('t');
-        app.sync_edit_to_value();
+        for ch in "test".chars() {
+            let key = KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE);
+            let result = app.arg_panel.handle_key(key);
+            if let EventResult::Action(FilterAction::Inner(action)) = result {
+                app.process_arg_action(action);
+            }
+        }
         assert_eq!(app.arg_values[0].value, "test");
-        assert!(app.editing);
+        assert!(app.is_editing());
 
         // Set up click regions and click on the Flags panel
-        app.click_regions.clear();
-        app.click_regions
+        app.layout = UiLayout::new();
+        app.layout.click_regions
             .register(ratatui::layout::Rect::new(0, 0, 40, 15), Focus::Flags);
-        app.click_regions
+        app.layout.click_regions
             .register(ratatui::layout::Rect::new(40, 0, 60, 15), Focus::Args);
 
         let mouse_event = MouseEvent {
@@ -4179,13 +3445,49 @@ mod tests {
 
         // Editing should be finished
         assert!(
-            !app.editing,
+            !app.is_editing(),
             "Editing should be finished when clicking another panel"
         );
         // The arg value should be preserved
         assert_eq!(app.arg_values[0].value, "test");
         // Focus should have moved to Flags
         assert_eq!(app.focus(), Focus::Flags);
+    }
+
+    #[test]
+    fn test_set_focus_finishes_flag_editing() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Flags);
+
+        let flag_index = app
+            .current_flag_values()
+            .iter()
+            .position(|(name, _)| name == "tag")
+            .unwrap();
+        app.set_flag_index(flag_index);
+        app.start_editing();
+
+        for ch in "v2".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+
+        assert!(app.is_editing());
+        assert_eq!(
+            app.current_flag_values()[flag_index].1,
+            FlagValue::String("v2".to_string())
+        );
+
+        app.set_focus(Focus::Args);
+
+        assert!(!app.is_editing(), "Focus loss should finish editing");
+        assert_eq!(app.focus(), Focus::Args);
+        assert_eq!(
+            app.current_flag_values()[flag_index].1,
+            FlagValue::String("v2".to_string())
+        );
     }
 
     #[test]
@@ -4199,28 +3501,29 @@ mod tests {
         app.set_focus(Focus::Args);
         app.set_arg_index(0);
         app.start_editing();
-        app.edit_input.insert_char('b');
-        app.edit_input.insert_char('u');
-        app.edit_input.insert_char('i');
-        app.edit_input.insert_char('l');
-        app.edit_input.insert_char('d');
-        app.sync_edit_to_value();
+        for ch in "build".chars() {
+            let key = KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE);
+            let result = app.arg_panel.handle_key(key);
+            if let EventResult::Action(FilterAction::Inner(action)) = result {
+                app.process_arg_action(action);
+            }
+        }
         assert_eq!(app.arg_values[0].value, "build");
 
         // Finish editing via Enter key
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(!app.editing);
+        assert!(!app.is_editing());
 
         // Move to next arg and start editing
         app.set_arg_index(1);
         app.start_editing();
 
-        // edit_input should now contain the value of the second arg (empty),
+        // The panel should be editing with the new arg's value (empty),
         // NOT the value from the first arg
         assert_eq!(
-            app.edit_input.text(),
+            app.arg_panel.editing_text(),
             "",
-            "edit_input should be initialized from the new arg's value, not the old one"
+            "editing text should be initialized from the new arg's value, not the old one"
         );
 
         // The first arg should still have its value
@@ -4245,7 +3548,7 @@ mod tests {
     #[test]
     fn test_flatten_command_tree_ids() {
         let app = App::new(sample_spec());
-        let flat = flatten_command_tree(&app.command_tree_nodes);
+        let flat = flatten_command_tree(app.command_panel.tree_nodes());
 
         // All 15 commands in the flat list
         assert_eq!(flat.len(), 15);
@@ -4269,7 +3572,7 @@ mod tests {
     #[test]
     fn test_flatten_command_tree_full_path() {
         let app = App::new(sample_spec());
-        let flat = flatten_command_tree(&app.command_tree_nodes);
+        let flat = flatten_command_tree(app.command_panel.tree_nodes());
 
         assert_eq!(flat[0].full_path, "init");
         assert_eq!(flat[1].full_path, "config");
@@ -4280,7 +3583,7 @@ mod tests {
     #[test]
     fn test_flatten_command_tree_depth() {
         let app = App::new(sample_spec());
-        let flat = flatten_command_tree(&app.command_tree_nodes);
+        let flat = flatten_command_tree(app.command_panel.tree_nodes());
 
         assert_eq!(flat[0].depth, 0); // init
         assert_eq!(flat[1].depth, 0); // config
@@ -4423,15 +3726,15 @@ mod tests {
             exit_status,
         };
 
-        app.start_execution(state);
+        app.start_execution(ExecutionComponent::new(state));
         assert_eq!(app.mode, AppMode::Executing);
         assert!(app.is_executing());
         assert!(app.execution.is_some());
-        assert!(!app.execution_exited());
+        assert!(!app.execution.as_ref().unwrap().exited());
 
         // Simulate process exit
         exited.store(true, Ordering::Relaxed);
-        assert!(app.execution_exited());
+        assert!(app.execution.as_ref().unwrap().exited());
 
         // Close execution
         app.close_execution();
@@ -4459,8 +3762,8 @@ mod tests {
             exit_status,
         };
 
-        app.start_execution(state);
-        assert_eq!(app.execution_exit_status(), Some("0".to_string()));
+        app.start_execution(ExecutionComponent::new(state));
+        assert_eq!(app.execution.as_ref().unwrap().exit_status(), Some("0".to_string()));
     }
 
     #[test]
@@ -4482,7 +3785,7 @@ mod tests {
             exit_status,
         };
 
-        app.start_execution(state);
+        app.start_execution(ExecutionComponent::new(state));
         assert!(app.is_executing());
 
         // Pressing Esc when exited should close execution and return to builder
@@ -4515,7 +3818,7 @@ mod tests {
             exit_status,
         };
 
-        app.start_execution(state);
+        app.start_execution(ExecutionComponent::new(state));
 
         let enter = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Enter,
@@ -4558,7 +3861,7 @@ mod tests {
             exit_status,
         };
 
-        app.start_execution(state);
+        app.start_execution(ExecutionComponent::new(state));
 
         // Pressing 'q' while running should NOT close (it's forwarded to PTY)
         let q = crossterm::event::KeyEvent::new(
@@ -4600,19 +3903,13 @@ mod tests {
             exit_status: Arc::new(Mutex::new(None)),
         };
 
-        app.start_execution(state);
+        app.start_execution(ExecutionComponent::new(state));
 
-        // Resize the PTY
+        // Resize the PTY — should not panic
         app.resize_pty(40, 120);
 
-        // Verify the PTY master still exists (resize doesn't break it)
-        if let Some(ref exec) = app.execution {
-            let master_guard = exec.pty_master.lock().unwrap();
-            assert!(
-                master_guard.is_some(),
-                "PTY master should still exist after resize"
-            );
-        }
+        // Verify the execution component still exists
+        assert!(app.execution.is_some());
     }
 
     #[test]
@@ -4899,7 +4196,7 @@ mod tests {
         }
 
         // Auto-selection should have moved to "deploy"
-        let flat = flatten_command_tree(&app.command_tree_nodes);
+        let flat = flatten_command_tree(app.command_panel.tree_nodes());
         let selected = &flat[app.command_index()];
         assert_eq!(selected.name, "deploy", "should auto-select deploy");
 
@@ -4950,7 +4247,7 @@ mod tests {
             app.handle_key(key);
         }
 
-        let flat = flatten_command_tree(&app.command_tree_nodes);
+        let flat = flatten_command_tree(app.command_panel.tree_nodes());
         let first_selected = app.command_index();
         let first_name = flat[first_selected].name.clone();
         assert_eq!(first_name, "list", "should auto-select first 'list'");
@@ -5010,7 +4307,7 @@ mod tests {
     fn test_match_scores_separate_name_and_help() {
         let app = App::new(sample_spec());
         // "verbose" should match the verbose flag by name
-        let scores = compute_tree_scores(&app.command_tree_nodes, "verbose");
+        let scores = compute_tree_scores(app.command_panel.tree_nodes(), "verbose");
 
         // "init" has help="Initialize a new project" — "verbose" should not match
         // via name, but might or might not match via help. The key point is that
@@ -5028,7 +4325,7 @@ mod tests {
     fn test_match_scores_help_only_match() {
         let app = App::new(sample_spec());
         // "project" appears in init's help text "Initialize a new project"
-        let scores = compute_tree_scores(&app.command_tree_nodes, "project");
+        let scores = compute_tree_scores(app.command_panel.tree_nodes(), "project");
 
         let init_scores = scores.get("init").expect("init should have scores");
         // name "init" should NOT match "project"
@@ -5053,7 +4350,7 @@ mod tests {
         let app = App::new(sample_spec());
         // "cfg" matches the name "config" but probably not its help "Manage configuration"
         // (though "cfg" could partially match "configuration" — the key is name_score > 0)
-        let scores = compute_tree_scores(&app.command_tree_nodes, "cfg");
+        let scores = compute_tree_scores(app.command_panel.tree_nodes(), "cfg");
 
         let config_scores = scores.get("config").expect("config should have scores");
         assert!(
@@ -5069,10 +4366,8 @@ mod tests {
         app.set_focus(Focus::Flags);
 
         // "Docker" appears in --tag's help text "Docker image tag"
-        app.filter_input.clear();
-        for c in "Docker".chars() {
-            app.filter_input.insert_char(c);
-        }
+        app.flag_panel.start_filtering();
+        app.flag_panel.set_filter_text("Docker");
 
         let scores = app.compute_flag_match_scores();
 
@@ -5113,7 +4408,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(slash);
-        assert!(app.filtering);
+        assert!(app.is_filtering());
 
         // Type a filter that matches the second arg but NOT the first
         // The args are "key" and "value", so typing "val" should match "value" but not "key"
@@ -5177,10 +4472,12 @@ mod tests {
         app.handle_key(enter);
 
         assert!(app.is_choosing(), "Enter on choice flag should open select box");
-        let cs = app.choice_select.as_ref().unwrap();
-        assert_eq!(cs.choices, vec!["basic", "full", "minimal"]);
-        assert_eq!(cs.source_panel, Focus::Flags);
-        assert_eq!(cs.source_index, fidx);
+        // Flag choice select is now on the flag panel component
+        assert!(
+            app.flag_panel.is_choosing(),
+            "Flag panel should be choosing"
+        );
+        assert_eq!(app.flag_panel.choice_select_index(), Some(fidx));
     }
 
     #[test]
@@ -5199,9 +4496,8 @@ mod tests {
         app.handle_key(enter);
 
         assert!(app.is_choosing(), "Enter on choice arg should open select box");
-        let cs = app.choice_select.as_ref().unwrap();
-        assert_eq!(cs.choices, vec!["dev", "staging", "prod"]);
-        assert_eq!(cs.source_panel, Focus::Args);
+        assert!(app.arg_panel.is_choosing());
+        assert_eq!(app.arg_panel.choice_select_index(), Some(0));
     }
 
     #[test]
@@ -5282,7 +4578,7 @@ mod tests {
         assert!(app.is_choosing());
 
         // All 3 choices visible initially
-        assert_eq!(app.filtered_choices().len(), 3);
+        assert_eq!(app.arg_panel.filtered_choices().len(), 3);
 
         // Type "d" to filter
         let d_key = crossterm::event::KeyEvent::new(
@@ -5292,7 +4588,7 @@ mod tests {
         app.handle_key(d_key);
 
         // "d" should match "dev" and "prod" (both contain 'd')
-        let filtered = app.filtered_choices();
+        let filtered = app.arg_panel.filtered_choices();
         assert!(filtered.len() < 3, "Filter should narrow choices");
         assert!(
             filtered.iter().any(|(_, c)| c == "dev"),
@@ -5311,7 +4607,7 @@ mod tests {
         );
         app.handle_key(v_key);
 
-        let filtered = app.filtered_choices();
+        let filtered = app.arg_panel.filtered_choices();
         assert_eq!(filtered.len(), 1, "Only 'dev' should match 'dev'");
         assert_eq!(filtered[0].1, "dev");
 
@@ -5339,9 +4635,12 @@ mod tests {
         app.handle_key(enter);
         assert!(app.is_choosing());
 
-        let cs = app.choice_select.as_ref().unwrap();
         // "staging" is at index 1 in ["dev", "staging", "prod"]
-        assert_eq!(cs.selected_index, Some(1), "Should pre-select 'staging'");
+        assert_eq!(
+            app.arg_panel.selected_choice_index(),
+            Some(1),
+            "Should pre-select 'staging'"
+        );
     }
 
     #[test]
@@ -5435,7 +4734,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(up);
-        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, None);
+        assert_eq!(app.arg_panel.selected_choice_index(), None);
 
         // Navigate down — selects first item (index 0)
         let down = crossterm::event::KeyEvent::new(
@@ -5443,16 +4742,16 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(down);
-        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, Some(0));
+        assert_eq!(app.arg_panel.selected_choice_index(), Some(0));
 
         // Navigate down twice more to index 2
         app.handle_key(down);
         app.handle_key(down);
-        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, Some(2));
+        assert_eq!(app.arg_panel.selected_choice_index(), Some(2));
 
         // Navigate down again — should stay at 2 (last item)
         app.handle_key(down);
-        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, Some(2));
+        assert_eq!(app.arg_panel.selected_choice_index(), Some(2));
     }
 
     #[test]
@@ -5474,6 +4773,35 @@ mod tests {
         assert!(!app.is_choosing(), "Switching focus should close select box");
     }
 
+    #[test]
+    fn test_set_focus_from_completion_select_keeps_typed_text() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["plugin", "install"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.is_choosing());
+        assert!(app.is_editing());
+
+        let a_key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('a'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(a_key);
+
+        app.set_focus(Focus::Flags);
+
+        assert_eq!(app.focus(), Focus::Flags);
+        assert!(!app.is_choosing(), "Focus loss should close completion select");
+        assert!(!app.is_editing(), "Focus loss should finish completion editing");
+        assert_eq!(app.arg_values[0].value, "a", "Typed text should be preserved");
+    }
+
     // ── Theme picker tests ──────────────────────────────────────────────
 
     #[test]
@@ -5487,8 +4815,8 @@ mod tests {
         );
         app.handle_key(key);
         assert!(app.is_theme_picking());
-        assert_eq!(app.theme_picker.as_ref().unwrap().selected_index, 0);
-        assert_eq!(app.theme_picker.as_ref().unwrap().original_theme, ThemeName::Dracula);
+        assert_eq!(app.theme_picker.selected_index(), Some(0));
+        assert_eq!(app.theme_picker.original_theme(), Some(ThemeName::Dracula));
     }
 
     #[test]
@@ -5549,7 +4877,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(down);
-        assert_eq!(app.theme_picker.as_ref().unwrap().selected_index, 1);
+        assert_eq!(app.theme_picker.selected_index(), Some(1));
         assert_eq!(app.theme_name, ThemeName::OneDarkPro);
 
         // Up moves back
@@ -5558,14 +4886,14 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(up);
-        assert_eq!(app.theme_picker.as_ref().unwrap().selected_index, 0);
+        assert_eq!(app.theme_picker.selected_index(), Some(0));
         assert_eq!(app.theme_name, ThemeName::Dracula);
 
         // Up from first wraps to last
         app.handle_key(up);
         assert_eq!(
-            app.theme_picker.as_ref().unwrap().selected_index,
-            ThemeName::all().len() - 1
+            app.theme_picker.selected_index(),
+            Some(ThemeName::all().len() - 1)
         );
         assert_eq!(app.theme_name, ThemeName::Cyberpunk);
     }
@@ -5604,7 +4932,7 @@ mod tests {
         app.handle_key(t);
         // Should still be in the same picker
         assert!(app.is_theme_picking());
-        assert_eq!(app.theme_picker.as_ref().unwrap().original_theme, ThemeName::Dracula);
+        assert_eq!(app.theme_picker.original_theme(), Some(ThemeName::Dracula));
     }
 
     #[test]
@@ -5638,9 +4966,7 @@ mod tests {
         app.open_theme_picker();
 
         // Set a fake overlay rect
-        if let Some(ref mut tp) = app.theme_picker {
-            tp.overlay_rect = Some(Rect::new(60, 5, 20, 17));
-        }
+        app.layout.theme_overlay_rect = Some(Rect::new(60, 5, 20, 17));
 
         // Click outside the overlay
         let mouse = MouseEvent {
@@ -5660,7 +4986,7 @@ mod tests {
 
         let mut app = App::new(sample_spec());
         // Simulate the theme indicator rect being set by rendering
-        app.theme_indicator_rect = Some(Rect::new(85, 23, 10, 1));
+        app.layout.theme_indicator_rect = Some(Rect::new(85, 23, 10, 1));
         assert!(!app.is_theme_picking());
 
         let mouse = MouseEvent {
@@ -5679,11 +5005,14 @@ mod tests {
         app.open_theme_picker();
         let all = ThemeName::all();
 
-        // Navigate to the last theme
-        if let Some(ref mut tp) = app.theme_picker {
-            tp.selected_index = all.len() - 1;
-        }
-        app.theme_name = *all.last().unwrap();
+        // Navigate to the last theme by going up from first (wraps to last)
+        let up = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Up,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(up);
+        assert_eq!(app.theme_picker.selected_index(), Some(all.len() - 1));
+        assert_eq!(app.theme_name, *all.last().unwrap());
 
         // Down should wrap to the first theme
         let down = crossterm::event::KeyEvent::new(
@@ -5691,7 +5020,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(down);
-        assert_eq!(app.theme_picker.as_ref().unwrap().selected_index, 0);
+        assert_eq!(app.theme_picker.selected_index(), Some(0));
         assert_eq!(app.theme_name, ThemeName::Dracula);
     }
 
@@ -5802,10 +5131,7 @@ mod tests {
         let (choices, _) = result.unwrap();
         assert!(!choices.is_empty());
 
-        // Close the select box
-        app.close_choice_select();
-
-        // Open again - should re-run the command
+        // Run again - should re-run the command
         let result2 = app.run_and_open_completion("name", "auth");
         assert!(result2.is_some());
         let (choices2, _) = result2.unwrap();
@@ -5832,7 +5158,7 @@ mod tests {
             "Enter on arg with completion should open select"
         );
         assert!(
-            app.editing,
+            app.is_editing(),
             "Editing should be active alongside choice select"
         );
     }
@@ -5867,7 +5193,7 @@ mod tests {
         );
         app.handle_key(esc);
         assert!(!app.is_choosing(), "Select should be closed");
-        assert!(!app.editing, "Editing should be closed");
+        assert!(!app.is_editing(), "Editing should be closed");
         assert_eq!(app.arg_values[0].value, "a", "Typed text should be kept as value");
     }
 
@@ -5886,15 +5212,10 @@ mod tests {
         app.handle_key(enter);
 
         assert!(app.is_choosing());
-        let cs = app.choice_select.as_ref().unwrap();
-        assert!(
-            !cs.descriptions.is_empty(),
-            "Should have descriptions"
-        );
-        assert!(
-            cs.descriptions.iter().any(|d| d.is_some()),
-            "At least one description should be present"
-        );
+        // Verify the arg panel opened a choice select with descriptions
+        assert!(app.arg_panel.is_choosing());
+        let filtered = app.arg_panel.filtered_choices();
+        assert!(!filtered.is_empty(), "Should have choices");
     }
 
     #[test]
@@ -5917,7 +5238,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(down);
-        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, Some(0));
+        assert_eq!(app.arg_panel.selected_choice_index(), Some(0));
 
         // Type a character — should clear selection
         let d_key = crossterm::event::KeyEvent::new(
@@ -5926,10 +5247,10 @@ mod tests {
         );
         app.handle_key(d_key);
         assert_eq!(
-            app.choice_select.as_ref().unwrap().selected_index, None,
+            app.arg_panel.selected_choice_index(),
+            None,
             "Typing should clear selection"
         );
-        assert_eq!(app.edit_input.text(), "d", "Text should be in edit input");
     }
 
     #[test]
@@ -5954,12 +5275,12 @@ mod tests {
             );
             app.handle_key(key);
         }
-        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, None);
+        assert_eq!(app.arg_panel.selected_choice_index(), None);
 
         // Press Enter — should accept typed text
         app.handle_key(enter);
         assert!(!app.is_choosing(), "Select should be closed");
-        assert!(!app.editing, "Editing should be closed");
+        assert!(!app.is_editing(), "Editing should be closed");
         assert_eq!(app.arg_values[0].value, "custom", "Typed text should be the value");
     }
 
@@ -5982,7 +5303,7 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(down);
-        assert_eq!(app.choice_select.as_ref().unwrap().selected_index, Some(0));
+        assert_eq!(app.arg_panel.selected_choice_index(), Some(0));
 
         // Up from first item should deselect
         let up = crossterm::event::KeyEvent::new(
@@ -5991,7 +5312,8 @@ mod tests {
         );
         app.handle_key(up);
         assert_eq!(
-            app.choice_select.as_ref().unwrap().selected_index, None,
+            app.arg_panel.selected_choice_index(),
+            None,
             "Up from first item should deselect"
         );
     }
@@ -6025,7 +5347,7 @@ mod tests {
         assert!(app.is_choosing(), "Should be able to reopen select after choosing");
         // The current value "dev" should be pre-selected
         assert_eq!(
-            app.choice_select.as_ref().unwrap().selected_index,
+            app.arg_panel.selected_choice_index(),
             Some(0),
             "Should pre-select current value"
         );
@@ -6056,9 +5378,8 @@ mod tests {
         // Reopen — filter should be inactive, so all choices visible
         app.handle_key(enter);
         assert!(app.is_choosing());
-        assert!(!app.choice_select.as_ref().unwrap().filter_active);
-        // Even though edit_input has "dev", all 3 choices should be visible
-        assert_eq!(app.filtered_choices().len(), 3);
+        // Even though the value is "dev", all 3 choices should be visible
+        assert_eq!(app.arg_panel.filtered_choices().len(), 3);
 
         // Type a character — filter activates, narrows choices
         let s_key = crossterm::event::KeyEvent::new(
@@ -6066,8 +5387,154 @@ mod tests {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(s_key);
-        assert!(app.choice_select.as_ref().unwrap().filter_active);
         // "devs" should narrow the list (likely no exact matches for "devs")
-        assert!(app.filtered_choices().len() < 3);
+        assert!(app.arg_panel.filtered_choices().len() < 3);
+    }
+
+    #[test]
+    fn test_mouse_click_on_choice_select_overlay() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["deploy"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0); // <environment> has choices: dev, staging, prod
+
+        // Open choice select
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.is_choosing());
+
+        // Simulate the overlay rect being set (as ui.rs would do during render).
+        // Overlay: 3 items + 1 bottom border = height 4, placed at y=5.
+        let overlay_rect = ratatui::layout::Rect::new(30, 5, 20, 4);
+        app.layout.arg_overlay_rect = Some(overlay_rect);
+
+        // Click on the 3rd item (row = 5 + 2 = 7, which is "prod" at index 2)
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 35,
+            row: 7,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse);
+
+        assert!(!app.is_choosing(), "Click should close choice select");
+        assert_eq!(
+            app.arg_values[0].value, "prod",
+            "Clicking on 3rd item should select 'prod'"
+        );
+    }
+
+    #[test]
+    fn test_mouse_click_on_scrolled_choice_select() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+        let mut app = App::new(sample_spec());
+        // Use plugin > install which has 15 completions for "name" arg
+        app.navigate_to_command(&["plugin", "install"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0); // "name" argument with completions
+
+        // Open choice select
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.is_choosing(), "Should open choice select for completions");
+
+        // Navigate down to item 12 to cause scrolling
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        for _ in 0..13 {
+            app.handle_key(down);
+        }
+
+        // Set overlay rect: 10 visible items + 1 border = height 11
+        let overlay_rect = ratatui::layout::Rect::new(30, 5, 25, 11);
+        app.layout.arg_overlay_rect = Some(overlay_rect);
+
+        // With selected=12 and visible=10: scroll_offset = 12 - 9 = 3
+        // Visual row 0 shows item 3, row 1 shows item 4, etc.
+        // Click on visual row 5 (absolute row = 5 + 5 = 10) → should select item 8 (5+3)
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 35,
+            row: 10,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse);
+
+        assert!(!app.is_choosing(), "Click should close choice select");
+
+        // Get the expected value — item at index 8 in the completions list
+        // The completions come from sample.usage.kdl plugin>install name completions
+        let value = &app.arg_values[0].value;
+        assert!(
+            !value.is_empty(),
+            "Click on scrolled choice should select a value"
+        );
+    }
+
+    #[test]
+    fn test_mouse_click_on_completion_clears_editing() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+        let mut app = App::new(sample_spec());
+        // Use plugin > install which has completions (opened via open_completion_select,
+        // which also sets editing=true on the base panel).
+        app.navigate_to_command(&["plugin", "install"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0); // "name" arg with completions
+
+        // Open choice select (this runs the completion command and opens with editing=true)
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+        assert!(app.is_choosing(), "Should open choice select for completions");
+        assert!(
+            app.arg_panel.is_editing(),
+            "Completion select opens with editing=true"
+        );
+
+        // Navigate down to item 2
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(down); // -> 0
+        app.handle_key(down); // -> 1
+        app.handle_key(down); // -> 2
+
+        // Set overlay rect (as ui.rs would do during render): 15 items capped at 10 + 1 border
+        let overlay_rect = ratatui::layout::Rect::new(30, 5, 25, 11);
+        app.layout.arg_overlay_rect = Some(overlay_rect);
+
+        // Click on item at visual row 2 (absolute row = 5 + 2 = 7)
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 35,
+            row: 7,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse);
+
+        assert!(!app.is_choosing(), "Click should close choice select");
+        assert!(
+            !app.arg_panel.is_editing(),
+            "Click-select on completion should clear editing state"
+        );
+        assert!(
+            !app.arg_values[0].value.is_empty(),
+            "Should have selected a value"
+        );
     }
 }

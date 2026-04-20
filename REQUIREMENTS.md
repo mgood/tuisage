@@ -69,6 +69,7 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - **Filtered navigation** — when a filter is active, `↑`/`↓` skip non-matching items and move directly to the previous/next matching item, making it fast to cycle through matches.
 - **Auto-select matching items** — if the currently selected item doesn't match the filter, automatically move the selection to the next matching item. This applies to all filterable panels: Commands, Flags, and Arguments.
 - **Filter mode visual cues** — when filter mode is activated, the panel title immediately shows the `/` prompt (e.g., `Commands (/)`) even before any text is typed, and the panel border changes to the active color to clearly indicate filter mode is in progress.
+- **Filter applies to focused panel only** — the filter is scoped to whichever panel (Commands, Flags, or Arguments) is focused when `/` is pressed. Other panels remain unfiltered and display their normal content.
 - **Clear filter when changing panels** — switching focus via Tab or mouse click clears the active filter to prevent confusion.
 - Use scored matching (powered by `nucleo-matcher`) to rank results by relevance.
 

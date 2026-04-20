@@ -2,7 +2,7 @@
 
 A terminal UI for running [mise tasks](https://mise.jdx.dev/tasks/) or other commands supporting [`--usage`](https://usage.jdx.dev/) specs.
 
-![Animation showing the interface](https://vhs.charm.sh/vhs-6VISU7YHvgOWuO11RgvdEt.gif)
+![Animation showing the interface](https://vhs.charm.sh/vhs-2rTonR9L8NblHYy3DQQi2Y.gif)
 
 ## Features
 
@@ -131,7 +131,7 @@ Only run this with *trusted* tools. Since it automatically runs custom commands 
 ## Testing
 
 ```sh
-# Run all tests (180 tests: unit + rendering + snapshots)
+# Run all tests
 cargo test
 
 # Review snapshot changes interactively
@@ -155,7 +155,7 @@ This README presents the main documentation intended for users. Other documents 
 
 | Document | Purpose |
 |---|---|
-| **AGENTS.md** | Development guidelines for agents |
+| **AGENTS.md** | Development guidelines for AI agents and contributors |
 | **REQUIREMENTS.md** | High-level goals, features, and user stories |
 | **SPECIFICATION.md** | Detailed behavioral specification (UI, interactions, data flow) |
 | **IMPLEMENTATION.md** | Architecture, code structure, and development state |

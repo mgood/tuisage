@@ -6,8 +6,8 @@ expression: output
 │ $ mycli deploy                                                                                   │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ Commands ────────────────────────────┐┌ Flags 🔍  roll ───────────────────────────────────────────┐
-│  init        Initialize a new project││▶ [·] --tag = <tag>                       Docker image tag│
-│  config          Manage configuration││  ○ --rollback                Rollback to previous version│
+│  init        Initialize a new project││  [·] --tag = <tag>                       Docker image tag│
+│  config          Manage configuration││▶ ○ --rollback                Rollback to previous version│
 │  │ set (add)       Set a config value││  ○ --skip-tests          Skip running tests before deploy│
 │  │ get             Get a config value││  ○ -y, --yes                     Skip confirmation prompt│
 │  │ list (ls)   List all config values││  [0] -v, --verbose [G]             Enable verbose logging│

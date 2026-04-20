@@ -1,24 +1,18 @@
-use std::sync::atomic::Ordering;
-
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
     Frame,
 };
-use ratatui_themes::ThemeName;
-use tui_term::widget::PseudoTerminal;
 
 #[cfg(test)]
 extern crate insta;
 
-use crate::app::{flatten_command_tree, App, AppMode, FlagValue, Focus};
-use crate::widgets::{
-    build_help_line, panel_block, panel_title, push_edit_cursor, push_highlighted_name,
-    push_selection_cursor, render_help_overlays, selection_bg, CommandPreview, HelpBar, Keybind,
-    ItemContext, PanelState, SelectList, SelectListScrollState, UiColors,
-};
+use crate::app::{collect_visible_flags, App, AppMode, Focus, UiLayout};
+use crate::components::arg_panel::ArgRenderData;
+use crate::components::flag_panel::FlagRenderData;
+use crate::components::help_bar::{HelpBar, Keybind};
+use crate::components::preview::CommandPreview;
+use crate::components::{Component, RenderableComponent};
+use crate::theme::UiColors;
 
 /// Render the full UI: command panel, flag panel, arg panel, preview, help bar.
 pub fn render(frame: &mut Frame, app: &mut App) {
@@ -26,7 +20,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let colors = UiColors::from_palette(&palette);
 
     if app.mode == AppMode::Executing {
-        render_execution_view(frame, app, &colors);
+        if let Some(ref mut exec) = app.execution {
+            exec.render(frame.area(), frame.buffer_mut(), &colors);
+        }
         return;
     }
 
@@ -45,130 +41,69 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         ])
         .split(area);
 
-    // Clear click regions each frame so they're rebuilt from current layout
-    app.click_regions.clear();
+    let mut layout = UiLayout::new();
 
-    render_preview(frame, app, outer[0], &colors);
-    render_main_content(frame, app, outer[1], &colors);
-    render_help_bar(frame, app, outer[2], &colors);
+    render_preview(frame, app, outer[0], &colors, &mut layout);
+    render_main_content(frame, app, outer[1], &colors, &mut layout);
+    render_help_bar(frame, app, outer[2], &colors, &mut layout);
 
     // Register preview area for click hit-testing
-    app.click_regions.register(outer[0], Focus::Preview);
+    layout.click_regions.register(outer[0], Focus::Preview);
 
-    // Render choice select overlay on top of everything
-    if app.choice_select.is_some() {
-        render_choice_select(frame, app, area, &colors);
-    }
+    // Viewport for overlays: main content area (excludes preview + help bar)
+    let overlay_viewport = outer[1];
 
-    // Render theme picker overlay on top of everything
-    if app.theme_picker.is_some() {
-        render_theme_picker(frame, app, area, &colors);
-    }
-}
-
-/// Render the execution view: command at top, terminal output in middle, status at bottom.
-fn render_execution_view(frame: &mut Frame, app: &App, colors: &UiColors) {
-    let area = frame.area();
-
-    // Layout: [command display] [terminal output] [status bar]
-    let outer = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // command display
-            Constraint::Min(4),    // terminal output
-            Constraint::Length(1), // status bar
-        ])
-        .split(area);
-
-    // --- Command display at top ---
-    let command_display = app
-        .execution
-        .as_ref()
-        .map(|e| e.command_display.clone())
-        .unwrap_or_default();
-
-    let cmd_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(colors.active_border))
-        .title(" Command ")
-        .title_style(Style::default().fg(colors.active_border).bold());
-
-    let cmd_spans = vec![
-        Span::styled("$ ", Style::default().fg(colors.command)),
-        Span::styled(
-            command_display,
-            Style::default()
-                .fg(colors.preview_cmd)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ];
-    let cmd_paragraph = Paragraph::new(Line::from(cmd_spans))
-        .block(cmd_block)
-        .wrap(Wrap { trim: false });
-    frame.render_widget(cmd_paragraph, outer[0]);
-
-    // --- Terminal output ---
-    let exited = app
-        .execution
-        .as_ref()
-        .map(|e| e.exited.load(Ordering::Relaxed))
-        .unwrap_or(false);
-
-    let term_block = Block::default().borders(Borders::NONE);
-
-    if let Some(ref exec) = app.execution {
-        if let Ok(parser) = exec.parser.read() {
-            let pseudo_term = PseudoTerminal::new(parser.screen())
-                .block(term_block)
-                .style(Style::default().fg(colors.preview_cmd).bg(colors.bg));
-            frame.render_widget(pseudo_term, outer[1]);
-        } else {
-            // Fallback if lock is poisoned
-            let fallback = Paragraph::new("(terminal output unavailable)")
-                .block(term_block)
-                .style(Style::default().fg(colors.help));
-            frame.render_widget(fallback, outer[1]);
+    // Render flag panel overlays (from ChoiceSelectComponent)
+    {
+        app.flag_panel
+            .set_choice_select_mouse_position(app.mouse_position);
+        let overlays = app.flag_panel.collect_overlays();
+        for req in overlays {
+            let overlay_area =
+                crate::components::clamp_overlay(req.anchor, req.size, overlay_viewport);
+            req.content.render(overlay_area, frame.buffer_mut(), &colors);
+            layout.flag_overlay_rect = Some(overlay_area);
         }
-    } else {
-        let fallback = Paragraph::new("(no execution state)")
-            .block(term_block)
-            .style(Style::default().fg(colors.help));
-        frame.render_widget(fallback, outer[1]);
     }
 
-    // --- Status bar at bottom ---
-    let status_text = if exited {
-        let exit_code = app.execution_exit_status().unwrap_or_default();
-        format!(
-            " Exited ({}) — press Esc/⏎/q to close ",
-            if exit_code.is_empty() {
-                "unknown".to_string()
-            } else {
-                exit_code
-            }
-        )
-    } else {
-        " Running… (input is forwarded to the process) ".to_string()
-    };
+    // Render arg panel overlays (from ChoiceSelectComponent)
+    {
+        app.arg_panel
+            .set_choice_select_mouse_position(app.mouse_position);
+        let overlays = app.arg_panel.collect_overlays();
+        for req in overlays {
+            let overlay_area =
+                crate::components::clamp_overlay(req.anchor, req.size, overlay_viewport);
+            req.content.render(overlay_area, frame.buffer_mut(), &colors);
+            layout.arg_overlay_rect = Some(overlay_area);
+        }
+    }
 
-    let status_style = if exited {
-        Style::default()
-            .fg(colors.help)
-            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
-    } else {
-        Style::default()
-            .fg(colors.command)
-            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
-    };
+    // Render theme picker overlays (on top of everything)
+    {
+        app.theme_picker.set_viewport(area);
+        let overlays = app.theme_picker.collect_overlays();
+        for req in overlays {
+            let overlay_area =
+                crate::components::clamp_overlay(req.anchor, req.size, area);
+            req.content.render(overlay_area, frame.buffer_mut(), &colors);
+            layout.theme_overlay_rect = Some(overlay_area);
+        }
+    }
 
-    let status = Paragraph::new(status_text).style(status_style);
-    frame.render_widget(status, outer[2]);
+    app.layout = layout;
 }
 
 /// Render the main content area with panels for commands, flags, and args.
-fn render_main_content(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
+fn render_main_content(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    colors: &UiColors,
+    layout: &mut UiLayout,
+) {
     // Commands tree should always be visible (shows entire tree, not just subcommands)
-    let has_commands = !app.command_tree_nodes.is_empty();
+    let has_commands = app.command_panel.total_visible() > 0;
 
     // Always show Flags and Args panes, even if empty
     if has_commands {
@@ -178,728 +113,120 @@ fn render_main_content(frame: &mut Frame, app: &mut App, area: Rect, colors: &Ui
             .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
             .split(area);
 
-        render_command_list(frame, app, h_split[0], colors);
+        render_command_list(frame, app, h_split[0], colors, layout);
 
         // Always split vertically for flags and args
         let v_split = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
             .split(h_split[1]);
-        render_flag_list(frame, app, v_split[0], colors);
-        render_arg_list(frame, app, v_split[1], colors);
+        render_flag_list(frame, app, v_split[0], colors, layout);
+        render_arg_list(frame, app, v_split[1], colors, layout);
     } else {
         // No commands - still show flags and args
         let v_split = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
             .split(area);
-        render_flag_list(frame, app, v_split[0], colors);
-        render_arg_list(frame, app, v_split[1], colors);
+        render_flag_list(frame, app, v_split[0], colors, layout);
+        render_arg_list(frame, app, v_split[1], colors, layout);
     }
 }
 
-/// Render the command tree panel using the TreeView widget.
-fn render_command_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
+/// Render the command tree panel using the CommandPanelComponent.
+fn render_command_list(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    colors: &UiColors,
+    layout: &mut UiLayout,
+) {
     // Register area for click hit-testing
-    app.click_regions.register(area, Focus::Commands);
+    layout.click_regions.register(area, Focus::Commands);
 
-    let ps = {
-        let base = PanelState::from_app(app, Focus::Commands, colors);
-        let scores = if !base.filter_text.is_empty() {
-            app.compute_tree_match_scores()
-        } else {
-            std::collections::HashMap::new()
-        };
-        base.with_scores(scores)
-    };
+    // Push display state into the component before rendering
+    let focused = app.focus() == Focus::Commands;
+    app.command_panel.set_focused(focused);
+    app.command_panel.set_mouse_position(app.mouse_position);
 
-    // Flatten the tree for display
-    let flat_commands = flatten_command_tree(&app.command_tree_nodes);
-
-    let title = panel_title("Commands", &ps);
-    let block = panel_block(title, &ps);
-
-    // Calculate inner height for scroll offset (area minus borders)
-    let inner_height = area.height.saturating_sub(2) as usize;
-    app.ensure_visible(Focus::Commands, inner_height);
-
-    // Get selected index
-    let selected_index = app.command_index();
-
-    // Get hovered index for this panel (only when focused)
-    let hovered_index = if ps.is_focused { app.hovered_index(Focus::Commands) } else { None };
-
-    // Build list items with indentation markers
-    let mut help_entries: Vec<(usize, Line<'static>)> = Vec::new();
-    let items: Vec<ListItem> = flat_commands
-        .iter()
-        .enumerate()
-        .map(|(i, cmd)| {
-            let is_selected = i == selected_index;
-            let is_hovered = hovered_index == Some(i) && !is_selected;
-            let ctx = ItemContext::new(&cmd.id, is_selected, &ps);
-
-            let mut spans = Vec::new();
-
-            // Selection cursor
-            push_selection_cursor(&mut spans, is_selected, colors);
-
-            // Depth-based indentation with vertical line prefix
-            if cmd.depth > 0 {
-                let indent = "  ".repeat(cmd.depth - 1);
-                spans.push(Span::styled(indent, Style::default().fg(colors.help)));
-                spans.push(Span::styled("│ ", Style::default().fg(colors.help)));
-            }
-
-            // Command name (with aliases)
-            let name_text = if !cmd.aliases.is_empty() {
-                format!("{} ({})", cmd.name, cmd.aliases.join(", "))
-            } else {
-                cmd.name.clone()
-            };
-
-            push_highlighted_name(
-                &mut spans,
-                &name_text,
-                colors.command,
-                &ctx,
-                &ps,
-                colors,
-            );
-
-            // Collect help text for overlay rendering
-            if let Some(help) = &cmd.help {
-                help_entries.push((i, build_help_line(help, &ctx, &ps, colors)));
-            }
-
-            let mut item = ListItem::new(Line::from(spans));
-            if is_selected {
-                item = item.style(selection_bg(false, colors));
-            } else if is_hovered {
-                item = item.style(Style::default().bg(colors.hover_bg));
-            }
-            item
-        })
-        .collect();
-
-    let selected_index = app.command_index();
-    let mut state = ListState::default()
-        .with_selected(if ps.is_focused {
-            Some(selected_index)
-        } else {
-            None
-        })
-        .with_offset(app.command_scroll());
-
-    let list = List::new(items).block(block);
-    frame.render_stateful_widget(list, area, &mut state);
-
-    // Scrollbar
-    render_panel_scrollbar(frame, area, flat_commands.len(), app.command_scroll(), colors);
-
-    // Render right-aligned help text overlays (no padding on Commands panel)
-    let inner = area.inner(ratatui::layout::Margin::new(1, 1));
-    render_help_overlays(frame.buffer_mut(), &help_entries, app.command_scroll(), inner);
+    app.command_panel.render(area, frame.buffer_mut(), colors);
 }
-fn render_flag_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
+fn render_flag_list(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    colors: &UiColors,
+    layout: &mut UiLayout,
+) {
     // Register area for click hit-testing
-    app.click_regions.register(area, Focus::Flags);
+    layout.click_regions.register(area, Focus::Flags);
 
-    let ps = {
-        let base = PanelState::from_app(app, Focus::Flags, colors);
-        let scores = if !base.filter_text.is_empty() {
-            app.compute_flag_match_scores()
+    // Push display state into the component before rendering
+    let focused = app.focus() == Focus::Flags;
+    app.flag_panel.set_focused(focused);
+    app.flag_panel.set_mouse_position(app.mouse_position);
+
+    // Build external data. Use direct field access for spec/command_path/flag_values
+    // so that the immutable borrows are on individual fields, not the whole App.
+    // This allows the mutable borrow of flag_panel for render_with_data().
+    let mut cmd = &app.spec.cmd;
+    for name in &app.command_path {
+        if let Some(sub) = cmd.find_subcommand(name) {
+            cmd = sub;
         } else {
-            std::collections::HashMap::new()
-        };
-        base.with_scores(scores)
-    };
-
-    // Compute index for scroll visibility
-    let flag_index = app.flag_index();
-
-    let title = panel_title("Flags", &ps);
-    let block = panel_block(title, &ps);
-
-    // Calculate inner height for scroll offset
-    let inner_height = area.height.saturating_sub(2) as usize;
-    app.ensure_visible(Focus::Flags, inner_height);
-
-    // Re-fetch data after mutable borrow ends
-    let flags = app.visible_flags();
-
-    // Pre-compute default values for each flag so we can show "(default)" indicator
+            break;
+        }
+    }
+    let flags = collect_visible_flags(cmd, &app.spec);
+    let key = app.command_path.join(" ");
+    let flag_values: Vec<(String, crate::app::FlagValue)> = app
+        .flag_values
+        .get(&key)
+        .cloned()
+        .unwrap_or_default();
     let flag_defaults: Vec<Option<String>> =
         flags.iter().map(|f| f.default.first().cloned()).collect();
 
-    // Pre-compute negate column positions for mouse hit-testing.
-    // Layout per row: border(1) + cursor(2) + indicator(2) + flag_display + optional [G](4) + optional *(2) + " / "(3) = negate start
-    let inner_left = area.x + 1; // past left border
-    let negate_cols: std::collections::HashMap<usize, u16> = flags
-        .iter()
-        .enumerate()
-        .filter(|(_, flag)| flag.negate.is_some())
-        .map(|(i, flag)| {
-            let display_len = flag_display_string(flag).len() as u16;
-            let mut col = inner_left + 2 + 2 + display_len;
-            if flag.global {
-                col += 4; // " [G]"
-            }
-            if flag.required {
-                col += 2; // " *"
-            }
-            col += 3; // " / "
-            (i, col)
-        })
-        .collect();
-    drop(flags); // release borrow so we can mutate app
-    app.flag_negate_cols = negate_cols;
-
-    let flags = app.visible_flags();
-    let flag_values = app.current_flag_values();
-
-    // Get hovered index for this panel (only when focused)
-    let hovered_index = if ps.is_focused { app.hovered_index(Focus::Flags) } else { None };
-
-    let mut help_entries: Vec<(usize, Line<'static>)> = Vec::new();
-    let items: Vec<ListItem> = flags
-        .iter()
-        .enumerate()
-        .map(|(i, flag)| {
-            let is_selected = ps.is_focused && i == flag_index;
-            let is_hovered = hovered_index == Some(i) && !is_selected;
-            let is_editing = is_selected && app.editing;
-            let value = flag_values.iter().find(|(n, _)| n == &flag.name);
-            let default_val = flag_defaults.get(i).and_then(|d| d.as_ref());
-
-            let ctx = ItemContext::new(&flag.name, is_selected, &ps);
-
-            let mut spans = Vec::new();
-
-            // Selection cursor indicator
-            push_selection_cursor(&mut spans, is_selected, colors);
-
-            // Checkbox / toggle indicator using checkmark style (✓/○)
-            let indicator = match value.map(|(_, v)| v) {
-                Some(FlagValue::Bool(true)) => Span::styled(
-                    "✓ ",
-                    Style::default().fg(colors.arg).add_modifier(Modifier::BOLD),
-                ),
-                Some(FlagValue::Bool(false)) => {
-                    Span::styled("○ ", Style::default().fg(colors.help))
-                }
-                Some(FlagValue::NegBool(None)) => {
-                    Span::styled("○ ", Style::default().fg(colors.help))
-                }
-                Some(FlagValue::NegBool(Some(true))) => Span::styled(
-                    "✓ ",
-                    Style::default().fg(colors.arg).add_modifier(Modifier::BOLD),
-                ),
-                Some(FlagValue::NegBool(Some(false))) => Span::styled(
-                    "✗ ",
-                    Style::default()
-                        .fg(colors.required)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Some(FlagValue::Count(n)) => {
-                    if *n > 0 {
-                        Span::styled(format!("[{}] ", n), Style::default().fg(colors.count))
-                    } else {
-                        Span::styled("[0] ", Style::default().fg(colors.help))
-                    }
-                }
-                Some(FlagValue::String(s)) => {
-                    if s.is_empty() {
-                        Span::styled("[·] ", Style::default().fg(colors.help))
-                    } else {
-                        Span::styled("[•] ", Style::default().fg(colors.arg))
-                    }
-                }
-                None => Span::styled("○ ", Style::default().fg(colors.help)),
-            };
-            spans.push(indicator);
-
-            // Flag display (short + long) with highlighting
-            let flag_display = flag_display_string(flag);
-
-            // When the negate flag is explicitly active, subdue the positive name
-            let is_negated = matches!(value.map(|(_, v)| v), Some(FlagValue::NegBool(Some(false))));
-            let flag_name_color = if is_negated { colors.help } else { colors.flag };
-
-            push_highlighted_name(
-                &mut spans,
-                &flag_display,
-                flag_name_color,
-                &ctx,
-                &ps,
-                colors,
-            );
-
-            // Global indicator
-            if flag.global {
-                let global_style = if !ctx.is_match && !ps.match_scores.is_empty() {
-                    Style::default().fg(colors.help).add_modifier(Modifier::DIM)
-                } else {
-                    Style::default().fg(colors.help)
-                };
-                spans.push(Span::styled(" [G]", global_style));
-            }
-
-            // Required indicator
-            if flag.required {
-                let required_style = if !ctx.is_match && !ps.match_scores.is_empty() {
-                    Style::default().fg(colors.help).add_modifier(Modifier::DIM)
-                } else {
-                    Style::default().fg(colors.required)
-                };
-                spans.push(Span::styled(" *", required_style));
-            }
-
-            // Negate indicator for negatable flags
-            if let Some(ref negate) = flag.negate {
-                let dim = !ctx.is_match && !ps.match_scores.is_empty();
-                // The " / " separator is always subdued
-                let sep_style = if dim {
-                    Style::default().fg(colors.help).add_modifier(Modifier::DIM)
-                } else {
-                    Style::default().fg(colors.help)
-                };
-                spans.push(Span::styled(" / ", sep_style));
-                // The negate string is highlighted when the flag is in the negated state
-                let negate_style = if is_negated {
-                    if dim {
-                        Style::default().fg(colors.flag).add_modifier(Modifier::DIM)
-                    } else {
-                        Style::default().fg(colors.flag)
-                    }
-                } else if dim {
-                    Style::default().fg(colors.help).add_modifier(Modifier::DIM)
-                } else {
-                    Style::default().fg(colors.help)
-                };
-                spans.push(Span::styled(negate.clone(), negate_style));
-            }
-
-            // Value display for string flags
-            if let Some((_, FlagValue::String(s))) = value {
-                spans.push(Span::styled(" = ", Style::default().fg(colors.help)));
-
-                // Check if the choice select box is open for this flag
-                let is_choice_selecting = app.choice_select.as_ref().is_some_and(|cs| {
-                    cs.source_panel == Focus::Flags && cs.source_index == i
-                });
-
-                if is_choice_selecting || is_editing {
-                    // Show the edit cursor — when choice selecting, the text input is also active
-                    let before_cursor = app.edit_input.text_before_cursor();
-                    let after_cursor = app.edit_input.text_after_cursor();
-                    push_edit_cursor(&mut spans, before_cursor, after_cursor, colors);
-                } else if s.is_empty() {
-                    // Show choices hint or default
-                    if let Some(ref arg) = flag.arg {
-                        if let Some(ref choices) = arg.choices {
-                            let hint = choices.choices.join("|");
-                            spans.push(Span::styled(
-                                format!("<{}>", hint),
-                                Style::default().fg(colors.choice),
-                            ));
-                        } else {
-                            spans.push(Span::styled(
-                                format!("<{}>", arg.name),
-                                Style::default().fg(colors.default_val),
-                            ));
-                        }
-                    }
-                } else {
-                    spans.push(Span::styled(s.to_string(), Style::default().fg(colors.value)));
-                    // Show "(default)" if value matches the spec default
-                    if let Some(def) = default_val {
-                        if s == def {
-                            spans.push(Span::styled(
-                                " (default)",
-                                Style::default().fg(colors.default_val).italic(),
-                            ));
-                        }
-                    }
-                }
-            }
-
-            // Collect help text for overlay rendering
-            if let Some(help) = &flag.help {
-                help_entries.push((i, build_help_line(help, &ctx, &ps, colors)));
-            }
-
-            let line = Line::from(spans);
-            let mut item = ListItem::new(line);
-            if is_selected {
-                item = item.style(selection_bg(is_editing, colors));
-            } else if is_hovered {
-                item = item.style(Style::default().bg(colors.hover_bg));
-            }
-            item
-        })
-        .collect();
-
-    let total_flags = flags.len();
-    let mut state = ListState::default()
-        .with_selected(if ps.is_focused { Some(flag_index) } else { None })
-        .with_offset(app.flag_scroll());
-    let list = List::new(items).block(block);
-    frame.render_stateful_widget(list, area, &mut state);
-
-    // Scrollbar
-    render_panel_scrollbar(frame, area, total_flags, app.flag_scroll(), colors);
-
-    // Render right-aligned help text overlays (2 = border + horizontal padding)
-    let inner = area.inner(ratatui::layout::Margin::new(1, 1));
-    render_help_overlays(frame.buffer_mut(), &help_entries, app.flag_scroll(), inner);
-}
-
-fn render_arg_list(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
-    // Register area for click hit-testing
-    app.click_regions.register(area, Focus::Args);
-
-    let ps = {
-        let base = PanelState::from_app(app, Focus::Args, colors);
-        let scores = if !base.filter_text.is_empty() {
-            app.compute_arg_match_scores()
-        } else {
-            std::collections::HashMap::new()
-        };
-        base.with_scores(scores)
+    let data = FlagRenderData {
+        flags: &flags,
+        flag_values: &flag_values,
+        flag_defaults: &flag_defaults,
     };
 
-    let arg_index = app.arg_index();
-
-    let title = panel_title("Arguments", &ps);
-    let block = panel_block(title, &ps);
-
-    // Calculate inner height for scroll offset (must happen before borrowing app.arg_values)
-    let inner_height = area.height.saturating_sub(2) as usize;
-    app.ensure_visible(Focus::Args, inner_height);
-
-    // Get hovered index for this panel (only when focused)
-    let hovered_index = if ps.is_focused { app.hovered_index(Focus::Args) } else { None };
-
-    let mut help_entries: Vec<(usize, Line<'static>)> = Vec::new();
-    let items: Vec<ListItem> = app
-        .arg_values
-        .iter()
-        .enumerate()
-        .map(|(i, arg_val)| {
-            let is_selected = ps.is_focused && i == arg_index;
-            let is_hovered = hovered_index == Some(i) && !is_selected;
-            let is_editing = is_selected && app.editing;
-
-            let ctx = ItemContext::new(&arg_val.name, is_selected, &ps);
-
-            let mut spans = Vec::new();
-
-            // Selection cursor indicator
-            push_selection_cursor(&mut spans, is_selected, colors);
-
-            // Required/optional indicator
-            if arg_val.required {
-                spans.push(Span::styled("● ", Style::default().fg(colors.required)));
-            } else {
-                spans.push(Span::styled("○ ", Style::default().fg(colors.help)));
-            }
-
-            // Arg name with highlighting
-            let bracket = if arg_val.required { "<>" } else { "[]" };
-            let arg_display = format!("{}{}{}", &bracket[..1], arg_val.name, &bracket[1..]);
-
-            push_highlighted_name(
-                &mut spans,
-                &arg_display,
-                colors.arg,
-                &ctx,
-                &ps,
-                colors,
-            );
-
-            // Value display
-            spans.push(Span::styled(" = ", Style::default().fg(colors.help)));
-
-            // Check if the choice select box is open for this arg
-            let is_choice_selecting = app.choice_select.as_ref().is_some_and(|cs| {
-                cs.source_panel == Focus::Args && cs.source_index == i
-            });
-
-            if is_choice_selecting || is_editing {
-                // Show the edit cursor — when choice selecting, the text input is also active
-                let before_cursor = app.edit_input.text_before_cursor();
-                let after_cursor = app.edit_input.text_after_cursor();
-                push_edit_cursor(&mut spans, before_cursor, after_cursor, colors);
-            } else if arg_val.value.is_empty() {
-                if !arg_val.choices.is_empty() {
-                    let hint = arg_val.choices.join("|");
-                    spans.push(Span::styled(
-                        format!("<{}>", hint),
-                        Style::default().fg(colors.choice),
-                    ));
-                } else {
-                    spans.push(Span::styled(
-                        "(empty)",
-                        Style::default().fg(colors.default_val),
-                    ));
-                }
-            } else {
-                spans.push(Span::styled(
-                    arg_val.value.clone(),
-                    Style::default().fg(colors.value),
-                ));
-            }
-
-            // Show choices if arg has them and we're not editing (and not choice-selecting)
-            if !arg_val.choices.is_empty() && !arg_val.value.is_empty() && !is_editing && !is_choice_selecting {
-                spans.push(Span::styled(
-                    format!(" [{}]", arg_val.choices.join("|")),
-                    Style::default().fg(colors.choice),
-                ));
-            }
-
-            // Collect help text for overlay rendering
-            if let Some(ref help) = arg_val.help {
-                if !help.is_empty() {
-                    help_entries.push((i, build_help_line(help, &ctx, &ps, colors)));
-                }
-            }
-
-            let line = Line::from(spans);
-            let mut item = ListItem::new(line);
-            if is_selected {
-                item = item.style(selection_bg(is_editing, colors));
-            } else if is_hovered {
-                item = item.style(Style::default().bg(colors.hover_bg));
-            }
-            item
-        })
-        .collect();
-
-    let total_args = app.arg_values.len();
-    let mut state = ListState::default()
-        .with_selected(if ps.is_focused { Some(arg_index) } else { None })
-        .with_offset(app.arg_scroll());
-    let list = List::new(items).block(block);
-    frame.render_stateful_widget(list, area, &mut state);
-
-    // Scrollbar
-    render_panel_scrollbar(frame, area, total_args, app.arg_scroll(), colors);
-
-    // Render right-aligned help text overlays (2 = border + horizontal padding)
-    let inner = area.inner(ratatui::layout::Margin::new(1, 1));
-    render_help_overlays(frame.buffer_mut(), &help_entries, app.arg_scroll(), inner);
+    app.flag_panel
+        .render_with_data(area, frame.buffer_mut(), colors, data);
 }
 
-/// Render a vertical scrollbar on the right side of a panel if content overflows.
-fn render_panel_scrollbar(
+fn render_arg_list(
     frame: &mut Frame,
+    app: &mut App,
     area: Rect,
-    total_items: usize,
-    scroll_offset: usize,
     colors: &UiColors,
+    layout: &mut UiLayout,
 ) {
-    let inner_height = area.height.saturating_sub(2) as usize; // minus top/bottom borders
-    if total_items <= inner_height || inner_height == 0 {
-        return;
-    }
-    let inner = area.inner(ratatui::layout::Margin::new(0, 1));
-    let mut scrollbar_state = ScrollbarState::new(total_items.saturating_sub(inner_height))
-        .position(scroll_offset);
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(None)
-        .end_symbol(None)
-        .track_symbol(Some("│"))
-        .thumb_symbol("┃")
-        .track_style(Style::default().fg(colors.inactive_border))
-        .thumb_style(Style::default().fg(colors.active_border));
-    frame.render_stateful_widget(scrollbar, inner, &mut scrollbar_state);
+    // Register area for click hit-testing
+    layout.click_regions.register(area, Focus::Args);
+
+    // Push display state into the component before rendering
+    let focused = app.focus() == Focus::Args;
+    app.arg_panel.set_focused(focused);
+    app.arg_panel.set_mouse_position(app.mouse_position);
+
+    let data = ArgRenderData {
+        arg_values: &app.arg_values,
+    };
+
+    app.arg_panel
+        .render_with_data(area, frame.buffer_mut(), colors, data);
 }
 
-/// Render the choice select box as an overlay.
-fn render_choice_select(frame: &mut Frame, app: &mut App, terminal_area: Rect, colors: &UiColors) {
-    let Some(ref cs) = app.choice_select else {
-        return;
-    };
-
-    // Extract values before calling filtered_choices (which borrows app)
-    let source_panel = cs.source_panel;
-    let source_index = cs.source_index;
-    let value_column = cs.value_column;
-    let selected_index = cs.selected_index;
-
-    let filtered = app.filtered_choices();
-
-    // Determine the panel area and item position
-    let panel_area = match source_panel {
-        Focus::Flags => app
-            .click_regions
-            .regions()
-            .iter()
-            .find(|r| r.data == Focus::Flags)
-            .map(|r| r.area),
-        Focus::Args => app
-            .click_regions
-            .regions()
-            .iter()
-            .find(|r| r.data == Focus::Args)
-            .map(|r| r.area),
-        _ => None,
-    };
-
-    let Some(panel_area) = panel_area else {
-        return;
-    };
-
-    // Calculate the y position of the item within the panel
-    let scroll_offset = match source_panel {
-        Focus::Flags => app.flag_scroll(),
-        Focus::Args => app.arg_scroll(),
-        _ => 0,
-    };
-
-    let inner_y = panel_area.y + 1; // skip border
-    let item_y = inner_y + (source_index as u16).saturating_sub(scroll_offset as u16);
-
-    // Position the overlay one row BELOW the item
-    let overlay_y = item_y + 1;
-
-    // Calculate dimensions
-    let max_choice_len = filtered
-        .iter()
-        .map(|(_, c)| c.chars().count())
-        .max()
-        .unwrap_or(10) as u16;
-    let max_visible = 10u16;
-    
-    // Calculate available space below the item (to bottom of terminal, minus 1 for help bar)
-    let space_below = terminal_area.height.saturating_sub(overlay_y).saturating_sub(1);
-    
-    // Adjust visible count to fit available space (account for bottom border)
-    let max_items_that_fit = space_below.saturating_sub(1).max(1); // at least 1 item
-    let visible_count = if filtered.is_empty() {
-        1
-    } else {
-        (filtered.len() as u16).min(max_visible).min(max_items_that_fit)
-    };
-    let overlay_height = visible_count + 1; // bottom border only
-
-    // Collect labels and descriptions for the SelectList widget
-    let labels: Vec<String> = filtered.iter().map(|(_, c)| c.clone()).collect();
-    let descs: Vec<Option<String>> = filtered
-        .iter()
-        .map(|(orig_idx, _)| app.choice_description(*orig_idx).map(|s| s.to_string()))
-        .collect();
-
-    // Account for description width in overlay sizing
-    let max_desc_len = descs
-        .iter()
-        .map(|d| d.as_ref().map(|s| s.chars().count() + 2).unwrap_or(0))
-        .max()
-        .unwrap_or(0) as u16;
-    let overlay_width =
-        (max_choice_len + max_desc_len + 4).min(terminal_area.width.saturating_sub(2));
-
-    // Position x one character left of value column to align with text output
-    let overlay_x = (panel_area.x + value_column.saturating_sub(1))
-        .min(terminal_area.width.saturating_sub(overlay_width));
-
-    // Clamp to terminal bounds
-    let overlay_y = overlay_y.min(terminal_area.height.saturating_sub(overlay_height));
-
-    let overlay_rect = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
-
-    // Store overlay_rect for mouse hit-testing
-    if let Some(ref mut cs) = app.choice_select {
-        cs.overlay_rect = Some(overlay_rect);
-    }
-
-    // Compute hover index for the select overlay
-    let hovered_index = app.mouse_position.and_then(|(col, row)| {
-        let inner_top = overlay_rect.y; // no top border
-        let inner_bottom = overlay_rect.y + overlay_rect.height.saturating_sub(1);
-        if col >= overlay_rect.x && col < overlay_rect.x + overlay_rect.width
-            && row >= inner_top && row < inner_bottom
-        {
-            let scroll_offset = app.choice_select.as_ref().map_or(0, |cs| cs.scroll_offset);
-            let idx = (row - inner_top) as usize + scroll_offset;
-            if idx < filtered.len() { Some(idx) } else { None }
-        } else {
-            None
-        }
-    });
-
-    let widget = SelectList::new(
-        String::new(),
-        &labels,
-        selected_index,
-        colors.choice,
-        colors.choice,
-        colors,
-    )
-    .with_descriptions(&descs)
-    .with_borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
-    .with_hovered(hovered_index);
-    let mut scroll_state = SelectListScrollState::default();
-    frame.render_stateful_widget(widget, overlay_rect, &mut scroll_state);
-
-    // Store scroll state for mouse handling
-    if let Some(ref mut cs) = app.choice_select {
-        cs.scroll_offset = scroll_state.scroll_offset;
-        cs.visible_items = scroll_state.visible_items;
-    }
-}
-
-/// Render the theme picker overlay, positioned above the help bar, right-aligned.
-fn render_theme_picker(frame: &mut Frame, app: &mut App, terminal_area: Rect, colors: &UiColors) {
-    let Some(ref tp) = app.theme_picker else {
-        return;
-    };
-    let selected_index = tp.selected_index;
-    let all = ThemeName::all();
-
-    // Dimensions
-    let max_name_len = all
-        .iter()
-        .map(|t| t.display_name().len())
-        .max()
-        .unwrap_or(10) as u16;
-    let overlay_width = max_name_len + 6; // "▶ " prefix (2) + padding (2) + borders (2)
-    let num_themes = all.len() as u16;
-    let overlay_height = (num_themes + 2).min(terminal_area.height.saturating_sub(2)); // +2 for borders
-
-    // Position: right-aligned, above the help bar (last row)
-    let overlay_x = terminal_area
-        .right()
-        .saturating_sub(overlay_width)
-        .max(terminal_area.x);
-    let help_bar_y = terminal_area.bottom().saturating_sub(1);
-    let overlay_y = help_bar_y.saturating_sub(overlay_height).max(terminal_area.y);
-
-    let overlay_rect = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
-
-    // Store overlay_rect for mouse hit-testing
-    if let Some(ref mut tp) = app.theme_picker {
-        tp.overlay_rect = Some(overlay_rect);
-    }
-
-    // Collect labels for the SelectList widget
-    let labels: Vec<String> = all.iter().map(|t| t.display_name().to_string()).collect();
-
-    let widget = SelectList::new(
-        " Theme ".to_string(),
-        &labels,
-        Some(selected_index),
-        colors.choice,
-        colors.value,
-        colors,
-    )
-    .with_cursor();
-    frame.render_widget(widget, overlay_rect);
-}
-
-fn render_help_bar(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColors) {
+fn render_help_bar(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    colors: &UiColors,
+    layout: &mut UiLayout,
+) {
     let keybinds: &[Keybind] = if app.is_theme_picking() {
         &[
             Keybind { key: "↑↓", desc: "navigate" },
@@ -912,12 +239,12 @@ fn render_help_bar(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
             Keybind { key: "⏎", desc: "confirm" },
             Keybind { key: "Esc", desc: "keep text" },
         ]
-    } else if app.editing {
+    } else if app.is_editing() {
         &[
             Keybind { key: "⏎", desc: "confirm" },
             Keybind { key: "Esc", desc: "cancel" },
         ]
-    } else if app.filtering {
+    } else if app.is_filtering() {
         &[
             Keybind { key: "⏎", desc: "apply" },
             Keybind { key: "Esc", desc: "clear" },
@@ -966,13 +293,19 @@ fn render_help_bar(frame: &mut Frame, app: &mut App, area: Rect, colors: &UiColo
     let widget = HelpBar::new(keybinds, theme_display, colors);
 
     // Store the theme indicator rect for mouse click detection
-    app.theme_indicator_rect = Some(widget.theme_indicator_rect(area));
+    layout.theme_indicator_rect = Some(widget.theme_indicator_rect(area));
 
     frame.render_widget(widget, area);
 }
 
 /// Render the command preview bar at the bottom with colorized parts.
-fn render_preview(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) {
+fn render_preview(
+    frame: &mut Frame,
+    app: &App,
+    area: Rect,
+    colors: &UiColors,
+    _layout: &mut UiLayout,
+) {
     let is_focused = app.focus() == Focus::Preview;
     let command = app.build_command();
     let bin = if app.spec.bin.is_empty() {
@@ -986,25 +319,11 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect, colors: &UiColors) {
 }
 
 /// Format a flag's display string (e.g., "-f, --force" or "--verbose").
-fn flag_display_string(flag: &usage::SpecFlag) -> String {
-    let mut parts = Vec::new();
-    for s in &flag.short {
-        parts.push(format!("-{s}"));
-    }
-    for l in &flag.long {
-        parts.push(format!("--{l}"));
-    }
-    if parts.is_empty() {
-        flag.name.clone()
-    } else {
-        parts.join(", ")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::FlagValue;
+    use crate::components::flag_panel::flag_display_string;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{backend::TestBackend, Terminal};
     use ratatui_themes::ThemeName;
@@ -1054,7 +373,7 @@ mod tests {
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["config"]);
         // Expand config to show its subcommands
-        app.command_tree_state.expand("config");
+        app.command_panel.expand("config");
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
     }
@@ -1124,8 +443,11 @@ mod tests {
         app.set_focus(Focus::Args);
         app.set_arg_index(0);
         app.start_editing();
-        app.edit_input.set_text("my-project");
-        app.arg_values[0].value = "my-project".to_string();
+        // Type via handle_key to set editing text and sync value
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        for ch in "my-project".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
 
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
@@ -1306,8 +628,8 @@ flag "-q --quiet" help="Quiet mode"
 
         // Focus on flags and start filtering
         app.set_focus(Focus::Flags);
-        app.filtering = true;
-        app.filter_input.set_text("roll");
+        app.flag_panel.start_filtering();
+        app.flag_panel.set_filter_text("roll");
 
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
@@ -1320,8 +642,8 @@ flag "-q --quiet" help="Quiet mode"
 
         // Focus on flags and filter for "verb" (should match --verbose)
         app.set_focus(Focus::Flags);
-        app.filtering = true;
-        app.filter_input.set_text("verb");
+        app.flag_panel.start_filtering();
+        app.flag_panel.set_filter_text("verb");
 
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
@@ -1334,11 +656,11 @@ flag "-q --quiet" help="Quiet mode"
 
         // Focus on flags and filter for "tag" (matches --tag)
         app.set_focus(Focus::Flags);
-        app.filtering = true;
-        app.filter_input.set_text("tag");
+        app.flag_panel.start_filtering();
+        app.flag_panel.set_filter_text("tag");
 
         // Move selection to the matching flag (tag is at index 0)
-        app.flag_list_state.selected_index = 0;
+        app.flag_panel.select(0);
 
         let output = render_to_string(&mut app, 100, 24);
         insta::assert_snapshot!(output);
@@ -1393,7 +715,7 @@ flag "-q --quiet" help="Quiet mode"
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["config"]);
         // Expand config to show children in the tree
-        app.command_tree_state.expand("config");
+        app.command_panel.expand("config");
 
         let output = render_to_string(&mut app, 100, 30);
         assert!(output.contains("config"));
@@ -1457,7 +779,7 @@ flag "-q --quiet" help="Quiet mode"
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["config"]);
         // Expand config to show children with aliases
-        app.command_tree_state.expand("config");
+        app.command_panel.expand("config");
 
         let output = render_to_string(&mut app, 100, 30);
         // "set" has alias "add", "list" has alias "ls", "remove" has alias "rm"
@@ -1645,7 +967,7 @@ flag "-q --quiet" help="Quiet mode"
     fn test_focused_panel_shows_title() {
         let mut app = App::new(sample_spec());
         app.set_focus(Focus::Commands);
-        app.command_tree_state.selected_index = 2;
+        app.command_panel.select_item(2);
         app.sync_command_path_from_tree();
         let output = render_to_string(&mut app, 100, 24);
         // Panel headers no longer show counts
@@ -1681,8 +1003,8 @@ flag "-q --quiet" help="Quiet mode"
         app.navigate_to_command(&["deploy"]);
 
         app.set_focus(Focus::Flags);
-        app.filtering = true;
-        app.filter_input.set_text("roll");
+        app.flag_panel.start_filtering();
+        app.flag_panel.set_filter_text("roll");
 
         let output = render_to_string(&mut app, 100, 24);
         // Should show filter query in title with emoji and query text
@@ -1697,7 +1019,7 @@ flag "-q --quiet" help="Quiet mode"
     fn test_filter_mode_shows_slash_immediately() {
         let mut app = App::new(sample_spec());
         app.set_focus(Focus::Commands);
-        app.filtering = true;
+        app.command_panel.start_filtering();
         // No text typed yet — filter_input is empty
 
         let output = render_to_string(&mut app, 100, 24);
@@ -1713,7 +1035,7 @@ flag "-q --quiet" help="Quiet mode"
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["deploy"]);
         app.set_focus(Focus::Flags);
-        app.filtering = true;
+        app.flag_panel.start_filtering();
         // No text typed yet
 
         let output = render_to_string(&mut app, 100, 24);
@@ -2033,18 +1355,18 @@ flag "-q --quiet" help="Quiet mode"
 
     #[test]
     fn test_cursor_position_in_editing() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["init"]);
         app.set_focus(Focus::Args);
         app.set_arg_index(0);
         app.start_editing();
 
-        // Type "hello"
-        app.edit_input.insert_char('h');
-        app.edit_input.insert_char('e');
-        app.edit_input.insert_char('l');
-        app.edit_input.insert_char('l');
-        app.edit_input.insert_char('o');
+        // Type "hello" via handle_key
+        for ch in "hello".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
 
         // Render with cursor at end
         let output = render_to_string(&mut app, 100, 24);
@@ -2053,17 +1375,17 @@ flag "-q --quiet" help="Quiet mode"
             "Should show cursor at end of text"
         );
 
-        // Move cursor to beginning
-        app.edit_input.move_home();
+        // Move cursor to beginning with Home key
+        app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
         let output = render_to_string(&mut app, 100, 24);
         assert!(
             output.contains("▎hello"),
             "Should show cursor at beginning of text"
         );
 
-        // Move cursor to middle
-        app.edit_input.move_right();
-        app.edit_input.move_right();
+        // Move cursor right twice
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
         let output = render_to_string(&mut app, 100, 24);
         assert!(
             output.contains("he▎llo"),
@@ -2145,10 +1467,10 @@ flag "-q --quiet" help="Quiet mode"
     #[test]
     fn test_theme_indicator_rect_set_after_render() {
         let mut app = App::new(sample_spec());
-        assert!(app.theme_indicator_rect.is_none());
+        assert!(app.layout.theme_indicator_rect.is_none());
         let _output = render_to_string(&mut app, 100, 24);
         assert!(
-            app.theme_indicator_rect.is_some(),
+            app.layout.theme_indicator_rect.is_some(),
             "theme_indicator_rect should be set after rendering"
         );
     }
@@ -2183,7 +1505,7 @@ cmd "test" {
 }
         "#;
         let mut app = App::new(parse_spec(spec_text));
-        
+
         // Focus on Args and open the select box
         app.set_focus(Focus::Args);
         let enter = crossterm::event::KeyEvent::new(
@@ -2191,7 +1513,7 @@ cmd "test" {
             crossterm::event::KeyModifiers::NONE,
         );
         app.handle_key(enter);
-        
+
         // Navigate down in the select to show scrollbar thumb moved from top
         let down = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Down,
