@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/mgood/tuisage/compare/v0.2.0...v0.2.1) - 2026-04-20
+
+### Added
+
+- make select descriptions searchable and right-aligned ([#23](https://github.com/mgood/tuisage/pull/23))
+- add hover highlights to theme picker list ([#22](https://github.com/mgood/tuisage/pull/22))
+- right-click to decrement count flags ([#21](https://github.com/mgood/tuisage/pull/21))
+
 ## [0.2.0](https://github.com/mgood/tuisage/compare/v0.1.4...v0.2.0) - 2026-04-20
 
 ### Other
