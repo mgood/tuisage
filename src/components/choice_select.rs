@@ -69,7 +69,15 @@ impl ChoiceSelectInner {
         self.choices
             .iter()
             .enumerate()
-            .filter(|(_, c)| fuzzy_match_score(c, filter, &mut matcher) > 0)
+            .filter(|(i, c)| {
+                fuzzy_match_score(c, filter, &mut matcher) > 0
+                    || self
+                        .descriptions
+                        .get(*i)
+                        .and_then(|d| d.as_deref())
+                        .map(|desc| fuzzy_match_score(desc, filter, &mut matcher) > 0)
+                        .unwrap_or(false)
+            })
             .map(|(i, c)| (i, c.clone()))
             .collect()
     }
@@ -630,6 +638,64 @@ mod tests {
 
         let inner = cs.state.as_ref().unwrap();
         assert_eq!(inner.descriptions, descs);
+    }
+
+    #[test]
+    fn test_filtering_matches_description() {
+        let mut cs = ChoiceSelectComponent::new();
+        let descs = vec![
+            Some("Authentication plugin".to_string()),
+            Some("Usage analytics".to_string()),
+            Some("Redis cache layer".to_string()),
+        ];
+        cs.open_with_descriptions(
+            vec!["auth".to_string(), "analytics".to_string(), "cache".to_string()],
+            descs,
+            "",
+            Rect::new(0, 0, 40, 1),
+        );
+
+        // Type "redis" — matches the description of "cache", not its name
+        cs.handle_key(KeyEvent::from(KeyCode::Char('r')));
+        cs.handle_key(KeyEvent::from(KeyCode::Char('e')));
+        cs.handle_key(KeyEvent::from(KeyCode::Char('d')));
+        cs.handle_key(KeyEvent::from(KeyCode::Char('i')));
+        cs.handle_key(KeyEvent::from(KeyCode::Char('s')));
+
+        let filtered = cs.filtered_choices();
+        assert_eq!(filtered.len(), 1, "Only 'cache' (whose desc contains 'redis') should match");
+        assert_eq!(filtered[0].1, "cache");
+    }
+
+    #[test]
+    fn test_filtering_matches_both_name_and_description() {
+        let mut cs = ChoiceSelectComponent::new();
+        let descs = vec![
+            Some("Authentication plugin".to_string()),
+            Some("Analytics module".to_string()),
+            Some("Redis cache layer".to_string()),
+        ];
+        cs.open_with_descriptions(
+            vec!["auth".to_string(), "analytics".to_string(), "cache".to_string()],
+            descs,
+            "",
+            Rect::new(0, 0, 40, 1),
+        );
+
+        // Type "an" — matches "analytics" by name AND "Authentication plugin" by description
+        cs.handle_key(KeyEvent::from(KeyCode::Char('a')));
+        cs.handle_key(KeyEvent::from(KeyCode::Char('n')));
+
+        let filtered = cs.filtered_choices();
+        // Should include items matching by name or description
+        assert!(
+            filtered.iter().any(|(_, c)| c == "auth"),
+            "auth should match via description 'Authentication plugin'"
+        );
+        assert!(
+            filtered.iter().any(|(_, c)| c == "analytics"),
+            "analytics should match via its name"
+        );
     }
 
     #[test]

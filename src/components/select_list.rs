@@ -2,13 +2,14 @@
 
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, StatefulWidget, Widget},
 };
 
 use crate::theme::UiColors;
+use super::render_help_overlays;
 
 /// A widget that renders a bordered selectable list overlay.
 ///
@@ -161,14 +162,6 @@ impl StatefulWidget for SelectList<'_> {
                     }
                     spans.push(Span::styled(label.clone(), style));
 
-                    // Add description if present
-                    if let Some(Some(desc)) = self.descriptions.get(i) {
-                        spans.push(Span::styled(
-                            format!("  {}", desc),
-                            Style::default().fg(self.colors.help),
-                        ));
-                    }
-
                     let mut item = ratatui::widgets::ListItem::new(Line::from(spans));
                     if is_selected {
                         item = item.style(Style::default().bg(self.colors.selected_bg));
@@ -208,6 +201,39 @@ impl StatefulWidget for SelectList<'_> {
 
         let list = ratatui::widgets::List::new(items).block(block);
         ratatui::widgets::StatefulWidget::render(list, area, buf, &mut list_state);
+
+        // Render descriptions as right-aligned overlays (only when descriptions are present)
+        if !self.descriptions.is_empty() && !self.items.is_empty() {
+            let top_border = if self.borders.contains(Borders::TOP) { 1 } else { 0 };
+            let bottom_border = if self.borders.contains(Borders::BOTTOM) { 1 } else { 0 };
+            let inner = area.inner(Margin {
+                horizontal: 1,
+                vertical: top_border,
+            });
+            let inner = Rect::new(
+                inner.x,
+                inner.y,
+                inner.width,
+                inner.height.saturating_sub(bottom_border),
+            );
+            let help_entries: Vec<(usize, Line<'static>)> = self
+                .descriptions
+                .iter()
+                .enumerate()
+                .filter_map(|(i, d)| {
+                    d.as_deref().map(|desc| {
+                        (
+                            i,
+                            Line::from(Span::styled(
+                                desc.to_string(),
+                                Style::default().fg(self.colors.help),
+                            )),
+                        )
+                    })
+                })
+                .collect();
+            render_help_overlays(buf, &help_entries, scroll_offset, inner);
+        }
 
         // Render scrollbar if content overflows
         let total_items = self.items.len();
