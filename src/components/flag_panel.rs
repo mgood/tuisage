@@ -503,7 +503,7 @@ impl Component for FlagPanelComponent {
     }
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> EventResult<FlagPanelAction> {
-        use crossterm::event::MouseEventKind;
+        use crossterm::event::{MouseButton, MouseEventKind};
 
         let col = event.column;
 
@@ -554,6 +554,27 @@ impl Component for FlagPanelComponent {
                 // Check for scroll events that weren't in panel area
                 if matches!(event.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) {
                     EventResult::Consumed
+                } else if matches!(event.kind, MouseEventKind::Down(MouseButton::Right)) {
+                    // Right-click: decrement/clear the clicked flag
+                    let inner_top = area.y + 1; // skip border
+                    let row = event.row;
+                    if row >= inner_top
+                        && row < area.y + area.height.saturating_sub(1)
+                        && col >= area.x
+                        && col < area.x + area.width
+                    {
+                        let clicked_offset = (row - inner_top) as usize;
+                        let item_index =
+                            self.base.list_state.scroll as usize + clicked_offset;
+                        if item_index < self.base.list_state.total_items {
+                            self.base.list_state.select(item_index);
+                            EventResult::Action(FlagPanelAction::ClearFlag(item_index))
+                        } else {
+                            EventResult::NotHandled
+                        }
+                    } else {
+                        EventResult::NotHandled
+                    }
                 } else {
                     EventResult::NotHandled
                 }
