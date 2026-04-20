@@ -1192,33 +1192,35 @@ impl App {
         self.mouse_position = Some((col, row));
 
         match event.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                // If theme picker is open, handle its clicks
-                if self.is_theme_picking() {
-                    if let Some(action) =
-                        self.theme_picker
-                            .click_at(col, row, self.layout.theme_overlay_rect)
-                    {
-                        self.process_theme_picker_action(action);
-                    }
-                    return Action::None;
-                }
+            MouseEventKind::Down(MouseButton::Left | MouseButton::Right) => {
+                let is_left = matches!(event.kind, MouseEventKind::Down(MouseButton::Left));
 
-                // Check if click is on the theme indicator in the help bar
-                if let Some(rect) = self.layout.theme_indicator_rect {
-                    if col >= rect.x
-                        && col < rect.x + rect.width
-                        && row >= rect.y
-                        && row < rect.y + rect.height
-                    {
-                        self.open_theme_picker();
+                // Left-click only: theme picker / indicator / choice overlay
+                if is_left {
+                    if self.is_theme_picking() {
+                        if let Some(action) =
+                            self.theme_picker
+                                .click_at(col, row, self.layout.theme_overlay_rect)
+                        {
+                            self.process_theme_picker_action(action);
+                        }
                         return Action::None;
                     }
-                }
 
-                // Delegate overlay clicks to the focused panel's component
-                if self.is_choosing() {
-                    return self.delegate_mouse_to_choosing_panel(event);
+                    if let Some(rect) = self.layout.theme_indicator_rect {
+                        if col >= rect.x
+                            && col < rect.x + rect.width
+                            && row >= rect.y
+                            && row < rect.y + rect.height
+                        {
+                            self.open_theme_picker();
+                            return Action::None;
+                        }
+                    }
+
+                    if self.is_choosing() {
+                        return self.delegate_mouse_to_choosing_panel(event);
+                    }
                 }
 
                 // Determine which panel was clicked and delegate
@@ -1250,7 +1252,7 @@ impl App {
                             })
                         }
                         Focus::Preview => {
-                            if !switching_focus {
+                            if is_left && !switching_focus {
                                 return self.handle_enter();
                             }
                             Action::None
@@ -1285,23 +1287,6 @@ impl App {
                         })
                     }
                     Focus::Preview => Action::None,
-                }
-            }
-            MouseEventKind::Down(MouseButton::Right) => {
-                // Right-click: delegate to the clicked panel for decrement/clear
-                if let Some((clicked_panel, area)) = self.layout.region_at(col, row) {
-                    self.set_focus(clicked_panel);
-                    match clicked_panel {
-                        Focus::Flags => {
-                            let result = self.flag_panel.handle_mouse(event, area);
-                            self.dispatch_filter_result(result, |s, action| {
-                                s.process_flag_action(action)
-                            })
-                        }
-                        _ => Action::None,
-                    }
-                } else {
-                    Action::None
                 }
             }
             _ => Action::None,
