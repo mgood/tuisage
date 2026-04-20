@@ -544,6 +544,32 @@ mod tests {
         insta::assert_snapshot!(output);
     }
 
+    #[test]
+    fn snapshot_choice_select_with_descriptions() {
+        // plugin > update has completions with descriptions=#true
+        // Each line in the output is "value:description", which should be
+        // displayed right-aligned in the choice select dropdown.
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["plugin", "update"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+
+        // Open the choice select box (triggers completion command)
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+
+        // Only render if completion succeeded (skips if printf not available)
+        if !app.is_choosing() {
+            return;
+        }
+
+        let output = render_to_string(&mut app, 100, 24);
+        insta::assert_snapshot!(output);
+    }
+
     // ── Minimal spec tests ──────────────────────────────────────────────
 
     #[test]

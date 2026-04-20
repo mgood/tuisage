@@ -1,0 +1,28 @@
+---
+source: src/ui.rs
+expression: output
+---
+┌ Command ─────────────────────────────────────────────────────────────────────────────────────────┐
+│ $ mycli plugin update                                                                            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Commands ────────────────────────────┐┌ Flags ───────────────────────────────────────────────────┐
+│  init        Initialize a new project││  ○ --all                               Update all plugins│
+│  config          Manage configuration││  [0] -v, --verbose [G]             Enable verbose logging│
+│  │ set (add)       Set a config value││  ○ -q, --quiet [G]                      Enable quiet mode│
+│  │ get             Get a config value││                                                          │
+│  │ list (ls)   List all config values││                                                          │
+│  │ remove (rm)  Remove a config value││                                                          │
+│  run                       Run a task││                                                          │
+│  deploy        Deploy the application││                                                          │
+│  plugin                Manage plugins││                                                          │
+│  │ install (i)       Install a plugin││                                                          │
+│  │ uninstall (rm)  Uninstall a plugin│└──────────────────────────────────────────────────────────┘
+│  │ list (ls)   List installed plugins│┌ Arguments ───────────────────────────────────────────────┐
+│▶ │ update              Update plugins││▶ ○ [name] = ▎        Plugin name (updates all if omitted)│
+│  version        Print the CLI version││            │auth         Authentication plugin│          │
+│  help          Print help information││            │analytics          Usage analytics│          │
+│                                      ││            │cache            Redis cache layer│          │
+│                                      ││            └──────────────────────────────────┘          │
+│                                      ││                                                          │
+└──────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
+ ↑↓ select  ⏎ confirm  Esc keep text                                                   T: [Dracula]

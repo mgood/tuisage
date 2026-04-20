@@ -5266,6 +5266,41 @@ cmd "other" {
     }
 
     #[test]
+    fn test_completion_filter_matches_description() {
+        // plugin > update has descriptions=#true: auth:Authentication plugin, etc.
+        // Typing a word that matches a description (not the name) should still show that item.
+        let spec = sample_spec();
+        let mut app = App::new(spec);
+        app.navigate_to_command(&["plugin", "update"]);
+        app.set_focus(Focus::Args);
+        app.set_arg_index(0);
+
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        app.handle_key(enter);
+
+        if !app.is_choosing() {
+            // Skip if completion command not available in this environment
+            return;
+        }
+
+        // Type "redis" — matches the description "Redis cache layer" (for "cache"), not the name
+        for c in "redis".chars() {
+            let key = crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(c),
+                crossterm::event::KeyModifiers::NONE,
+            );
+            app.handle_key(key);
+        }
+
+        let filtered = app.arg_panel.filtered_choices();
+        assert_eq!(filtered.len(), 1, "Only 'cache' should match 'redis' via its description");
+        assert_eq!(filtered[0].1, "cache");
+    }
+
+    #[test]
     fn test_choice_select_typing_clears_selection() {
         let mut app = App::new(sample_spec());
         app.navigate_to_command(&["deploy"]);
