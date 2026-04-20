@@ -663,7 +663,7 @@ mod tests {
         cs.handle_key(KeyEvent::from(KeyCode::Char('s')));
 
         let filtered = cs.filtered_choices();
-        assert_eq!(filtered.len(), 1, "Only 'cache' (whose desc contains 'redis') should match");
+        assert_eq!(filtered.len(), 1, "Only 'cache' (whose description contains 'redis') should match");
         assert_eq!(filtered[0].1, "cache");
     }
 

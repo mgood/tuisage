@@ -203,7 +203,7 @@ impl StatefulWidget for SelectList<'_> {
         ratatui::widgets::StatefulWidget::render(list, area, buf, &mut list_state);
 
         // Render descriptions as right-aligned overlays (only when descriptions are present)
-        if !self.descriptions.is_empty() && !self.items.is_empty() {
+        if !self.descriptions.is_empty() {
             let top_border = if self.borders.contains(Borders::TOP) { 1 } else { 0 };
             let bottom_border = if self.borders.contains(Borders::BOTTOM) { 1 } else { 0 };
             let inner = area.inner(Margin {
