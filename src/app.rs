@@ -1287,6 +1287,23 @@ impl App {
                     Focus::Preview => Action::None,
                 }
             }
+            MouseEventKind::Down(MouseButton::Right) => {
+                // Right-click: delegate to the clicked panel for decrement/clear
+                if let Some((clicked_panel, area)) = self.layout.region_at(col, row) {
+                    self.set_focus(clicked_panel);
+                    match clicked_panel {
+                        Focus::Flags => {
+                            let result = self.flag_panel.handle_mouse(event, area);
+                            self.dispatch_filter_result(result, |s, action| {
+                                s.process_flag_action(action)
+                            })
+                        }
+                        _ => Action::None,
+                    }
+                } else {
+                    Action::None
+                }
+            }
             _ => Action::None,
         }
     }
@@ -3348,6 +3365,51 @@ cmd "other" {
         // Backspace should decrement to 2
         app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         assert_eq!(app.current_flag_values()[fidx].1, FlagValue::Count(2));
+    }
+
+    #[test]
+    fn test_right_click_decrements_count_flag() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        let mut app = App::new(sample_spec());
+        app.set_focus(Focus::Flags);
+
+        // Find verbose (count flag)
+        let fidx = app
+            .current_flag_values()
+            .iter()
+            .position(|(n, _)| n == "verbose")
+            .unwrap();
+        app.set_flag_index(fidx);
+
+        // Increment to 2 via keyboard
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert_eq!(app.current_flag_values()[fidx].1, FlagValue::Count(2));
+
+        // Set up a fake layout so right-click lands in the flags panel
+        let flags_area = ratatui::layout::Rect::new(40, 1, 60, 18);
+        app.layout = UiLayout::new();
+        app.layout
+            .click_regions
+            .register(flags_area, Focus::Flags);
+        // The verbose flag is at row (flags_area.y + 1 + fidx) within the panel
+        let flag_row = flags_area.y + 1 + fidx as u16;
+
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: flags_area.x + 5,
+            row: flag_row,
+            modifiers: KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse);
+
+        // Right-click should decrement count from 2 to 1
+        assert_eq!(
+            app.current_flag_values()[fidx].1,
+            FlagValue::Count(1),
+            "Right-click should decrement count flag"
+        );
     }
 
     #[test]
