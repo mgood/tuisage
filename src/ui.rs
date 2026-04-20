@@ -82,6 +82,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Render theme picker overlays (on top of everything)
     {
         app.theme_picker.set_viewport(area);
+        app.theme_picker.set_mouse_position(app.mouse_position);
         let overlays = app.theme_picker.collect_overlays();
         for req in overlays {
             let overlay_area =

@@ -80,7 +80,6 @@ impl<'a> SelectList<'a> {
     }
 
     /// Set the hovered index.
-    #[allow(dead_code)]
     pub fn with_hovered(mut self, hovered: Option<usize>) -> Self {
         self.hovered = hovered;
         self
