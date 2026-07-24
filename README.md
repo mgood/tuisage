@@ -71,6 +71,8 @@ For tools supporting `--usage` you can run them like:
 tuisage mytool --usage
 ```
 
+To add `--usage` to an existing project, see the [list of integrations](https://usage.jdx.dev/spec/integrations) which supports common argument parsers for a variety of languages.
+
 ### From a file
 
 You can also provide your own `--usage` spec from a file:
