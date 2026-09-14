@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2](https://github.com/mgood/tuisage/compare/v0.2.1...v0.2.2) - 2026-09-14
+
+### Added
+
+- reset command options with Ctrl+U ([#28](https://github.com/mgood/tuisage/pull/28))
+
+### Fixed
+
+- show Backspace shortcut in help bar ([#27](https://github.com/mgood/tuisage/pull/27))
+
+### Other
+
+- link to --usage integrations
+
 ## [0.2.1](https://github.com/mgood/tuisage/compare/v0.2.0...v0.2.1) - 2026-04-20
 
 ### Added
