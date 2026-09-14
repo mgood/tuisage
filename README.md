@@ -111,6 +111,7 @@ Provide either trailing arguments (spec command) or `--spec-file` (but not both)
 | `Enter` | Activate the selected input |
 | `Space` | Toggle or increment a flag |
 | `Backspace` | Remove/clear: decrement or clear a value |
+| `Ctrl+U` | Reset flags and arguments for the current command |
 | `/` | Enter search mode |
 | `Esc` | Cancel filter / stop editing |
 | `Ctrl+R` | Execute command |

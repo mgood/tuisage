@@ -266,6 +266,7 @@ When the user navigates to a new command, the state is synchronized:
 | `Backspace` | Flags panel (string/choices) | Clear the flag value |
 | `Backspace` | Args panel | Clear the argument value |
 | `/` | Commands, Flags, or Args panel | Activate fuzzy filter mode (no effect in Preview panel) |
+| `Ctrl+U` | Any panel | Reset all flag and argument values for the current command to their defaults (unset) |
 | `Ctrl+R` | Any panel | Execute the built command in an embedded PTY |
 
 ### Editing Mode Keys
