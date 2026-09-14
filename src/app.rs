@@ -117,6 +117,22 @@ pub(crate) fn collect_visible_flags<'a>(cmd: &'a SpecCommand, spec: &'a Spec) ->
     flags
 }
 
+/// The default/unset value for a flag given its spec.
+/// String flags use the spec-declared default (or empty); count flags start at
+/// zero; negatable and plain boolean flags start unset.
+fn default_flag_value(flag: &SpecFlag) -> FlagValue {
+    if flag.count {
+        FlagValue::Count(0)
+    } else if flag.arg.is_some() {
+        let default = flag.default.first().cloned().unwrap_or_default();
+        FlagValue::String(default)
+    } else if flag.negate.is_some() {
+        FlagValue::NegBool(None)
+    } else {
+        FlagValue::Bool(false)
+    }
+}
+
 /// Frame-local layout snapshot used for mouse hit-testing.
 pub struct UiLayout {
     pub click_regions: ClickRegionRegistry<Focus>,
@@ -959,18 +975,7 @@ impl App {
                     if let Some(global_val) = root_global_values.get(&f.name) {
                         return (f.name.clone(), global_val.clone());
                     }
-                    let val = if f.count {
-                        FlagValue::Count(0)
-                    } else if f.arg.is_some() {
-                        let default = f.default.first().cloned().unwrap_or_default();
-                        FlagValue::String(default)
-                    } else if f.negate.is_some() {
-                        // Negatable flag: tristate (omitted / explicit on / explicit off)
-                        FlagValue::NegBool(None)
-                    } else {
-                        FlagValue::Bool(false)
-                    };
-                    (f.name.clone(), val)
+                    (f.name.clone(), default_flag_value(f))
                 })
                 .collect();
             self.flag_values.insert(path_key, values);
@@ -1036,6 +1041,40 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Reset all flag and positional argument values for the current command
+    /// back to their default/unset state. Leaves selection, focus, theme, and
+    /// any active filter/search state unchanged.
+    pub fn reset_current_command(&mut self) {
+        let defaults: Vec<(String, FlagValue)> = self
+            .visible_flags_snapshot()
+            .iter()
+            .map(|f| (f.name.clone(), default_flag_value(f)))
+            .collect();
+
+        {
+            let values = self.current_flag_values_mut();
+            for (name, default) in &defaults {
+                if let Some((_, value)) = values.iter_mut().find(|(n, _)| n == name) {
+                    *value = default.clone();
+                }
+            }
+        }
+
+        // Global flags are shared across command levels, so propagate their
+        // reset value everywhere to keep the root and current path consistent.
+        for (name, default) in defaults {
+            self.sync_global_flag(&name, &default);
+        }
+
+        for arg in &mut self.arg_values {
+            arg.value.clear();
+        }
+        self.persist_current_arg_values();
+
+        self.refresh_flag_panel_inputs();
+        self.refresh_arg_panel_inputs();
     }
 
     // --- Tree view helpers ---
@@ -1391,6 +1430,14 @@ impl App {
                 Action::None
             }
             KeyCode::Char('p') => Action::None,
+            KeyCode::Char('u')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.reset_current_command();
+                Action::None
+            }
             KeyCode::Tab => {
                 self.focus_next();
                 Action::None
@@ -5618,5 +5665,123 @@ cmd "other" {
             !app.arg_values[0].value.is_empty(),
             "Should have selected a value"
         );
+    }
+
+    // ── Reset current command tests ──────────────────────────────────────
+
+    #[test]
+    fn test_reset_current_command_restores_defaults() {
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["run"]);
+
+        // Populate args with non-empty values.
+        app.arg_values[0].value = "build".to_string();
+        if app.arg_values.len() > 1 {
+            app.arg_values[1].value = "--flag".to_string();
+        }
+
+        let run_key = "run".to_string();
+        let root_key = String::new();
+
+        let set_flag = |app: &mut App, key: &String, name: &str, val: FlagValue| {
+            if let Some(flags) = app.flag_values.get_mut(key) {
+                if let Some((_, value)) = flags.iter_mut().find(|(n, _)| n == name) {
+                    *value = val;
+                }
+            }
+        };
+
+        set_flag(&mut app, &run_key, "env", FlagValue::String("staging".into()));
+        set_flag(&mut app, &run_key, "jobs", FlagValue::String("8".into()));
+        set_flag(&mut app, &run_key, "dry-run", FlagValue::Bool(true));
+        set_flag(&mut app, &run_key, "watch", FlagValue::Bool(true));
+        set_flag(&mut app, &run_key, "color", FlagValue::NegBool(Some(true)));
+        set_flag(&mut app, &run_key, "verbose", FlagValue::Count(3));
+        set_flag(&mut app, &run_key, "quiet", FlagValue::Bool(true));
+        // Mirror global flag values at the root level as the UI would.
+        set_flag(&mut app, &root_key, "verbose", FlagValue::Count(3));
+        set_flag(&mut app, &root_key, "quiet", FlagValue::Bool(true));
+
+        app.reset_current_command();
+
+        let flag = |app: &App, name: &str| {
+            app.current_flag_values()
+                .iter()
+                .find(|(n, _)| n == name)
+                .unwrap()
+                .1
+                .clone()
+        };
+
+        assert_eq!(app.arg_values[0].value, "");
+        if app.arg_values.len() > 1 {
+            assert_eq!(app.arg_values[1].value, "");
+        }
+        assert_eq!(flag(&app, "env"), FlagValue::String(String::new()));
+        assert_eq!(flag(&app, "jobs"), FlagValue::String("4".into()));
+        assert_eq!(flag(&app, "dry-run"), FlagValue::Bool(false));
+        assert_eq!(flag(&app, "watch"), FlagValue::Bool(false));
+        assert_eq!(flag(&app, "color"), FlagValue::NegBool(None));
+        assert_eq!(flag(&app, "verbose"), FlagValue::Count(0));
+        assert_eq!(flag(&app, "quiet"), FlagValue::Bool(false));
+
+        // Global flag values should also be reset at the root level.
+        let root_verbose = app
+            .flag_values
+            .get(&root_key)
+            .unwrap()
+            .iter()
+            .find(|(n, _)| n == "verbose")
+            .unwrap()
+            .1
+            .clone();
+        assert_eq!(root_verbose, FlagValue::Count(0));
+    }
+
+    #[test]
+    fn test_reset_key_binding_resets_and_is_idempotent() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::new(sample_spec());
+        app.navigate_to_command(&["run"]);
+        app.set_focus(Focus::Flags);
+        app.next_theme();
+        let theme_before = app.theme_name;
+
+        app.arg_values[0].value = "build".to_string();
+        let run_key = "run".to_string();
+        if let Some(flags) = app.flag_values.get_mut(&run_key) {
+            if let Some((_, value)) = flags.iter_mut().find(|(n, _)| n == "dry-run") {
+                *value = FlagValue::Bool(true);
+            }
+        }
+
+        let reset_key = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL);
+        app.handle_key(reset_key);
+
+        assert_eq!(app.arg_values[0].value, "");
+        let dry_run = app
+            .current_flag_values()
+            .iter()
+            .find(|(n, _)| n == "dry-run")
+            .unwrap()
+            .1
+            .clone();
+        assert_eq!(dry_run, FlagValue::Bool(false));
+        assert_eq!(app.focus(), Focus::Flags, "reset should not change focus");
+        assert_eq!(app.theme_name, theme_before, "reset should not change theme");
+        assert_eq!(app.command_path, vec!["run"], "reset should not navigate away");
+
+        // Pressing reset again should be idempotent.
+        app.handle_key(reset_key);
+        assert_eq!(app.arg_values[0].value, "");
+        let jobs = app
+            .current_flag_values()
+            .iter()
+            .find(|(n, _)| n == "jobs")
+            .unwrap()
+            .1
+            .clone();
+        assert_eq!(jobs, FlagValue::String("4".into()));
     }
 }

@@ -43,6 +43,7 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Support **negatable flags** with a tristate model: omitted (use default), explicitly on, explicitly off. This supports the [usage spec negation pattern](https://usage.jdx.dev/spec/reference/flag) (e.g., `flag "--color" negate="--no-color" default=#true`). Users can explicitly control the flag state even when config files or environment variables might override the default.
 - Support count flags (increment/decrement, e.g., `-vvv`).
 - Support clearing/removing flag and argument values via Backspace: decrements count flags, turns off boolean flags, and clears string/choice flag values and argument values.
+- Support resetting all flag and argument values for the current command back to their defaults (unset) with a single key (`Ctrl+U`). Flags return to unset or their spec-declared default, and positional argument values are cleared.
 - Support flags that take string values (free-text input).
 - Support flags with predefined choices via an **inline select box** that appears below the flag when activated. The select box supports fuzzy filtering to narrow options by typing, and hides non-matching choices.
 - Support flags with **dynamic completions** via the usage spec `complete` directive. When a flag's argument has a matching `complete` entry with a `run` command, execute the command each time the user enters edit mode and show the results in the select box. The user can still enter custom text by pressing Esc to dismiss the select box and type freely.
