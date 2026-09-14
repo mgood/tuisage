@@ -268,6 +268,7 @@ fn render_help_bar(
             ],
             Focus::Flags => &[
                 Keybind { key: "⏎/Space", desc: "toggle" },
+                Keybind { key: "⌫", desc: "clear" },
                 Keybind { key: "↑↓", desc: "navigate" },
                 Keybind { key: "⇥", desc: "next" },
                 Keybind { key: "/", desc: "filter" },
@@ -276,6 +277,7 @@ fn render_help_bar(
             ],
             Focus::Args => &[
                 Keybind { key: "⏎", desc: "edit" },
+                Keybind { key: "⌫", desc: "clear" },
                 Keybind { key: "↑↓", desc: "navigate" },
                 Keybind { key: "⇥", desc: "next" },
                 Keybind { key: "/", desc: "filter" },
