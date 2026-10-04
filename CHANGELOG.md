@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3](https://github.com/mgood/tuisage/compare/v0.2.2...v0.2.3) - 2026-10-04
+
+### Other
+
+- apply some clippy fixes
+- update stale snapshots after UI changes
+
 ## [0.2.2](https://github.com/mgood/tuisage/compare/v0.2.1...v0.2.2) - 2026-09-14
 
 ### Added
