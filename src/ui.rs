@@ -178,7 +178,16 @@ fn render_flag_list(
             break;
         }
     }
-    let flags = collect_visible_flags(cmd, &app.spec);
+    let mut display_flags: Vec<_> = collect_visible_flags(cmd, &app.spec)
+        .into_iter()
+        .cloned()
+        .collect();
+    for (index, flag) in display_flags.iter_mut().enumerate() {
+        if app.flag_locked(index) {
+            flag.help = Some(format!("[locked] {}", flag.help.as_deref().unwrap_or("")));
+        }
+    }
+    let flags: Vec<_> = display_flags.iter().collect();
     let key = app.command_path.join(" ");
     let flag_values: Vec<(String, crate::app::FlagValue)> = app
         .flag_values
@@ -213,8 +222,14 @@ fn render_arg_list(
     app.arg_panel.set_focused(focused);
     app.arg_panel.set_mouse_position(app.mouse_position);
 
+    let mut display_args = app.arg_values.clone();
+    for (index, arg) in display_args.iter_mut().enumerate() {
+        if app.arg_locked(index) {
+            arg.help = Some(format!("[locked] {}", arg.help.as_deref().unwrap_or("")));
+        }
+    }
     let data = ArgRenderData {
-        arg_values: &app.arg_values,
+        arg_values: &display_args,
     };
 
     app.arg_panel
@@ -228,6 +243,17 @@ fn render_help_bar(
     colors: &UiColors,
     layout: &mut UiLayout,
 ) {
+    if let Some(error) = &app.submission_error {
+        frame.render_widget(
+            ratatui::widgets::Paragraph::new(error.as_str()).style(
+                ratatui::style::Style::default()
+                    .fg(colors.required)
+                    .bg(colors.bar_bg),
+            ),
+            area,
+        );
+        return;
+    }
     let keybinds: &[Keybind] = if app.is_theme_picking() {
         &[
             Keybind { key: "↑↓", desc: "navigate" },

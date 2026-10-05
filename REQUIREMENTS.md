@@ -93,6 +93,14 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Exit cleanly with no output when the user quits the application.
 - Support `--usage` flag to output TuiSage's own usage spec and exit, enabling self-describing CLI integration.
 
+### Initial values and locks
+
+- Accept typed JSON initial values for string fields, boolean flags, and count flags, from either a command argument or a JSON file.
+- Identify fields without ambiguity across global flags, root fields, and command-local fields.
+- Reject unknown fields, conflicting identifiers, invalid types, and values outside declared choices before terminal startup.
+- Allow values to be editable by default or locked across keyboard, mouse, completion, and reset paths.
+- Preserve explicitly supplied empty values separately from omitted fields.
+
 ## Non-Functional Requirements
 
 ### Input Methods
@@ -124,3 +132,13 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Support script files with embedded `USAGE` heredoc blocks via `--spec-file`.
 - PTY resize support: dynamically resize the embedded terminal when the TUI window is resized during execution.
 - Send stdin input to the running process via a dedicated input bar.
+
+### Native command composition
+
+The `--compose` option returns one JSON object with the executable and ordered argv. It does not run the command or open the execution view. The TUI uses the controlling terminal, so redirected stdout contains only JSON. Cancellation returns no output with status 130. Explicit empty arguments are retained. Terminal modes are restored on completion or error. Run `python3 tests/terminal_composition.py` after building to check the PTY flow.
+
+### Submission validation
+
+Every execute/compose submission checks required arguments/options, required subcommands, declared choices, and repeated-value minimum/maximum limits. Failure leaves the form open, displays the field identifier and correction in the status row, and neither executes nor emits a command. Explicit empty supplied strings are distinguished from omitted fields.
+
+`--validate PATH` additionally invokes a provider executable directly, sending the version-1 JSON form context on stdin. The request includes executable, argv, command path, optional field, and a map of canonical field identifiers to values. It must return `{ "version": 1, "errors": {} }` for success, or errors keyed by field identifier. Nonzero exit, malformed response, unsupported version, or a five-second timeout blocks submission. The operational command is never invoked for validation. Usage 2.16.1 does not expose a general conditional-rule API; dependent command-specific constraints belong in this provider.
