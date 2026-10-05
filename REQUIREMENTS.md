@@ -124,3 +124,7 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Support script files with embedded `USAGE` heredoc blocks via `--spec-file`.
 - PTY resize support: dynamically resize the embedded terminal when the TUI window is resized during execution.
 - Send stdin input to the running process via a dedicated input bar.
+
+### Native command composition
+
+The `--compose` option returns one JSON object with the executable and ordered argv. It does not run the command or open the execution view. The TUI uses the controlling terminal, so redirected stdout contains only JSON. Cancellation returns no output with status 130. Explicit empty arguments are retained. Terminal modes are restored on completion or error. Run `python3 tests/terminal_composition.py` after building to check the PTY flow.

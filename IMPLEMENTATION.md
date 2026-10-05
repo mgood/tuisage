@@ -279,3 +279,7 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - **Embedded USAGE blocks** — verify and test support for script files with heredoc USAGE blocks via `--spec-file`
 - **Further module splitting** — enter/completion lookup and value-mutation orchestration still live in App; these could move into dedicated services or richer panel-side actions to further reduce coordination responsibilities
 - **CI pipeline** — GitHub Actions for `cargo test`, `cargo clippy`, and `insta` snapshot checks
+
+### Native command composition
+
+The `--compose` option returns one JSON object with the executable and ordered argv. It does not run the command or open the execution view. The TUI uses the controlling terminal, so redirected stdout contains only JSON. Cancellation returns no output with status 130. Explicit empty arguments are retained. Terminal modes are restored on completion or error. Run `python3 tests/terminal_composition.py` after building to check the PTY flow.

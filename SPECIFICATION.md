@@ -534,3 +534,7 @@ The `ExecutionState` struct holds:
 - `pty_writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>` — input channel to the process
 - `exited: Arc<AtomicBool>` — whether the child has finished
 - `exit_status: Arc<Mutex<Option<String>>>` — the exit code/signal description
+
+### Native command composition
+
+The `--compose` option returns one JSON object with the executable and ordered argv. It does not run the command or open the execution view. The TUI uses the controlling terminal, so redirected stdout contains only JSON. Cancellation returns no output with status 130. Explicit empty arguments are retained. Terminal modes are restored on completion or error. Run `python3 tests/terminal_composition.py` after building to check the PTY flow.

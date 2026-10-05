@@ -257,8 +257,10 @@ impl FlagPanelComponent {
             .find(|(name, _)| name == &flag.name)
             .map(|(_, value)| value);
 
-        let FlagValue::String(current_value) = value?.clone() else {
-            return Some(FlagPanelEnterRequest::Toggle);
+        let current_value = match value?.clone() {
+            FlagValue::String(value) => value,
+            FlagValue::EmptyString => String::new(),
+            _ => return Some(FlagPanelEnterRequest::Toggle),
         };
 
         let value_column = Self::value_column_for_flag(flag, value);
@@ -299,7 +301,7 @@ impl FlagPanelComponent {
         // indicator width: "✓ "=2, "○ "=2, "[n] "=varies, "[·] "=4, "[•] "=4
         let indicator_width = match value {
             Some(FlagValue::Count(n)) => format!("[{}] ", n).chars().count(),
-            Some(FlagValue::String(_)) => 4,
+            Some(FlagValue::String(_)) | Some(FlagValue::EmptyString) => 4,
             _ => 2,
         };
 
@@ -706,8 +708,14 @@ impl Widget for FlagPanel<'_> {
                 }
 
                 // Value display for string flags
-                if let Some((_, FlagValue::String(s))) = value {
-                    self.render_string_value(&mut spans, s, flag, default_val, is_editing, i);
+                match value {
+                    Some((_, FlagValue::String(s))) => {
+                        self.render_string_value(&mut spans, s, flag, default_val, is_editing, i);
+                    }
+                    Some((_, FlagValue::EmptyString)) => {
+                        self.render_string_value(&mut spans, "", flag, default_val, is_editing, i);
+                    }
+                    _ => {}
                 }
 
                 // Collect help text for overlay
@@ -845,6 +853,7 @@ fn render_flag_indicator<'a>(value: Option<&FlagValue>, colors: &UiColors) -> Sp
                 Span::styled("[•] ", Style::default().fg(colors.arg))
             }
         }
+        Some(FlagValue::EmptyString) => Span::styled("[•] ", Style::default().fg(colors.arg)),
         None => Span::styled("○ ", Style::default().fg(colors.help)),
     }
 }

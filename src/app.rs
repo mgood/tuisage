@@ -70,6 +70,8 @@ pub enum FlagValue {
     NegBool(Option<bool>),
     /// Flag with a string value.
     String(String),
+    /// An explicitly supplied empty string value.
+    EmptyString,
     /// Count flag (e.g., -vvv).
     Count(u32),
 }
@@ -77,6 +79,7 @@ pub enum FlagValue {
 /// State for one positional argument's user-entered value.
 #[derive(Debug, Clone)]
 pub struct ArgValue {
+    pub supplied: bool,
     pub name: String,
     pub value: String,
     pub required: bool,
@@ -557,18 +560,20 @@ impl App {
 
     /// Apply a string value to the flag at the given visible index.
     fn apply_flag_string_value(&mut self, flag_idx: usize, value: &str) {
-        let mut changed = false;
-        {
-            let values = self.current_flag_values_mut();
-            if let Some((name, FlagValue::String(ref mut s))) = values.get_mut(flag_idx) {
-                let flag_name = name.clone();
-                *s = value.to_string();
-                let new_val = FlagValue::String(s.clone());
-                self.sync_global_flag(&flag_name, &new_val);
-                changed = true;
+        let flag_name = self
+            .current_flag_values()
+            .get(flag_idx)
+            .map(|(name, _)| name.clone());
+        if let Some(flag_name) = flag_name {
+            let new_value = if value.is_empty() {
+                FlagValue::EmptyString
+            } else {
+                FlagValue::String(value.to_string())
+            };
+            if let Some((_, current)) = self.current_flag_values_mut().get_mut(flag_idx) {
+                *current = new_value.clone();
             }
-        }
-        if changed {
+            self.sync_global_flag(&flag_name, &new_value);
             self.refresh_flag_panel_inputs();
         }
     }
@@ -582,6 +587,10 @@ impl App {
             }
             ArgPanelAction::ClearArg(idx) => {
                 self.set_arg_value(idx, String::new());
+                if let Some(arg) = self.arg_values.get_mut(idx) {
+                    arg.supplied = false;
+                    self.persist_current_arg_values();
+                }
                 Action::None
             }
             ArgPanelAction::ValueChanged { index, value } => {
@@ -629,6 +638,13 @@ impl App {
                                 s.clear();
                                 let new_val = FlagValue::String(String::new());
                                 self.sync_global_flag(&flag_name, &new_val);
+                            }
+                            FlagValue::EmptyString => {
+                                *value = FlagValue::String(String::new());
+                                self.sync_global_flag(
+                                    &flag_name,
+                                    &FlagValue::String(String::new()),
+                                );
                             }
                             FlagValue::NegBool(state) => {
                                 *state = None;
@@ -882,6 +898,7 @@ impl App {
                     .unwrap_or_default();
                 let default = a.default.first().cloned().unwrap_or_default();
                 ArgValue {
+                    supplied: !a.default.is_empty(),
                     name: a.name.clone(),
                     value: default,
                     required: a.required,
@@ -909,6 +926,7 @@ impl App {
     fn set_arg_value(&mut self, index: usize, value: String) {
         if let Some(arg) = self.arg_values.get_mut(index) {
             arg.value = value;
+            arg.supplied = true;
             self.persist_current_arg_values();
         }
         self.refresh_arg_panel_inputs();
@@ -1070,6 +1088,7 @@ impl App {
 
         for arg in &mut self.arg_values {
             arg.value.clear();
+            arg.supplied = false;
         }
         self.persist_current_arg_values();
 
@@ -1461,6 +1480,7 @@ impl App {
                     .get(flag_idx)
                     .and_then(|(_, v)| match v {
                         FlagValue::String(s) => Some(s.clone()),
+                        FlagValue::EmptyString => Some(String::new()),
                         _ => None,
                     })
                     .unwrap_or_default()
@@ -1537,6 +1557,7 @@ impl App {
                     .get(index)
                     .and_then(|(_, value)| match value {
                         FlagValue::String(text) => Some(text.clone()),
+                        FlagValue::EmptyString => Some(String::new()),
                         _ => None,
                     })
                     .unwrap_or(current_value);
@@ -1554,6 +1575,7 @@ impl App {
                     .get(index)
                     .and_then(|(_, value)| match value {
                         FlagValue::String(text) => Some(text.clone()),
+                        FlagValue::EmptyString => Some(String::new()),
                         _ => None,
                     })
                     .unwrap_or(current_value);
@@ -3777,6 +3799,24 @@ cmd "other" {
         assert!(parts.contains(&"hello world".to_string()));
         // Should NOT contain quotes
         assert!(!parts.iter().any(|p| p.contains('"')));
+    }
+
+    #[test]
+    fn explicit_empty_arg_appears_in_preview_and_command_parts() {
+        let spec = r#"
+name "fake"
+cmd "run" {
+    arg "[value]"
+}
+"#
+        .parse::<Spec>()
+        .expect("Failed to parse empty-argument test spec");
+        let mut app = App::new(spec);
+        app.navigate_to_command(&["run"]);
+        app.set_arg_value(0, String::new());
+
+        assert_eq!(app.build_command(), "fake run \"\"");
+        assert_eq!(app.build_command_parts(), vec!["fake", "run", ""]);
     }
 
     #[test]

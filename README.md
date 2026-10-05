@@ -181,6 +181,10 @@ This README presents the main documentation intended for users. Other documents 
 | [color-eyre](https://crates.io/crates/color-eyre) | Error reporting |
 | [insta](https://crates.io/crates/insta) | Snapshot testing (dev) |
 
+## Native command composition
+
+The `--compose` option returns one JSON object with the executable and ordered argv. It does not run the command or open the execution view. The TUI uses the controlling terminal, so redirected stdout contains only JSON. Cancellation returns no output with status 130. Explicit empty arguments are retained. Terminal modes are restored on completion or error. Run `python3 tests/terminal_composition.py` after building to check the PTY flow.
+
 ## License
 
 MIT
