@@ -26,6 +26,10 @@ tui-term = "0.3"
 usage-lib = { version = "2.16", default-features = false }
 vt100 = "0.16"
 
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+unicode-width = "0.2"
+
 [dev-dependencies]
 insta = "1"
 pretty_assertions = "1"

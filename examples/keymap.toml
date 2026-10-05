@@ -1,0 +1,14 @@
+# Copy to $XDG_CONFIG_HOME/tuisage/keymap.toml or ~/.config/tuisage/keymap.toml.
+# Plain and keypad Enter can be mapped to submit.
+# These additional submit bindings are opt-in; TuiSage's built-in mappings stay unchanged.
+[bindings]
+"ctrl+r" = "submit"
+"enter" = "submit"
+"keypad-enter" = "submit"
+"ctrl+c" = "cancel"
+"q" = "cancel"
+"tab" = "next-field"
+"backtab" = "previous-field"
+
+# Set a built-in key to "unbound" to disable that binding.
+# "ctrl+r" = "unbound"

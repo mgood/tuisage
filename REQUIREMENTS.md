@@ -99,6 +99,10 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 
 - **Keyboard-first**: All functionality must be accessible via keyboard with vim-style navigation.
 - **Mouse-supported**: Click to select, scroll to navigate, and click-to-activate as a secondary input method.
+- Keep existing built-in mappings, including Ctrl+R as the submit shortcut. An optional keymap may map plain Enter or keypad Enter to submit; without a keymap, Enter keeps its existing input behavior.
+- Load optional key bindings from `$XDG_CONFIG_HOME/tuisage/keymap.toml`, falling back to `~/.config/tuisage/keymap.toml` when XDG_CONFIG_HOME is unset or empty. Provide `--keymap PATH` for an explicit file, retain built-ins by default, and allow individual named actions to be overridden or unbound.
+- Make rendered bottom-row actions clickable. Route mouse activation through the same action handler as the corresponding keyboard shortcut and recompute hit areas after resize.
+- Restore negotiated keyboard and mouse modes on normal exit, cancellation, and errors. Report unsupported terminal key distinctions accurately.
 
 ### Performance
 

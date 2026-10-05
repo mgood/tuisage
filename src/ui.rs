@@ -301,6 +301,7 @@ fn render_help_bar(
 
     // Store the theme indicator rect for mouse click detection
     layout.theme_indicator_rect = Some(widget.theme_indicator_rect(area));
+    layout.bottom_actions = widget.keybind_regions(area);
 
     frame.render_widget(widget, area);
 }
@@ -1506,6 +1507,35 @@ flag "-q --quiet" help="Quiet mode"
             app.layout.theme_indicator_rect.is_some(),
             "theme_indicator_rect should be set after rendering"
         );
+    }
+
+    #[test]
+    fn bottom_actions_follow_rendered_help_bar_after_resize() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+        let mut app = App::new(sample_spec());
+        let _ = render_to_string(&mut app, 100, 24);
+        let (submit_rect, submit_key) = app
+            .layout
+            .bottom_actions
+            .iter()
+            .find(|(_, key)| key.code == KeyCode::Char('r'))
+            .copied()
+            .expect("Ctrl+R should be visible at this size");
+        assert_eq!(submit_key.code, KeyCode::Char('r'));
+        let click = |rect: Rect| MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x,
+            row: rect.y,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert_eq!(app.handle_mouse(click(submit_rect)), crate::app::Action::Execute);
+
+        let _ = render_to_string(&mut app, 24, 12);
+        assert!(app.layout.bottom_actions.iter().all(|(rect, _)| {
+            rect.y == 11 && rect.x + rect.width <= 24
+        }));
+        assert_ne!(app.handle_mouse(click(submit_rect)), crate::app::Action::Execute);
     }
 
     #[test]

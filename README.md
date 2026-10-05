@@ -123,6 +123,18 @@ Provide either trailing arguments (spec command) or `--spec-file` (but not both)
 
 Left click to activate most elements. Mouse wheel scrolls selection up and down.
 
+Click a shortcut in the bottom help row to perform the same action as its keyboard key. The theme name remains clickable to open the theme picker.
+
+### Keymaps
+
+TuiSage keeps its built-in shortcuts and accepts individual overrides in an optional TOML file at `$XDG_CONFIG_HOME/tuisage/keymap.toml`. If `XDG_CONFIG_HOME` is unset or empty, it checks `~/.config/tuisage/keymap.toml`. Use `--keymap PATH` to select a file explicitly. A missing default file is ignored. A missing or invalid explicit file is reported before the terminal UI starts.
+
+The sample at [`examples/keymap.toml`](examples/keymap.toml) demonstrates optional plain Enter and keypad Enter submit bindings while keeping Ctrl+R. The built-in mappings remain unchanged when no keymap is configured. Supported named actions include `submit`, `cancel`, `next-field`, and `previous-field`. Map a key to `unbound` to disable that individual built-in binding.
+
+Key names accept `ctrl`, `alt`, `shift`, and `cmd` or `super` modifiers. Use names such as `enter`, `keypad-enter`, `tab`, `backtab`, `escape`, or a single character.
+
+Keypad Enter is detected only when the terminal reports it separately from Return. TuiSage requests the supported keyboard enhancement protocol on Unix terminals and restores the keyboard and mouse modes when it exits. Terminals that collapse these events cannot distinguish them for the application.
+
 ## Compatibility
 
 This has been mostly tested in [ghostty](https://ghostty.org), though I have also tried it with the Mac built-in Terminal.app, and the Zed and VSCode embedded terminals. Some seem to trouble aligning the box-drawing characters, but are otherwise functional.
@@ -172,6 +184,8 @@ This README presents the main documentation intended for users. Other documents 
 | [usage-lib](https://crates.io/crates/usage-lib) | Parse usage specs (KDL format) |
 | [ratatui](https://crates.io/crates/ratatui) | TUI framework |
 | [crossterm](https://crates.io/crates/crossterm) | Terminal backend & events |
+| [serde](https://crates.io/crates/serde) and [toml](https://crates.io/crates/toml) | Keymap configuration parsing |
+| [unicode-width](https://crates.io/crates/unicode-width) | Help-row display widths and mouse hit areas |
 | [ratatui-interact](https://crates.io/crates/ratatui-interact) | UI components (TreeView, input, focus management) |
 | [ratatui-themes](https://crates.io/crates/ratatui-themes) | Color theming |
 | [nucleo-matcher](https://crates.io/crates/nucleo-matcher) | Fuzzy matching |

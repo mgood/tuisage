@@ -273,6 +273,12 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 | Commands list always visible | The flat indented list shows the entire command hierarchy, not just subcommands of the current selection. It remains visible even when navigating to leaf commands with no children, providing constant wayfinding context. |
 | Arguments panel visibility based on spec | The arguments panel is shown whenever the current command defines arguments in the spec, ensuring consistent visibility regardless of whether arg values are populated. |
 
+### Configurable input actions
+
+`keymap.rs` parses optional TOML bindings, applies them after built-in defaults, and matches exact key codes, modifiers, and keypad Enter state. `--keymap` requires its file; default-path discovery ignores a missing file. The app resolves named submit, cancel, next-field, and previous-field actions while preserving panel input. Mouse hit areas are collected from the visible help-row layout and call the same app key handler. Their geometry is calculated with Unicode display widths and refreshed every draw.
+
+On Unix, startup requests crossterm keyboard disambiguation and event-type reporting. `TerminalModesGuard` restores keyboard reporting and mouse capture, then restores ratatui, on normal return and error unwinding. A terminal that does not report keypad Enter separately cannot activate that binding.
+
 ## Remaining Work
 
 - **Clipboard copy** — copy the built command to the system clipboard from within the TUI

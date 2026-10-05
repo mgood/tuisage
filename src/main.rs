@@ -7,6 +7,7 @@ use clap::{CommandFactory, Parser};
 mod app;
 mod command_builder;
 mod components;
+mod keymap;
 mod theme;
 mod ui;
 
@@ -27,6 +28,10 @@ struct Args {
     /// Generate usage spec for this tool
     #[arg(long)]
     usage: bool,
+
+    /// Explicit keymap file, overriding automatic discovery
+    #[arg(long)]
+    keymap: Option<PathBuf>,
 
     /// Command to run to get the usage spec (e.g., "mycli --usage")
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -94,18 +99,79 @@ fn main() -> color_eyre::Result<()> {
         spec.bin = cmd.clone();
     }
 
-    // Enable mouse capture before initializing the terminal
-    crossterm::execute!(std::io::stderr(), crossterm::event::EnableMouseCapture)?;
+    let keymap = keymap::Keymap::load(args.keymap.as_deref())?;
 
     let mut terminal = ratatui::init();
+    let mut terminal_modes = TerminalModesGuard::new();
+    terminal_modes.mouse_capture = true;
+    crossterm::execute!(std::io::stderr(), crossterm::event::EnableMouseCapture)?;
+    #[cfg(unix)]
+    {
+        terminal_modes.keyboard_protocol = true;
+        crossterm::execute!(
+            std::io::stderr(),
+            crossterm::event::PushKeyboardEnhancementFlags(
+                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | crossterm::event::KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+            )
+        )?;
+    }
+
     let mut app = App::new(spec);
+    app.keymap = keymap;
     let result = run_event_loop(&mut terminal, &mut app);
-
-    // Restore terminal and disable mouse capture
-    ratatui::restore();
-    crossterm::execute!(std::io::stderr(), crossterm::event::DisableMouseCapture)?;
-
+    terminal_modes.restore()?;
     result
+}
+
+struct TerminalModesGuard {
+    mouse_capture: bool,
+    keyboard_protocol: bool,
+    ratatui_terminal: bool,
+}
+
+impl TerminalModesGuard {
+    fn new() -> Self {
+        Self {
+            mouse_capture: false,
+            keyboard_protocol: false,
+            ratatui_terminal: true,
+        }
+    }
+
+    fn restore(&mut self) -> std::io::Result<()> {
+        let mut first_error = None;
+        if self.keyboard_protocol {
+            #[cfg(unix)]
+            if let Err(error) = crossterm::execute!(
+                std::io::stderr(),
+                crossterm::event::PopKeyboardEnhancementFlags
+            ) {
+                first_error = Some(error);
+            }
+            self.keyboard_protocol = false;
+        }
+        if self.mouse_capture {
+            if let Err(error) = crossterm::execute!(
+                std::io::stderr(),
+                crossterm::event::DisableMouseCapture
+            ) {
+                first_error.get_or_insert(error);
+            }
+            self.mouse_capture = false;
+        }
+        if self.ratatui_terminal {
+            ratatui::restore();
+            self.ratatui_terminal = false;
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+}
+
+impl Drop for TerminalModesGuard {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
 }
 
 /// Run a shell command and return its stdout as a string.
@@ -170,7 +236,7 @@ fn run_event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut App,
 ) -> color_eyre::Result<()> {
-    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use crossterm::event::{self, Event, KeyEventKind};
 
     loop {
         terminal.draw(|frame| ui::render(frame, app))?;
@@ -206,11 +272,6 @@ fn run_event_loop(
             Event::Key(key) => {
                 if key.kind != KeyEventKind::Press {
                     continue;
-                }
-
-                // Global quit shortcuts
-                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-                    return Ok(());
                 }
 
                 match app.handle_key(key) {

@@ -495,14 +495,23 @@ Themes can be cycled at runtime with `]`/`[` keys for quick switching, or `T` to
 
 ## Terminal Lifecycle
 
-1. **Startup**: Parse CLI args (clap) → handle `--usage` if present → load spec (from trailing arguments or `--spec-file`) → apply `--cmd` override if present → enable mouse capture → initialize terminal → create `App` state → enter event loop.
+1. **Startup**: Parse CLI args (clap) → handle `--usage` if present → load spec (from trailing arguments or `--spec-file`) → apply `--cmd` override if present → load keymap → initialize terminal → enable mouse capture and supported keyboard reporting → create `App` state → enter event loop.
 2. **Event loop (builder mode)**: Draw frame → wait for event (blocking) → handle key/mouse/resize → repeat. The application remains running indefinitely until the user quits.
 3. **Execute**: User presses Enter on preview → spawn the command in a PTY via `portable-pty` → switch to execution mode → display embedded terminal output via `tui-term`.
 4. **Event loop (execution mode)**: Draw frame → poll for events (16ms interval for live terminal refresh) → forward keyboard input to PTY → repeat until user closes the execution view.
 5. **Process exit**: Background thread detects child process exit → sets `exited` flag and records exit status → UI updates to show "Exited" status → user presses Esc/Enter/q to close.
 6. **Return to builder**: Execution state is dropped (PTY writer and master cleaned up) → app mode switches back to `Builder` → normal event loop resumes.
-7. **Quit**: User presses `q`/`Ctrl-C`/`Esc` at root → restore terminal → disable mouse capture → exit 0 (no output).
+7. **Quit**: User activates a configured cancel key or chooses another quit action → restore terminal and negotiated keyboard/mouse modes → exit 0 (no output).
 8. **Error**: Parsing or terminal errors → report error via `color-eyre` → exit non-zero.
+
+### Keymaps and bottom-row actions
+
+- Built-in mappings remain unchanged, including Ctrl+R submitting from any builder panel. A keymap can opt in to plain Enter or keypad Enter as submit keys. Without a keymap, Enter retains its existing field behavior.
+- When a choice or theme picker popup is open, it handles Enter as its selection action before global keymap bindings.
+- Load `$XDG_CONFIG_HOME/tuisage/keymap.toml`; use `~/.config/tuisage/keymap.toml` if XDG_CONFIG_HOME is unset or empty. `--keymap PATH` selects an explicit file. A missing default file is ignored; an explicitly requested missing or invalid file is an error before terminal initialization.
+- TOML `[bindings]` entries map key names to `submit`, `cancel`, `next-field`, or `previous-field`. Later entries override one key at a time. `unbound` removes the built-in behavior for that key. The shipped sample demonstrates optional plain Enter and keypad Enter submit bindings while keeping Ctrl+R. These added submit keys are not built-in defaults.
+- On Unix, request crossterm's supported keyboard enhancement flags for disambiguated modified keys. Pop the negotiated keyboard mode and disable mouse capture during cleanup, including error exits. Do not claim distinctions terminals do not report.
+- Every visible help-row shortcut has a mouse hit area based on its rendered width. Mouse activation dispatches the same key handler. The theme indicator dispatches the same theme-picker action as its keyboard shortcut. Rendering recalculates hit areas after resize.
 
 ## Command Execution Architecture
 
