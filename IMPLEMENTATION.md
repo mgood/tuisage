@@ -279,3 +279,7 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 - **Embedded USAGE blocks** — verify and test support for script files with heredoc USAGE blocks via `--spec-file`
 - **Further module splitting** — enter/completion lookup and value-mutation orchestration still live in App; these could move into dedicated services or richer panel-side actions to further reduce coordination responsibilities
 - **CI pipeline** — GitHub Actions for `cargo test`, `cargo clippy`, and `insta` snapshot checks
+
+### Preview token formatting
+
+`command_builder::quote_posix()` formats individual argv tokens for POSIX shell copy. `build_command()` shares `build_command_parts()` and only substitutes active argument edit text before formatting. No shell executes the rendered preview.

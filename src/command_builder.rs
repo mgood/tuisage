@@ -17,69 +17,6 @@ fn find_flag_spec<'a>(
         .or_else(|| global_flags.iter().find(|f| f.name == name && f.global))
 }
 
-/// Format a flag and its value as a single display string (for the command preview).
-/// Returns `None` if the flag is unset / default.
-pub fn format_flag_value(
-    name: &str,
-    value: &FlagValue,
-    flags: &[SpecFlag],
-    global_flags: &[SpecFlag],
-) -> Option<String> {
-    let flag = find_flag_spec(name, flags, global_flags)?;
-
-    match value {
-        FlagValue::Bool(true) => {
-            let prefix = if let Some(long) = flag.long.first() {
-                format!("--{long}")
-            } else {
-                let short = flag.short.first()?;
-                format!("-{short}")
-            };
-            Some(prefix)
-        }
-        FlagValue::Bool(false) => None,
-        FlagValue::NegBool(None) => None,
-        FlagValue::NegBool(Some(true)) => {
-            let prefix = if let Some(long) = flag.long.first() {
-                format!("--{long}")
-            } else {
-                let short = flag.short.first()?;
-                format!("-{short}")
-            };
-            Some(prefix)
-        }
-        FlagValue::NegBool(Some(false)) => flag.negate.clone(),
-        FlagValue::Count(0) => None,
-        FlagValue::Count(n) => {
-            if let Some(short) = flag.short.first() {
-                Some(format!("-{}", short.to_string().repeat(*n as usize)))
-            } else if let Some(long) = flag.long.first() {
-                Some(
-                    std::iter::repeat_n(format!("--{long}"), *n as usize)
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                )
-            } else {
-                None
-            }
-        }
-        FlagValue::String(s) if s.is_empty() => None,
-        FlagValue::String(s) => {
-            let prefix = if let Some(long) = flag.long.first() {
-                format!("--{long}")
-            } else {
-                let short = flag.short.first()?;
-                format!("-{short}")
-            };
-            if s.contains(' ') {
-                Some(format!("{prefix} \"{s}\""))
-            } else {
-                Some(format!("{prefix} {s}"))
-            }
-        }
-    }
-}
-
 /// Append flag parts (as separate process arguments) to the parts list.
 pub fn format_flag_parts(
     name: &str,
@@ -168,7 +105,7 @@ fn effective_arg_value<'a>(
 }
 
 /// Build the full command string from the current state (for display).
-/// Values containing spaces are quoted.
+/// Every token uses POSIX shell quoting; execution still uses argv directly.
 pub fn build_command(
     spec: &Spec,
     flag_values: &HashMap<String, Vec<(String, FlagValue)>>,
@@ -176,64 +113,15 @@ pub fn build_command(
     arg_values: &[ArgValue],
     preview: &LiveArgPreview,
 ) -> String {
-    let mut parts: Vec<String> = Vec::new();
-
-    let bin = if spec.bin.is_empty() {
-        &spec.name
-    } else {
-        &spec.bin
-    };
-    parts.push(bin.clone());
-
-    // Global flag values from root
-    let root_key = String::new();
-    if let Some(root_flags) = flag_values.get(&root_key) {
-        for (name, value) in root_flags {
-            if let Some(flag_str) = format_flag_value(name, value, &spec.cmd.flags, &spec.cmd.flags)
-            {
-                parts.push(flag_str);
-            }
-        }
+    let mut args = arg_values.to_vec();
+    for (i, arg) in args.iter_mut().enumerate() {
+        arg.value = effective_arg_value(i, &arg_values[i], preview).to_string();
     }
-
-    // Subcommand path with per-level flags
-    let mut cmd = &spec.cmd;
-    for (i, name) in command_path.iter().enumerate() {
-        parts.push(name.clone());
-
-        if let Some(sub) = cmd.find_subcommand(name) {
-            cmd = sub;
-
-            let path_key = command_path[..=i].join(" ");
-            if let Some(level_flags) = flag_values.get(&path_key) {
-                for (fname, fvalue) in level_flags {
-                    let is_global = spec.cmd.flags.iter().any(|f| f.global && f.name == *fname);
-                    if is_global {
-                        continue;
-                    }
-                    if let Some(flag_str) =
-                        format_flag_value(fname, fvalue, &cmd.flags, &spec.cmd.flags)
-                    {
-                        parts.push(flag_str);
-                    }
-                }
-            }
-        }
-    }
-
-    // Positional arg values (with live preview)
-    for (i, arg) in arg_values.iter().enumerate() {
-        let value = effective_arg_value(i, arg, preview);
-        if !value.is_empty() {
-            if value.contains(' ') {
-                parts.push(format!("\"{value}\""));
-            } else {
-                parts.push(value.to_string());
-            }
-        }
-    }
-
-    parts.join(" ")
+    build_command_parts(spec, flag_values, command_path, &args)
+        .iter()
+        .map(|part| quote_posix(part))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Build the command as a list of separate argument strings (for process execution).
@@ -292,4 +180,85 @@ pub fn build_command_parts(
     }
 
     parts
+}
+
+/// Quote one argv token for copying into a POSIX shell.
+pub fn quote_posix(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&b))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_tokens_round_trip_through_posix_shell() {
+        let tokens = [
+            "",
+            "two words",
+            "single'quote",
+            "double\"quote",
+            "世界",
+            "$HOME",
+            "$(printf danger)",
+            "`id`",
+            "line\nbreak",
+            "a;b",
+            "safe-token",
+        ];
+        let script = format!(
+            "printf '%s\\0' {}",
+            tokens
+                .iter()
+                .map(|s| quote_posix(s))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        let output = std::process::Command::new("sh")
+            .args(["-c", &script])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let expected = tokens
+            .iter()
+            .flat_map(|s| s.as_bytes().iter().copied().chain(std::iter::once(0)))
+            .collect::<Vec<_>>();
+        assert_eq!(output.stdout, expected);
+    }
+
+    #[test]
+    fn preview_is_quoted_execution_argv() {
+        let spec: Spec = "name \"demo\"\narg \"[value]\"".parse().unwrap();
+        let args = vec![ArgValue {
+            name: "value".into(),
+            value: "$HOME's file".into(),
+            required: false,
+            choices: vec![],
+            help: None,
+        }];
+        let preview = LiveArgPreview {
+            choice_select_index: None,
+            choice_select_text: "",
+            is_editing: false,
+            editing_index: 0,
+            editing_text: "",
+        };
+        let flags = HashMap::new();
+        assert_eq!(
+            build_command(&spec, &flags, &[], &args, &preview),
+            build_command_parts(&spec, &flags, &[], &args)
+                .iter()
+                .map(|s| quote_posix(s))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+    }
 }

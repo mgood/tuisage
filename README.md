@@ -184,3 +184,7 @@ This README presents the main documentation intended for users. Other documents 
 ## License
 
 MIT
+
+### Copying the command preview
+
+The preview is formatted for POSIX `sh`. Each token is shell-quoted when necessary, including quotes, dollar signs, substitution text, Unicode and empty tokens. Commands are executed with separate argv elements, never by evaluating the preview.

@@ -534,3 +534,7 @@ The `ExecutionState` struct holds:
 - `pty_writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>` — input channel to the process
 - `exited: Arc<AtomicBool>` — whether the child has finished
 - `exit_status: Arc<Mutex<Option<String>>>` — the exit code/signal description
+
+### POSIX preview format
+
+The preview uses `build_command_parts()` with live argument edits applied, then quotes each token for POSIX `sh`. Safe ASCII tokens remain unquoted. Other tokens use single quotes with embedded single quotes escaped by closing and reopening the quoted string. Execution receives the original argv directly.
