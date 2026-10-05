@@ -89,6 +89,10 @@ You can combine these as well:
 tuisage --cmd "docker compose" --spec-file docker-compose.usage.kdl
 ```
 
+### Initial field values
+
+Use `--defaults JSON` to initialize fields from an object, or `--defaults @PATH` to read that object from a file. Keys may use unqualified names when they identify one field, or qualified identifiers such as `commands/run/args/name`. Each entry has a `value` and an optional `locked` boolean. Locked values cannot be changed through editing, mouse selection, completion, or reset. Empty strings are retained as explicit values.
+
 ## CLI Reference
 
 | Flag | Description |
@@ -181,6 +185,31 @@ This README presents the main documentation intended for users. Other documents 
 | [color-eyre](https://crates.io/crates/color-eyre) | Error reporting |
 | [insta](https://crates.io/crates/insta) | Snapshot testing (dev) |
 
+## Native command composition
+
+The `--compose` option returns one JSON object with the executable and ordered argv. It does not run the command or open the execution view. The TUI uses the controlling terminal, so redirected stdout contains only JSON. Cancellation returns no output with status 130. Explicit empty arguments are retained. Terminal modes are restored on completion or error. Run `python3 tests/terminal_composition.py` after building to check the PTY flow.
+
+## Repeated options and arguments
+
+Usage specs can declare repeatable positional arguments, repeated flag occurrences, and multiple values on one flag occurrence. In the TUI, `Ctrl+N` and `Ctrl+D` add or remove positional rows or values within a flag occurrence. For a flag with repeated occurrences, `Ctrl+Alt+N` and `Ctrl+Alt+D` add or remove an occurrence; `Alt+Left/Right` selects an occurrence and `Ctrl+Left/Right` selects one of its values. Blank rows are omitted until edited, while an explicitly entered empty string is passed as an empty argument. Submission checks the occurrence count and the value count separately.
+
+Typed defaults use arrays for repeated fields. A repeated positional argument or repeated flag with one value per occurrence takes an array of strings. A flag with multiple values per occurrence takes an array of strings; when both the flag and its argument repeat, use an array of arrays so the occurrence groups remain distinct. For example: `{"group":{"value":[["one","two"],["three"]]}}`.
+
 ## License
 
 MIT
+
+
+### Submission validation
+
+Every execute/compose submission checks required arguments/options, required subcommands, declared choices, and repeated-value minimum/maximum limits. Failure leaves the form open, displays the field identifier and correction in the status row, and neither executes nor emits a command. Explicit empty supplied strings are distinguished from omitted fields.
+
+`--validate PATH` additionally invokes a provider executable directly, sending the version-1 JSON form context on stdin. The request includes executable, argv, command path, optional field, and a map of canonical field identifiers to values. It must return `{ "version": 1, "errors": {} }` for success, or errors keyed by field identifier. Nonzero exit, malformed response, unsupported version, or a five-second timeout blocks submission. The operational command is never invoked for validation. Usage 2.16.1 does not expose a general conditional-rule API; dependent command-specific constraints belong in this provider.
+
+### Context-aware completion
+
+Legacy `complete ... run="..."` providers retain line-based output. They additionally receive `TUISAGE_CONTEXT_VERSION=1` and `TUISAGE_CONTEXT`, a JSON context containing canonical field values, command path, current argv and requested field. Top-level completion declarations are a fallback when the command has no matching declaration.
+
+A structured provider uses `complete "field" type="tuisage-json-v1:/path/to/provider"`. It receives the same JSON on stdin and returns `{ "version": 1, "choices": [{ "value": "...", "description": "optional" }] }`. This format can return explicit empty values. Providers run off the input thread. Each result is checked against its request generation and current form context; old responses are discarded. Changed context refreshes an open completion, while errors or empty responses retain manual input. No application discovery logic is built into TuiSage.
+
+Completion results update suggestions in place, preserving manual text and cursor position while a provider is running.

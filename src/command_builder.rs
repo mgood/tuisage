@@ -64,6 +64,34 @@ pub fn format_flag_value(
             }
         }
         FlagValue::String(s) if s.is_empty() => None,
+        FlagValue::EmptyString => {
+            let prefix = flag
+                .long
+                .first()
+                .map(|long| format!("--{long}"))
+                .or_else(|| flag.short.first().map(|short| format!("-{short}")))?;
+            Some(format!("{prefix} \"\""))
+        }
+        FlagValue::Repeated(groups) => {
+            let prefix = flag
+                .long
+                .first()
+                .map(|long| format!("--{long}"))
+                .or_else(|| flag.short.first().map(|short| format!("-{short}")))?;
+            let mut words = Vec::new();
+            for group in groups {
+                let values: Vec<_> = group
+                    .iter()
+                    .filter(|input| input.supplied || !input.value.is_empty())
+                    .collect();
+                if values.is_empty() {
+                    continue;
+                }
+                words.push(prefix.clone());
+                words.extend(values.into_iter().map(|input| input.value.clone()));
+            }
+            (!words.is_empty()).then(|| shell_words::join(words.iter().map(String::as_str)))
+        }
         FlagValue::String(s) => {
             let prefix = if let Some(long) = flag.long.first() {
                 format!("--{long}")
@@ -125,6 +153,37 @@ pub fn format_flag_parts(
             }
         }
         FlagValue::String(s) if s.is_empty() => {}
+        FlagValue::EmptyString => {
+            if let Some(long) = flag.long.first() {
+                parts.push(format!("--{long}"));
+            } else if let Some(short) = flag.short.first() {
+                parts.push(format!("-{short}"));
+            } else {
+                return;
+            }
+            parts.push(String::new());
+        }
+        FlagValue::Repeated(groups) => {
+            let Some(prefix) = flag
+                .long
+                .first()
+                .map(|long| format!("--{long}"))
+                .or_else(|| flag.short.first().map(|short| format!("-{short}")))
+            else {
+                return;
+            };
+            for group in groups {
+                let values: Vec<_> = group
+                    .iter()
+                    .filter(|input| input.supplied || !input.value.is_empty())
+                    .collect();
+                if values.is_empty() {
+                    continue;
+                }
+                parts.push(prefix.clone());
+                parts.extend(values.into_iter().map(|input| input.value.clone()));
+            }
+        }
         FlagValue::String(s) => {
             if let Some(long) = flag.long.first() {
                 parts.push(format!("--{long}"));
@@ -224,8 +283,15 @@ pub fn build_command(
     // Positional arg values (with live preview)
     for (i, arg) in arg_values.iter().enumerate() {
         let value = effective_arg_value(i, arg, preview);
-        if !value.is_empty() {
-            if value.contains(' ') {
+        if arg.supplied || !value.is_empty() {
+            let is_variadic = command_args(spec, command_path)
+                .iter()
+                .any(|spec_arg| spec_arg.name == arg.name && spec_arg.var);
+            if is_variadic {
+                parts.push(shell_words::quote(value).into_owned());
+            } else if value.is_empty() {
+                parts.push("\"\"".to_string());
+            } else if value.contains(' ') {
                 parts.push(format!("\"{value}\""));
             } else {
                 parts.push(value.to_string());
@@ -234,6 +300,17 @@ pub fn build_command(
     }
 
     parts.join(" ")
+}
+
+fn command_args<'a>(spec: &'a Spec, command_path: &[String]) -> &'a [usage::SpecArg] {
+    let mut command = &spec.cmd;
+    for name in command_path {
+        let Some(child) = command.find_subcommand(name) else {
+            return &[];
+        };
+        command = child;
+    }
+    &command.args
 }
 
 /// Build the command as a list of separate argument strings (for process execution).
@@ -251,9 +328,7 @@ pub fn build_command_parts(
     } else {
         &spec.bin
     };
-    for word in bin.split_whitespace() {
-        parts.push(word.to_string());
-    }
+    parts.extend(shell_words::split(bin).expect("validated base command"));
 
     // Global flag values from root
     let root_key = String::new();
@@ -286,10 +361,148 @@ pub fn build_command_parts(
 
     // Positional arg values (unquoted — each is a separate process arg)
     for arg in arg_values {
-        if !arg.value.is_empty() {
+        if arg.supplied || !arg.value.is_empty() {
             parts.push(arg.value.clone());
         }
     }
 
     parts
+}
+
+#[cfg(test)]
+mod repeated_tests {
+    use super::*;
+    use crate::app::RepeatInput;
+
+    #[test]
+    fn repeated_flag_axes_and_positional_values_keep_argv_groups() {
+        let spec: Spec = r#"
+            name "demo"
+            flag "-i --include <pattern>" var=#true
+            flag "--tag <tag>..."
+            flag "--group... <item>..." var=#true {
+                arg "<item>..." var=#true
+            }
+            arg "<file>..." var=#true
+        "#
+        .parse()
+        .unwrap();
+        let flags = HashMap::from([(
+            String::new(),
+            vec![
+                (
+                    "include".into(),
+                    FlagValue::Repeated(vec![
+                        vec![RepeatInput::supplied("one")],
+                        vec![RepeatInput::omitted()],
+                        vec![RepeatInput::supplied("two words")],
+                    ]),
+                ),
+                (
+                    "tag".into(),
+                    FlagValue::Repeated(vec![vec![
+                        RepeatInput::supplied("alpha"),
+                        RepeatInput::supplied("beta"),
+                    ]]),
+                ),
+                (
+                    "group".into(),
+                    FlagValue::Repeated(vec![
+                        vec![RepeatInput::supplied("x"), RepeatInput::supplied("y")],
+                        vec![RepeatInput::supplied("z")],
+                    ]),
+                ),
+            ],
+        )]);
+        let args = vec![
+            ArgValue {
+                name: "file".into(),
+                value: "path with spaces".into(),
+                supplied: true,
+                required: false,
+                choices: vec![],
+                help: None,
+            },
+            ArgValue {
+                name: "file".into(),
+                value: String::new(),
+                supplied: false,
+                required: false,
+                choices: vec![],
+                help: None,
+            },
+            ArgValue {
+                name: "file".into(),
+                value: String::new(),
+                supplied: true,
+                required: false,
+                choices: vec![],
+                help: None,
+            },
+        ];
+
+        let parts = build_command_parts(&spec, &flags, &[], &args);
+        assert_eq!(
+            parts,
+            [
+                "demo",
+                "--include",
+                "one",
+                "--include",
+                "two words",
+                "--tag",
+                "alpha",
+                "beta",
+                "--group",
+                "x",
+                "y",
+                "--group",
+                "z",
+                "path with spaces",
+                ""
+            ]
+        );
+        let preview = build_command(
+            &spec,
+            &flags,
+            &[],
+            &args,
+            &LiveArgPreview {
+                choice_select_index: None,
+                choice_select_text: "",
+                is_editing: false,
+                editing_index: 0,
+                editing_text: "",
+            },
+        );
+        assert_eq!(shell_words::split(&preview).unwrap(), parts);
+    }
+
+    #[test]
+    fn repeated_empty_state_does_not_add_a_preview_token() {
+        let spec: Spec = "name \"demo\"\nflag \"--tag <tag>...\"".parse().unwrap();
+        let flags = HashMap::from([(
+            String::new(),
+            vec![(
+                "tag".into(),
+                FlagValue::Repeated(vec![vec![RepeatInput::omitted()]]),
+            )],
+        )]);
+        assert_eq!(
+            build_command(
+                &spec,
+                &flags,
+                &[],
+                &[],
+                &LiveArgPreview {
+                    choice_select_index: None,
+                    choice_select_text: "",
+                    is_editing: false,
+                    editing_index: 0,
+                    editing_text: "",
+                }
+            ),
+            "demo"
+        );
+    }
 }

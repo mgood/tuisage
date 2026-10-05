@@ -1,5 +1,6 @@
 ---
 source: src/ui.rs
+assertion_line: 660
 expression: output
 ---
 ┌ Command ─────────────────────────────────────────────────────────────────────┐
