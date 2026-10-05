@@ -390,6 +390,15 @@ impl ListPanelBase {
             .open(choices, current_value, Rect::ZERO);
     }
 
+    pub fn update_completion_choices(
+        &mut self,
+        choices: Vec<String>,
+        descriptions: Vec<Option<String>>,
+    ) {
+        self.choice_select
+            .update_completion_choices(choices, descriptions);
+    }
+
     pub fn open_completion_select(
         &mut self,
         index: usize,

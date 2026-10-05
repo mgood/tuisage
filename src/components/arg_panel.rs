@@ -201,6 +201,14 @@ impl ArgPanelComponent {
             .open_choice_select(index, choices, current_value, value_column);
     }
 
+    pub fn update_completion_choices(
+        &mut self,
+        choices: Vec<String>,
+        descriptions: Vec<Option<String>>,
+    ) {
+        self.base.update_completion_choices(choices, descriptions);
+    }
+
     pub fn open_completion_select(
         &mut self,
         index: usize,

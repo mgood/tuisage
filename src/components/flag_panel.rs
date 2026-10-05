@@ -174,7 +174,6 @@ impl FlagPanelComponent {
         self.base.is_choosing()
     }
 
-    #[cfg(test)]
     pub fn choice_select_index(&self) -> Option<usize> {
         self.base.choice_select_index()
     }
@@ -213,6 +212,14 @@ impl FlagPanelComponent {
     ) {
         self.base
             .open_choice_select(index, choices, current_value, value_column);
+    }
+
+    pub fn update_completion_choices(
+        &mut self,
+        choices: Vec<String>,
+        descriptions: Vec<Option<String>>,
+    ) {
+        self.base.update_completion_choices(choices, descriptions);
     }
 
     pub fn open_completion_select(
@@ -257,8 +264,10 @@ impl FlagPanelComponent {
             .find(|(name, _)| name == &flag.name)
             .map(|(_, value)| value);
 
-        let FlagValue::String(current_value) = value?.clone() else {
-            return Some(FlagPanelEnterRequest::Toggle);
+        let current_value = match value?.clone() {
+            FlagValue::String(value) => value,
+            FlagValue::EmptyString => String::new(),
+            _ => return Some(FlagPanelEnterRequest::Toggle),
         };
 
         let value_column = Self::value_column_for_flag(flag, value);
@@ -299,7 +308,7 @@ impl FlagPanelComponent {
         // indicator width: "✓ "=2, "○ "=2, "[n] "=varies, "[·] "=4, "[•] "=4
         let indicator_width = match value {
             Some(FlagValue::Count(n)) => format!("[{}] ", n).chars().count(),
-            Some(FlagValue::String(_)) => 4,
+            Some(FlagValue::String(_) | FlagValue::EmptyString) => 4,
             _ => 2,
         };
 
@@ -706,7 +715,12 @@ impl Widget for FlagPanel<'_> {
                 }
 
                 // Value display for string flags
-                if let Some((_, FlagValue::String(s))) = value {
+                let string_value = value.and_then(|(_, value)| match value {
+                    FlagValue::String(s) => Some(s.clone()),
+                    FlagValue::EmptyString => Some(String::new()),
+                    _ => None,
+                });
+                if let Some(s) = string_value.as_ref() {
                     self.render_string_value(&mut spans, s, flag, default_val, is_editing, i);
                 }
 
@@ -845,6 +859,7 @@ fn render_flag_indicator<'a>(value: Option<&FlagValue>, colors: &UiColors) -> Sp
                 Span::styled("[•] ", Style::default().fg(colors.arg))
             }
         }
+        Some(FlagValue::EmptyString) => Span::styled("[•] ", Style::default().fg(colors.arg)),
         None => Span::styled("○ ", Style::default().fg(colors.help)),
     }
 }

@@ -148,6 +148,19 @@ impl ChoiceSelectComponent {
         }
     }
 
+    /// Replace provider suggestions without resetting the active text or cursor.
+    pub fn update_completion_choices(
+        &mut self,
+        choices: Vec<String>,
+        descriptions: Vec<Option<String>>,
+    ) {
+        if let Some(inner) = self.state.as_mut() {
+            inner.choices = choices;
+            inner.descriptions = descriptions;
+            inner.selected_index = None;
+        }
+    }
+
     pub fn is_open(&self) -> bool {
         self.state.is_some()
     }

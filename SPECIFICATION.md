@@ -534,3 +534,25 @@ The `ExecutionState` struct holds:
 - `pty_writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>` — input channel to the process
 - `exited: Arc<AtomicBool>` — whether the child has finished
 - `exit_status: Arc<Mutex<Option<String>>>` — the exit code/signal description
+
+## Initial values and field locks
+
+`--defaults JSON` or `--defaults @PATH` supplies an object whose keys identify fields and whose entries contain a typed `value` and optional `locked` boolean. A qualified identifier uses `global/flags/name`, `root/flags/name`, `root/args/name`, or `commands/path/to/command/flags/name` and `args/name`. Path segments escape `~` as `~0` and `/` as `~1`. An unqualified name is accepted only when it matches one field. Invalid identifiers, conflicting names, type mismatches, and undeclared choice values fail before terminal startup. Explicit empty strings remain supplied values. Locked fields reject keyboard, mouse, completion, and reset changes. Editable initial values behave as normal field values.
+
+### Native command composition
+
+The `--compose` option returns one JSON object with the executable and ordered argv. It does not run the command or open the execution view. The TUI uses the controlling terminal, so redirected stdout contains only JSON. Cancellation returns no output with status 130. Explicit empty arguments are retained. Terminal modes are restored on completion or error. Run `python3 tests/terminal_composition.py` after building to check the PTY flow.
+
+### Submission validation
+
+Every execute/compose submission checks required arguments/options, required subcommands, declared choices, and repeated-value minimum/maximum limits. Failure leaves the form open, displays the field identifier and correction in the status row, and neither executes nor emits a command. Explicit empty supplied strings are distinguished from omitted fields.
+
+`--validate PATH` additionally invokes a provider executable directly, sending the version-1 JSON form context on stdin. The request includes executable, argv, command path, optional field, and a map of canonical field identifiers to values. It must return `{ "version": 1, "errors": {} }` for success, or errors keyed by field identifier. Nonzero exit, malformed response, unsupported version, or a five-second timeout blocks submission. The operational command is never invoked for validation. Usage 2.16.1 does not expose a general conditional-rule API; dependent command-specific constraints belong in this provider.
+
+### Context-aware completion
+
+Legacy `complete ... run="..."` providers retain line-based output. They additionally receive `TUISAGE_CONTEXT_VERSION=1` and `TUISAGE_CONTEXT`, a JSON context containing canonical field values, command path, current argv and requested field. Top-level completion declarations are a fallback when the command has no matching declaration.
+
+A structured provider uses `complete "field" type="tuisage-json-v1:/path/to/provider"`. It receives the same JSON on stdin and returns `{ "version": 1, "choices": [{ "value": "...", "description": "optional" }] }`. This format can return explicit empty values. Providers run off the input thread. Each result is checked against its request generation and current form context; old responses are discarded. Changed context refreshes an open completion, while errors or empty responses retain manual input. No application discovery logic is built into TuiSage.
+
+Completion results update suggestions in place, preserving manual text and cursor position while a provider is running.
