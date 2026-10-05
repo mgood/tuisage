@@ -104,8 +104,7 @@ impl ArgPanelComponent {
         self.base.set_total(total);
     }
 
-    #[cfg(test)]
-    pub fn select(&mut self, index: usize) {
+    pub(crate) fn select(&mut self, index: usize) {
         self.base.select(index);
     }
 
@@ -199,6 +198,18 @@ impl ArgPanelComponent {
     ) {
         self.base
             .open_choice_select(index, choices, current_value, value_column);
+    }
+
+    pub fn update_completion_choices(
+        &mut self,
+        choices: Vec<String>,
+        descriptions: Vec<Option<String>>,
+    ) {
+        self.base.update_completion_choices(choices, descriptions);
+    }
+
+    pub fn set_completion_loading(&mut self, loading: bool) {
+        self.base.choice_select.set_loading(loading);
     }
 
     pub fn open_completion_select(

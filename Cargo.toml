@@ -22,10 +22,16 @@ portable-pty = "0.9"
 ratatui = "0.30"
 ratatui-interact = "0.4"
 ratatui-themes = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tui-term = "0.3"
 usage-lib = { version = "2.16", default-features = false }
+kdl = "6.5"
 vt100 = "0.16"
 
+shell-words = "1"
+
 [dev-dependencies]
+tempfile = "3"
 insta = "1"
 pretty_assertions = "1"

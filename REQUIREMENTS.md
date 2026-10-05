@@ -93,6 +93,14 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Exit cleanly with no output when the user quits the application.
 - Support `--usage` flag to output TuiSage's own usage spec and exit, enabling self-describing CLI integration.
 
+### Initial values and locks
+
+- Accept typed JSON initial values for string fields, boolean flags, and count flags, from either a command argument or a JSON file.
+- Identify fields without ambiguity across global flags, root fields, and command-local fields.
+- Reject unknown fields, conflicting identifiers, invalid types, and values outside declared choices before terminal startup.
+- Allow values to be editable by default or locked across keyboard, mouse, completion, and reset paths.
+- Preserve explicitly supplied empty values separately from omitted fields.
+
 ## Non-Functional Requirements
 
 ### Input Methods
@@ -124,3 +132,36 @@ CLI tools with many subcommands, flags, and arguments are difficult to use from 
 - Support script files with embedded `USAGE` heredoc blocks via `--spec-file`.
 - PTY resize support: dynamically resize the embedded terminal when the TUI window is resized during execution.
 - Send stdin input to the running process via a dedicated input bar.
+
+### Native command composition
+
+The `--compose` option returns one JSON object with the executable and ordered argv. It does not run the command or open the execution view. The TUI uses the controlling terminal, so redirected stdout contains only JSON. Cancellation returns no output with status 130. Explicit empty arguments are retained. Terminal modes are restored on completion or error. Run `python3 tests/terminal_composition.py` after building to check the PTY flow.
+
+### Submission validation
+
+Every execute/compose submission checks required arguments/options, required subcommands, declared choices, and repeated-value minimum/maximum limits. Failure leaves the form open, displays the field identifier and correction in the status row, and neither executes nor emits a command. Explicit empty supplied strings are distinguished from omitted fields.
+
+For repeated fields, positional rows and flag values are editable independently. A repeated flag preserves one ordered value group per occurrence through command construction, defaults, provider context, completion, and validation. Minimum and maximum limits apply to occurrences and to the values within each occurrence as declared. A blank unsupplied editor row does not become an argv value; an explicit empty string does.
+
+`--validate PATH` additionally invokes a provider executable directly, sending the version-1 JSON form context on stdin. The request includes executable, argv, command path, optional field, and a map of canonical field identifiers to values. It must return `{ "version": 1, "errors": {} }` for success, or errors keyed by field identifier. Nonzero exit, malformed response, unsupported version, or a five-second timeout blocks submission. The operational command is never invoked for validation. Usage 2.16.1 does not expose a general conditional-rule API; dependent command-specific constraints belong in this provider.
+
+### Context-aware completion
+
+Legacy `complete ... run="..."` providers retain line-based output. They additionally receive `TUISAGE_CONTEXT_VERSION=1` and `TUISAGE_CONTEXT`, a JSON context containing canonical field values, command path, current argv and requested field. Top-level completion declarations are a fallback when the command has no matching declaration.
+
+A structured provider uses `complete "field" type="tuisage-json-v1:/path/to/provider"`. It receives the same JSON on stdin and returns `{ "version": 1, "choices": [{ "value": "...", "description": "optional" }] }`. This format can return explicit empty values. Providers run off the input thread. Each result is checked against its request generation and current form context; old responses are discarded. Changed context refreshes an open completion, while errors or empty responses retain manual input. No application discovery logic is built into TuiSage.
+
+Completion results update suggestions in place, preserving manual text and cursor position while a provider is running.
+
+### Presage companion documents
+
+Usage remains the command grammar. An optional KDL companion may bind named fixed or executable choice lists, defaults, locked values, validation, composition mode, and theme settings to existing fields. Select one document by the documented cascade; do not merge documents or search the current directory. Providers receive structured JSON and run with literal arguments. On Windows, user and shared discovery use absolute LOCALAPPDATA and PROGRAMDATA roots. Usage-only commands retain their existing behavior.
+### Named startup and automatic themes
+
+Use `tuisage --theme catppuccin-latte mytool --usage` to select a named theme. Names and aliases use ratatui-themes' existing parser, including hyphen and underscore spelling. Omitted options retain Dracula.
+
+Use `--theme auto --theme-light catppuccin-latte --theme-dark dracula` for automatic appearance. Both names must validate before terminal startup. macOS uses system AppleInterfaceStyle; Linux uses the desktop portal when available. Elsewhere, or when Linux supplies no preference, COLORFGBG is a terminal-background fallback, then the dark theme. System appearance has priority over terminal appearance. Polling occurs once a second outside the input thread. Manual cycling or confirming a theme disables automatic switching for the session; cancelling the picker retains automatic mode. Form values and focus are preserved on appearance changes.
+
+The whole frame receives the palette foreground/background before widgets render. No terminal OSC palette mutation is used. The execution view receives the same base background while retaining child terminal colours.
+
+Mouse selection of a theme disables automatic appearance changes. Shift+T opens the theme picker, including terminals that report it as lowercase t with the Shift modifier.

@@ -48,6 +48,7 @@ struct ChoiceSelectInner {
     descriptions: Vec<Option<String>>,
     selected_index: Option<usize>,
     filter_active: bool,
+    loading: bool,
     edit_input: InputState,
     /// Anchor point for overlay positioning (set by parent panel).
     anchor: Rect,
@@ -129,6 +130,7 @@ impl ChoiceSelectComponent {
             descriptions: Vec::new(),
             selected_index,
             filter_active: false,
+            loading: false,
             edit_input,
             anchor,
         });
@@ -145,6 +147,25 @@ impl ChoiceSelectComponent {
         self.open(choices, current_value, anchor);
         if let Some(ref mut inner) = self.state {
             inner.descriptions = descriptions;
+        }
+    }
+
+    /// Replace provider suggestions without resetting the active text or cursor.
+    pub fn update_completion_choices(
+        &mut self,
+        choices: Vec<String>,
+        descriptions: Vec<Option<String>>,
+    ) {
+        if let Some(inner) = self.state.as_mut() {
+            inner.choices = choices;
+            inner.descriptions = descriptions;
+            inner.selected_index = None;
+        }
+    }
+
+    pub fn set_loading(&mut self, loading: bool) {
+        if let Some(inner) = self.state.as_mut() {
+            inner.loading = loading;
         }
     }
 
@@ -343,6 +364,7 @@ impl Component for ChoiceSelectComponent {
             size: (width, height),
             content: Box::new(ChoiceSelectOverlay {
                 labels,
+                loading: inner.loading,
                 descriptions,
                 selected_index,
                 mouse_position: self.mouse_position,
@@ -357,6 +379,7 @@ impl Component for ChoiceSelectComponent {
 /// Created during collect_overlays(), rendered by the coordinator.
 struct ChoiceSelectOverlay {
     labels: Vec<String>,
+    loading: bool,
     descriptions: Vec<Option<String>>,
     selected_index: Option<usize>,
     mouse_position: Option<(u16, u16)>,
@@ -398,6 +421,11 @@ impl OverlayContent for ChoiceSelectOverlay {
             colors.choice,
             colors,
         )
+        .with_empty_message(if self.loading {
+            "Loading..."
+        } else {
+            "(no matches)"
+        })
         .with_descriptions(&self.descriptions)
         .with_borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
         .with_hovered(hovered);
@@ -420,6 +448,36 @@ mod tests {
             "gamma".to_string(),
             "delta".to_string(),
         ]
+    }
+
+    #[test]
+    fn pending_completion_renders_loading_then_empty_state() {
+        let colors = UiColors::from_palette(&ratatui_themes::ThemeName::CatppuccinLatte.palette());
+        let mut select = ChoiceSelectComponent::new();
+        let area = Rect::new(0, 0, 20, 2);
+        select.open(vec![], "typed", area);
+        select.set_loading(true);
+        let mut buffer = Buffer::empty(area);
+        select
+            .collect_overlays()
+            .remove(0)
+            .content
+            .render(area, &mut buffer, &colors);
+        let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+        assert!(text.contains("Loading..."));
+        assert!(!text.contains("no matches"));
+        assert_eq!(select.typed_text(), "typed");
+
+        select.open(vec![], "typed", area);
+        let mut buffer = Buffer::empty(area);
+        select
+            .collect_overlays()
+            .remove(0)
+            .content
+            .render(area, &mut buffer, &colors);
+        let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+        assert!(text.contains("no matches"));
+        assert!(!text.contains("Loading..."));
     }
 
     #[test]

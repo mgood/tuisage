@@ -128,8 +128,7 @@ impl ListPanelBase {
         self.list_state.set_total(total);
     }
 
-    #[cfg(test)]
-    pub fn select(&mut self, index: usize) {
+    pub(crate) fn select(&mut self, index: usize) {
         self.list_state.select(index);
     }
 
@@ -388,6 +387,15 @@ impl ListPanelBase {
         self.value_column = value_column;
         self.choice_select
             .open(choices, current_value, Rect::ZERO);
+    }
+
+    pub fn update_completion_choices(
+        &mut self,
+        choices: Vec<String>,
+        descriptions: Vec<Option<String>>,
+    ) {
+        self.choice_select
+            .update_completion_choices(choices, descriptions);
     }
 
     pub fn open_completion_select(

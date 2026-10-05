@@ -37,6 +37,7 @@ pub struct SelectList<'a> {
     /// Style for the selected item (text color).
     pub selected_color: Color,
     pub colors: &'a UiColors,
+    pub empty_message: &'a str,
 }
 
 impl<'a> SelectList<'a> {
@@ -59,7 +60,13 @@ impl<'a> SelectList<'a> {
             item_color,
             selected_color,
             colors,
+            empty_message: "(no matches)",
         }
+    }
+
+    pub fn with_empty_message(mut self, message: &'a str) -> Self {
+        self.empty_message = message;
+        self
     }
 
     /// Set descriptions to display alongside items.
@@ -128,7 +135,7 @@ impl StatefulWidget for SelectList<'_> {
 
         let items: Vec<ratatui::widgets::ListItem> = if self.items.is_empty() {
             vec![ratatui::widgets::ListItem::new(Line::from(Span::styled(
-                "(no matches)",
+                self.empty_message,
                 Style::default().fg(self.colors.help).italic(),
             )))]
         } else {

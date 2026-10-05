@@ -443,6 +443,8 @@ The `build_command()` method assembles the final command string (for display):
    - Flags with choices: `--flag-name selected-choice`
 5. Append all non-empty argument values in positional order.
 
+For value flags, a repeated flag occurrence emits the flag prefix once followed by that occurrence's values. Multiple values on one occurrence remain adjacent; the next occurrence emits a new prefix. Repeatable positional arguments emit one argv element for each supplied row. Omitted blank rows are skipped and supplied empty strings remain empty argv elements.
+
 ### Command Parts for Execution
 
 The `build_command_parts()` method produces a `Vec<String>` of separate arguments for process execution:
@@ -460,6 +462,15 @@ The `build_command_parts()` method produces a `Vec<String>` of separate argument
 - Negatable flags (`NegBool`) that are `None` (omitted) emit nothing. `Some(true)` emits the positive flag (e.g., `--color`). `Some(false)` emits the negate string (e.g., `--no-color`).
 - Count flags with count 0 are omitted.
 - String flags with empty values are omitted.
+- Repeated flag occurrences and values retain their two separate levels. Defaults and provider contexts use arrays, with nested arrays when both levels repeat.
+
+### Repeated-field editing
+
+- `Ctrl+N` / `Ctrl+D` add or remove a positional row, or a value within a repeatable flag occurrence.
+- `Ctrl+Alt+N` / `Ctrl+Alt+D` add or remove a repeatable flag occurrence.
+- `Alt+Left` / `Alt+Right` select a flag occurrence; `Ctrl+Left` / `Ctrl+Right` select a value within that occurrence.
+- Each occurrence and positional row has its own supplied state. New blank rows remain omitted until edited; an explicitly entered empty string is supplied.
+- Submission validates flag occurrence limits independently from multi-value limits inside each occurrence.
 
 ## Scrolling
 
@@ -534,3 +545,38 @@ The `ExecutionState` struct holds:
 - `pty_writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>` — input channel to the process
 - `exited: Arc<AtomicBool>` — whether the child has finished
 - `exit_status: Arc<Mutex<Option<String>>>` — the exit code/signal description
+
+## Initial values and field locks
+
+`--defaults JSON` or `--defaults @PATH` supplies an object whose keys identify fields and whose entries contain a typed `value` and optional `locked` boolean. A qualified identifier uses `global/flags/name`, `root/flags/name`, `root/args/name`, or `commands/path/to/command/flags/name` and `args/name`. Path segments escape `~` as `~0` and `/` as `~1`. An unqualified name is accepted only when it matches one field. Invalid identifiers, conflicting names, type mismatches, and undeclared choice values fail before terminal startup. Explicit empty strings remain supplied values. Locked fields reject keyboard, mouse, completion, and reset changes. Editable initial values behave as normal field values.
+
+### Native command composition
+
+The `--compose` option returns one JSON object with the executable and ordered argv. It does not run the command or open the execution view. The TUI uses the controlling terminal, so redirected stdout contains only JSON. Cancellation returns no output with status 130. Explicit empty arguments are retained. Terminal modes are restored on completion or error. Run `python3 tests/terminal_composition.py` after building to check the PTY flow.
+
+### Submission validation
+
+Every execute/compose submission checks required arguments/options, required subcommands, declared choices, and repeated-value minimum/maximum limits. Failure leaves the form open, displays the field identifier and correction in the status row, and neither executes nor emits a command. Explicit empty supplied strings are distinguished from omitted fields.
+
+`--validate PATH` additionally invokes a provider executable directly, sending the version-1 JSON form context on stdin. The request includes executable, argv, command path, optional field, and a map of canonical field identifiers to values. It must return `{ "version": 1, "errors": {} }` for success, or errors keyed by field identifier. Nonzero exit, malformed response, unsupported version, or a five-second timeout blocks submission. The operational command is never invoked for validation. Usage 2.16.1 does not expose a general conditional-rule API; dependent command-specific constraints belong in this provider.
+
+### Context-aware completion
+
+Legacy `complete ... run="..."` providers retain line-based output. They additionally receive `TUISAGE_CONTEXT_VERSION=1` and `TUISAGE_CONTEXT`, a JSON context containing canonical field values, command path, current argv and requested field. Top-level completion declarations are a fallback when the command has no matching declaration.
+
+A structured provider uses `complete "field" type="tuisage-json-v1:/path/to/provider"`. It receives the same JSON on stdin and returns `{ "version": 1, "choices": [{ "value": "...", "description": "optional" }] }`. This format can return explicit empty values. Providers run off the input thread. Each result is checked against its request generation and current form context; old responses are discarded. Changed context refreshes an open completion, while errors or empty responses retain manual input. No application discovery logic is built into TuiSage.
+
+Completion results update suggestions in place, preserving manual text and cursor position while a provider is running.
+### Named startup and automatic themes
+
+Use `tuisage --theme catppuccin-latte mytool --usage` to select a named theme. Names and aliases use ratatui-themes' existing parser, including hyphen and underscore spelling. Omitted options retain Dracula.
+
+Use `--theme auto --theme-light catppuccin-latte --theme-dark dracula` for automatic appearance. Both names must validate before terminal startup. macOS uses system AppleInterfaceStyle; Linux uses the desktop portal when available. Elsewhere, or when Linux supplies no preference, COLORFGBG is a terminal-background fallback, then the dark theme. System appearance has priority over terminal appearance. Polling occurs once a second outside the input thread. Manual cycling or confirming a theme disables automatic switching for the session; cancelling the picker retains automatic mode. Form values and focus are preserved on appearance changes.
+
+The whole frame receives the palette foreground/background before widgets render. No terminal OSC palette mutation is used. The execution view receives the same base background while retaining child terminal colours.
+
+Mouse selection of a theme disables automatic appearance changes. Shift+T opens the theme picker, including terminals that report it as lowercase t with the Shift modifier.
+
+## Presage companion documents
+
+Presage is optional metadata stored in KDL beside the Usage-driven form. The command grammar remains in Usage. Documents can bind fixed or executable choice lists, defaults, locks, validation, composition mode, and theme settings to existing field identifiers. Select one document by explicit path, user application-data, resolved executable sidecar, then shared application-data locations. Do not merge documents or search the current directory. On Windows, user and shared discovery use absolute LOCALAPPDATA and PROGRAMDATA roots. An invalid selected document is an error; no matching document preserves ordinary Usage behavior. See `PRESAGE.md` for filenames, syntax, provider responses, selector enumeration, and platform directory rules.

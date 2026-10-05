@@ -66,13 +66,17 @@ This document describes how TuiSage is built — its architecture, code structur
 
 ### `src/main.rs`
 
-Entry point. Parses CLI arguments (clap derive), handles `--usage` output via `clap_usage`, loads the usage spec (from trailing arguments via `sh -c` / `cmd /C`, or `--spec-file`), applies `--cmd` override, initializes the ratatui terminal with mouse capture, and runs the event loop.
+Entry point. Parses CLI arguments (clap derive), handles `--usage` output via `clap_usage`, loads the usage spec (from trailing arguments via `sh -c` / `cmd /C`, or `--spec-file`), applies `--cmd` override, selects an optional Presage document, initializes the ratatui terminal with mouse capture, and runs the event loop.
 
 The event loop has two modes:
 - **Builder mode**: Blocking event read — delegates to `app.handle_key()` or `app.handle_mouse()`, which return an `Action` enum (`None`, `Quit`, or `Execute`).
 - **Execution mode**: Polling event read (16ms interval) — forwards keyboard input to the PTY, continuously redraws to show live terminal output.
 
 When execution starts, `main.rs` just asks `App` to enter execution mode for the current terminal size. `App` builds the command parts and delegates process creation to `ExecutionComponent::spawn()`, which owns PTY creation, parser setup, background threads, and cleanup wiring.
+
+### `src/companion.rs`
+
+Parses and validates optional KDL companion documents against existing Usage fields. Resolves the explicit path, user application-data, resolved executable sidecar, and shared application-data cascade without merging documents. On Windows the user and shared roots come from absolute LOCALAPPDATA and PROGRAMDATA values. It also enumerates selector documents and resolves provider and validator paths beside the selected document.
 
 ### `src/app.rs`
 
@@ -86,6 +90,7 @@ Core state and logic (~5500 lines, ~3500 of which are tests). Owns all mutable a
 - **`FlagValue`** — `Bool(bool)`, `NegBool(Option<bool>)` (None=omitted, Some(true)=on, Some(false)=off), `String(String)`, `Count(u32)`.
 - **`ArgValue`** — name, value, required, choices, help.
 - **`App`** — main application state struct.
+- **`companion`**: optional Presage settings loaded for this invocation.
 
 #### `App` Struct Fields
 
@@ -205,6 +210,7 @@ Semantic color palette (~80 lines). `UiColors` is derived from the active `Theme
 | `clap` | 4 | CLI argument parsing | `derive` feature for struct-based arg definitions |
 | `clap_usage` | 2.0 | Usage spec generation | Generates `.usage.kdl` output from clap `Command` |
 | `usage-lib` | 2.16 | Parse `.usage.kdl` specs | `default-features = false` (skip docs/tera/roff) |
+| `kdl` | 6.5 | Parse Presage companion documents | Runtime dependency |
 | `ratatui` | 0.30 | TUI framework | Provides `Frame`, `Terminal`, widgets, layout |
 | `crossterm` | 0.29 | Terminal backend + events | `event-stream` feature enabled |
 | `ratatui-interact` | 0.4 | UI components | `TreeView`, `TreeNode`, `FocusManager`, `ListPickerState` |
@@ -216,6 +222,7 @@ Semantic color palette (~80 lines). `UiColors` is derived from the active `Theme
 | `color-eyre` | 0.6 | Error reporting | Pretty error messages with backtraces |
 | `insta` | 1 | Snapshot testing (dev) | Full terminal output comparison |
 | `pretty_assertions` | 1 | Test diffs (dev) | Better assertion failure output |
+| `tempfile` | 3 | Temporary documents in tests (dev) | Presage and provider tests |
 
 ### Why `usage-lib` With No Default Features
 
@@ -273,9 +280,42 @@ Snapshot tests cover: root view, subcommand views, flag toggling, argument editi
 | Commands list always visible | The flat indented list shows the entire command hierarchy, not just subcommands of the current selection. It remains visible even when navigating to leaf commands with no children, providing constant wayfinding context. |
 | Arguments panel visibility based on spec | The arguments panel is shown whenever the current command defines arguments in the spec, ensuring consistent visibility regardless of whether arg values are populated. |
 
+## Initial values and field locks
+
+`src/fields.rs` defines shared field identifiers and schema lookup. `src/defaults.rs` parses typed JSON values and applies values and locks to app state. `--defaults JSON` accepts inline JSON; `--defaults @PATH` reads a JSON file. Locked fields reject mutation through the app action paths. Reset restores locked initial values after clearing command state. Explicit empty strings are represented as supplied values so command construction preserves them.
+
 ## Remaining Work
 
 - **Clipboard copy** — copy the built command to the system clipboard from within the TUI
 - **Embedded USAGE blocks** — verify and test support for script files with heredoc USAGE blocks via `--spec-file`
 - **Further module splitting** — enter/completion lookup and value-mutation orchestration still live in App; these could move into dedicated services or richer panel-side actions to further reduce coordination responsibilities
 - **CI pipeline** — GitHub Actions for `cargo test`, `cargo clippy`, and `insta` snapshot checks
+
+### Native command composition
+
+The `--compose` option returns one JSON object with the executable and ordered argv. It does not run the command or open the execution view. The TUI uses the controlling terminal, so redirected stdout contains only JSON. Cancellation returns no output with status 130. Explicit empty arguments are retained. Terminal modes are restored on completion or error. Run `python3 tests/terminal_composition.py` after building to check the PTY flow.
+
+### Submission validation
+
+Every execute/compose submission checks required arguments/options, required subcommands, declared choices, and repeated-value minimum/maximum limits. Failure leaves the form open, displays the field identifier and correction in the status row, and neither executes nor emits a command. Explicit empty supplied strings are distinguished from omitted fields.
+
+`--validate PATH` additionally invokes a provider executable directly, sending the version-1 JSON form context on stdin. The request includes executable, argv, command path, optional field, and a map of canonical field identifiers to values. It must return `{ "version": 1, "errors": {} }` for success, or errors keyed by field identifier. Nonzero exit, malformed response, unsupported version, or a five-second timeout blocks submission. The operational command is never invoked for validation. Usage 2.16.1 does not expose a general conditional-rule API; dependent command-specific constraints belong in this provider.
+
+Repeated flag state stores ordered occurrence groups, each with ordered values and a supplied marker. The command builder emits one flag prefix per nonempty occurrence. Defaults and provider context encode one repeat dimension as a string array and two flag dimensions as nested arrays; positional repeated defaults use a string array. Validation counts occurrences and each occurrence's values separately. Repeat selection and edits invalidate pending completion responses.
+
+### Context-aware completion
+
+Legacy `complete ... run="..."` providers retain line-based output. They additionally receive `TUISAGE_CONTEXT_VERSION=1` and `TUISAGE_CONTEXT`, a JSON context containing canonical field values, command path, current argv and requested field. Top-level completion declarations are a fallback when the command has no matching declaration.
+
+A structured provider uses `complete "field" type="tuisage-json-v1:/path/to/provider"`. It receives the same JSON on stdin and returns `{ "version": 1, "choices": [{ "value": "...", "description": "optional" }] }`. This format can return explicit empty values. Providers run off the input thread. Each result is checked against its request generation and current form context; old responses are discarded. Changed context refreshes an open completion, while errors or empty responses retain manual input. No application discovery logic is built into TuiSage.
+
+Completion results update suggestions in place, preserving manual text and cursor position while a provider is running.
+### Named startup and automatic themes
+
+Use `tuisage --theme catppuccin-latte mytool --usage` to select a named theme. Names and aliases use ratatui-themes' existing parser, including hyphen and underscore spelling. Omitted options retain Dracula.
+
+Use `--theme auto --theme-light catppuccin-latte --theme-dark dracula` for automatic appearance. Both names must validate before terminal startup. macOS uses system AppleInterfaceStyle; Linux uses the desktop portal when available. Elsewhere, or when Linux supplies no preference, COLORFGBG is a terminal-background fallback, then the dark theme. System appearance has priority over terminal appearance. Polling occurs once a second outside the input thread. Manual cycling or confirming a theme disables automatic switching for the session; cancelling the picker retains automatic mode. Form values and focus are preserved on appearance changes.
+
+The whole frame receives the palette foreground/background before widgets render. No terminal OSC palette mutation is used. The execution view receives the same base background while retaining child terminal colours.
+
+Mouse selection of a theme disables automatic appearance changes. Shift+T opens the theme picker, including terminals that report it as lowercase t with the Shift modifier.
