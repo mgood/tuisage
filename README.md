@@ -89,6 +89,10 @@ You can combine these as well:
 tuisage --cmd "docker compose" --spec-file docker-compose.usage.kdl
 ```
 
+### Initial field values
+
+Use `--defaults JSON` to initialize fields from an object, or `--defaults @PATH` to read that object from a file. Keys may use unqualified names when they identify one field, or qualified identifiers such as `commands/run/args/name`. Each entry has a `value` and an optional `locked` boolean. Locked values cannot be changed through editing, mouse selection, completion, or reset. Empty strings are retained as explicit values.
+
 ## CLI Reference
 
 | Flag | Description |
@@ -180,6 +184,10 @@ This README presents the main documentation intended for users. Other documents 
 | [vt100](https://crates.io/crates/vt100) | Terminal emulation (VT100 parser) |
 | [color-eyre](https://crates.io/crates/color-eyre) | Error reporting |
 | [insta](https://crates.io/crates/insta) | Snapshot testing (dev) |
+
+## Native command composition
+
+The `--compose` option returns one JSON object with the executable and ordered argv. It does not run the command or open the execution view. The TUI uses the controlling terminal, so redirected stdout contains only JSON. Cancellation returns no output with status 130. Explicit empty arguments are retained. Terminal modes are restored on completion or error. Run `python3 tests/terminal_composition.py` after building to check the PTY flow.
 
 ## License
 

@@ -64,6 +64,14 @@ pub fn format_flag_value(
             }
         }
         FlagValue::String(s) if s.is_empty() => None,
+        FlagValue::EmptyString => {
+            let prefix = flag
+                .long
+                .first()
+                .map(|long| format!("--{long}"))
+                .or_else(|| flag.short.first().map(|short| format!("-{short}")))?;
+            Some(format!("{prefix} \"\""))
+        }
         FlagValue::String(s) => {
             let prefix = if let Some(long) = flag.long.first() {
                 format!("--{long}")
@@ -125,6 +133,16 @@ pub fn format_flag_parts(
             }
         }
         FlagValue::String(s) if s.is_empty() => {}
+        FlagValue::EmptyString => {
+            if let Some(long) = flag.long.first() {
+                parts.push(format!("--{long}"));
+            } else if let Some(short) = flag.short.first() {
+                parts.push(format!("-{short}"));
+            } else {
+                return;
+            }
+            parts.push(String::new());
+        }
         FlagValue::String(s) => {
             if let Some(long) = flag.long.first() {
                 parts.push(format!("--{long}"));
@@ -224,8 +242,10 @@ pub fn build_command(
     // Positional arg values (with live preview)
     for (i, arg) in arg_values.iter().enumerate() {
         let value = effective_arg_value(i, arg, preview);
-        if !value.is_empty() {
-            if value.contains(' ') {
+        if arg.supplied || !value.is_empty() {
+            if value.is_empty() {
+                parts.push("\"\"".to_string());
+            } else if value.contains(' ') {
                 parts.push(format!("\"{value}\""));
             } else {
                 parts.push(value.to_string());
@@ -251,9 +271,7 @@ pub fn build_command_parts(
     } else {
         &spec.bin
     };
-    for word in bin.split_whitespace() {
-        parts.push(word.to_string());
-    }
+    parts.extend(shell_words::split(bin).expect("validated base command"));
 
     // Global flag values from root
     let root_key = String::new();
@@ -286,7 +304,7 @@ pub fn build_command_parts(
 
     // Positional arg values (unquoted — each is a separate process arg)
     for arg in arg_values {
-        if !arg.value.is_empty() {
+        if arg.supplied || !arg.value.is_empty() {
             parts.push(arg.value.clone());
         }
     }

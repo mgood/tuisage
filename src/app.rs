@@ -70,6 +70,8 @@ pub enum FlagValue {
     NegBool(Option<bool>),
     /// Flag with a string value.
     String(String),
+    /// An explicitly supplied empty string value.
+    EmptyString,
     /// Count flag (e.g., -vvv).
     Count(u32),
 }
@@ -77,6 +79,7 @@ pub enum FlagValue {
 /// State for one positional argument's user-entered value.
 #[derive(Debug, Clone)]
 pub struct ArgValue {
+    pub supplied: bool,
     pub name: String,
     pub value: String,
     pub required: bool,
@@ -120,7 +123,7 @@ pub(crate) fn collect_visible_flags<'a>(cmd: &'a SpecCommand, spec: &'a Spec) ->
 /// The default/unset value for a flag given its spec.
 /// String flags use the spec-declared default (or empty); count flags start at
 /// zero; negatable and plain boolean flags start unset.
-fn default_flag_value(flag: &SpecFlag) -> FlagValue {
+pub(crate) fn default_flag_value(flag: &SpecFlag) -> FlagValue {
     if flag.count {
         FlagValue::Count(0)
     } else if flag.arg.is_some() {
@@ -174,6 +177,7 @@ impl UiLayout {
 /// Main application state.
 pub struct App {
     pub spec: Spec,
+    pub initial_fields: Vec<crate::defaults::InitialField>,
 
     /// Current app mode (builder vs executing).
     pub mode: AppMode,
@@ -200,7 +204,7 @@ pub struct App {
 
     /// Arg values keyed by command path.
     /// `arg_values` mirrors the currently selected path for rendering and editing.
-    arg_values_by_path: std::collections::HashMap<String, Vec<ArgValue>>,
+    pub(crate) arg_values_by_path: std::collections::HashMap<String, Vec<ArgValue>>,
 
     /// Arg values for the current command.
     pub arg_values: Vec<ArgValue>,
@@ -271,6 +275,7 @@ impl App {
 
         let mut app = Self {
             spec,
+            initial_fields: Vec::new(),
             mode: AppMode::Builder,
             execution: None,
             theme_name,
@@ -557,24 +562,40 @@ impl App {
 
     /// Apply a string value to the flag at the given visible index.
     fn apply_flag_string_value(&mut self, flag_idx: usize, value: &str) {
-        let mut changed = false;
-        {
-            let values = self.current_flag_values_mut();
-            if let Some((name, FlagValue::String(ref mut s))) = values.get_mut(flag_idx) {
-                let flag_name = name.clone();
-                *s = value.to_string();
-                let new_val = FlagValue::String(s.clone());
-                self.sync_global_flag(&flag_name, &new_val);
-                changed = true;
-            }
+        if self.flag_locked(flag_idx) {
+            return;
         }
-        if changed {
+        let flag_name = self
+            .current_flag_values()
+            .get(flag_idx)
+            .map(|(name, _)| name.clone());
+        if let Some(flag_name) = flag_name {
+            let new_value = if value.is_empty() {
+                FlagValue::EmptyString
+            } else {
+                FlagValue::String(value.to_string())
+            };
+            if let Some((_, current)) = self.current_flag_values_mut().get_mut(flag_idx) {
+                *current = new_value.clone();
+            }
+            self.sync_global_flag(&flag_name, &new_value);
             self.refresh_flag_panel_inputs();
         }
     }
 
     /// Process a non-choice ArgPanelAction (enter, clear).
     fn process_arg_action(&mut self, action: ArgPanelAction) -> Action {
+        let index = match &action {
+            ArgPanelAction::ClearArg(index)
+            | ArgPanelAction::ChoiceSelected { index, .. }
+            | ArgPanelAction::ChoiceCancelled { index, .. }
+            | ArgPanelAction::ValueChanged { index, .. }
+            | ArgPanelAction::EditFinished { index, .. } => *index,
+            ArgPanelAction::EnterRequest(_) => self.arg_index(),
+        };
+        if self.arg_locked(index) {
+            return Action::None;
+        }
         match action {
             ArgPanelAction::EnterRequest(request) => {
                 self.process_arg_enter_request(request);
@@ -582,6 +603,10 @@ impl App {
             }
             ArgPanelAction::ClearArg(idx) => {
                 self.set_arg_value(idx, String::new());
+                if let Some(arg) = self.arg_values.get_mut(idx) {
+                    arg.supplied = false;
+                }
+                self.persist_current_arg_values();
                 Action::None
             }
             ArgPanelAction::ValueChanged { index, value } => {
@@ -602,6 +627,19 @@ impl App {
 
     /// Process a non-choice FlagPanelAction (toggle, clear, enter).
     fn process_flag_action(&mut self, action: FlagPanelAction) -> Action {
+        let index = match &action {
+            FlagPanelAction::ToggleFlag(i)
+            | FlagPanelAction::ClearFlag(i)
+            | FlagPanelAction::NegBoolClick(i, _) => *i,
+            FlagPanelAction::ChoiceSelected { index, .. }
+            | FlagPanelAction::ChoiceCancelled { index, .. }
+            | FlagPanelAction::ValueChanged { index, .. }
+            | FlagPanelAction::EditFinished { index, .. } => *index,
+            _ => self.flag_index(),
+        };
+        if self.flag_locked(index) {
+            return Action::None;
+        }
         match action {
             FlagPanelAction::ToggleFlag(_idx) => {
                 self.toggle_simple_flag();
@@ -629,6 +667,13 @@ impl App {
                                 s.clear();
                                 let new_val = FlagValue::String(String::new());
                                 self.sync_global_flag(&flag_name, &new_val);
+                            }
+                            FlagValue::EmptyString => {
+                                *value = FlagValue::String(String::new());
+                                self.sync_global_flag(
+                                    &flag_name,
+                                    &FlagValue::String(String::new()),
+                                );
                             }
                             FlagValue::NegBool(state) => {
                                 *state = None;
@@ -870,7 +915,7 @@ impl App {
         cmd.args.iter().filter(|a| !a.hide).collect()
     }
 
-    fn default_arg_values_for_command(cmd: &SpecCommand) -> Vec<ArgValue> {
+    pub(crate) fn default_arg_values_for_command(cmd: &SpecCommand) -> Vec<ArgValue> {
         cmd.args
             .iter()
             .filter(|a| !a.hide)
@@ -882,6 +927,7 @@ impl App {
                     .unwrap_or_default();
                 let default = a.default.first().cloned().unwrap_or_default();
                 ArgValue {
+                    supplied: !default.is_empty(),
                     name: a.name.clone(),
                     value: default,
                     required: a.required,
@@ -907,8 +953,12 @@ impl App {
     }
 
     fn set_arg_value(&mut self, index: usize, value: String) {
+        if self.arg_locked(index) {
+            return;
+        }
         if let Some(arg) = self.arg_values.get_mut(index) {
             arg.value = value;
+            arg.supplied = true;
             self.persist_current_arg_values();
         }
         self.refresh_arg_panel_inputs();
@@ -1022,7 +1072,7 @@ impl App {
     /// If the named flag is a global flag, propagate its value to all stored
     /// command-path levels so that build_command (which reads from root) and
     /// the UI (which reads from the current path) stay consistent.
-    fn sync_global_flag(&mut self, flag_name: &str, new_value: &FlagValue) {
+    pub(crate) fn sync_global_flag(&mut self, flag_name: &str, new_value: &FlagValue) {
         let is_global = self
             .spec
             .cmd
@@ -1070,8 +1120,15 @@ impl App {
 
         for arg in &mut self.arg_values {
             arg.value.clear();
+            arg.supplied = false;
         }
         self.persist_current_arg_values();
+        self.apply_initial_fields(true);
+        self.arg_values = self
+            .arg_values_by_path
+            .get(&self.command_path_key())
+            .cloned()
+            .unwrap_or_default();
 
         self.refresh_flag_panel_inputs();
         self.refresh_arg_panel_inputs();
@@ -1461,6 +1518,7 @@ impl App {
                     .get(flag_idx)
                     .and_then(|(_, v)| match v {
                         FlagValue::String(s) => Some(s.clone()),
+                        FlagValue::EmptyString => Some(String::new()),
                         _ => None,
                     })
                     .unwrap_or_default()
@@ -1480,7 +1538,6 @@ impl App {
             _ => {}
         }
     }
-
 
     #[cfg(test)]
     fn move_up(&mut self) {
@@ -1537,6 +1594,7 @@ impl App {
                     .get(index)
                     .and_then(|(_, value)| match value {
                         FlagValue::String(text) => Some(text.clone()),
+                        FlagValue::EmptyString => Some(String::new()),
                         _ => None,
                     })
                     .unwrap_or(current_value);
@@ -1554,6 +1612,7 @@ impl App {
                     .get(index)
                     .and_then(|(_, value)| match value {
                         FlagValue::String(text) => Some(text.clone()),
+                        FlagValue::EmptyString => Some(String::new()),
                         _ => None,
                     })
                     .unwrap_or(current_value);
@@ -1647,6 +1706,9 @@ impl App {
     /// Toggle a Bool, NegBool, or Count flag at the current index.
     /// Bool: flip. NegBool: cycle None→Some(true)→Some(false)→None. Count: increment.
     fn toggle_simple_flag(&mut self) {
+        if self.flag_locked(self.flag_index()) {
+            return;
+        }
         let flag_idx = self.flag_index();
         let mut changed = false;
         {
@@ -3780,6 +3842,24 @@ cmd "other" {
     }
 
     #[test]
+    fn explicit_empty_arg_appears_in_preview_and_command_parts() {
+        let spec = r#"
+name "fake"
+cmd "run" {
+    arg "[value]"
+}
+"#
+        .parse::<Spec>()
+        .expect("Failed to parse empty-argument test spec");
+        let mut app = App::new(spec);
+        app.navigate_to_command(&["run"]);
+        app.set_arg_value(0, String::new());
+
+        assert_eq!(app.build_command(), "fake run \"\"");
+        assert_eq!(app.build_command_parts(), vec!["fake", "run", ""]);
+    }
+
+    #[test]
     fn test_build_command_parts_count_flag() {
         let mut app = App::new(sample_spec());
         // Set a count flag on the root level (verbose)
@@ -5783,5 +5863,44 @@ cmd "other" {
             .1
             .clone();
         assert_eq!(jobs, FlagValue::String("4".into()));
+    }
+
+    #[test]
+    fn locked_fields_reject_completion_results_for_action_indices() {
+        let spec: Spec = r#"
+            name "demo"
+            flag "--backend <backend>" global=#true
+            cmd "run" {
+                arg "[value]"
+            }
+        "#
+        .parse()
+        .unwrap();
+        let mut app = App::new(spec.clone());
+        let initial = crate::defaults::parse(
+            r#"{"backend":{"value":"orbitron","locked":true},"value":{"value":"fixed","locked":true}}"#,
+            &spec,
+        )
+        .unwrap();
+        app.configure_defaults(initial);
+        app.navigate_to_command(&["run"]);
+
+        app.process_flag_action(FlagPanelAction::ChoiceSelected {
+            index: 0,
+            value: "changed".into(),
+        });
+        app.process_arg_action(ArgPanelAction::ChoiceSelected {
+            index: 0,
+            value: "changed".into(),
+        });
+
+        assert!(app
+            .build_command_parts()
+            .windows(2)
+            .any(|parts| parts == ["--backend", "orbitron"]));
+        assert!(app
+            .build_command_parts()
+            .windows(2)
+            .any(|parts| parts == ["run", "fixed"]));
     }
 }
