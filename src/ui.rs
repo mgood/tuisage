@@ -18,6 +18,13 @@ use crate::theme::UiColors;
 pub fn render(frame: &mut Frame, app: &mut App) {
     let palette = app.palette();
     let colors = UiColors::from_palette(&palette);
+    let frame_area = frame.area();
+    frame.buffer_mut().set_style(
+        frame_area,
+        ratatui::style::Style::default()
+            .fg(palette.fg)
+            .bg(palette.bg),
+    );
 
     if app.mode == AppMode::Executing {
         if let Some(ref mut exec) = app.execution {
@@ -334,6 +341,24 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{backend::TestBackend, Terminal};
     use ratatui_themes::ThemeName;
+
+    #[test]
+    fn light_theme_paints_every_cell_without_reset_backgrounds() {
+        let mut app = App::with_theme(sample_spec(), ThemeName::CatppuccinLatte);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        for cell in &terminal.backend().buffer().content {
+            assert_ne!(cell.bg, ratatui::style::Color::Reset);
+        }
+        assert_eq!(terminal.backend().buffer()[(99, 0)].bg, app.palette().bg);
+        let args = app.arg_values.clone();
+        let focus = app.focus();
+        app.theme_name = ThemeName::Dracula;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert_eq!(app.focus(), focus);
+        assert_eq!(app.arg_values.len(), args.len());
+        assert_eq!(terminal.backend().buffer()[(99, 0)].bg, app.palette().bg);
+    }
 
     fn sample_spec() -> usage::Spec {
         let input = include_str!("../fixtures/sample.usage.kdl");
